@@ -1,4 +1,5 @@
 import type { DecodedDepthPlane, DepthVisualizationResult, DisplayOrientationReference } from "../depth/types";
+import type { PixelProjectionReport } from "../geometry/types";
 import type { DecodedPrimaryImage, OriginalPreviewResult } from "../original/types";
 import type { LocalVerificationReport } from "../verifier/types";
 
@@ -25,6 +26,20 @@ interface TapcamVerifierExports extends WebAssembly.Exports {
     width: number,
     height: number,
     maxEdge: number
+  ): number;
+  tapcam_project_depth_pixels(
+    filePtr: number,
+    fileLen: number,
+    rgbaPtr: number,
+    rgbaLen: number,
+    rgbWidth: number,
+    rgbHeight: number,
+    depthPtr: number,
+    depthLen: number,
+    depthWidth: number,
+    depthHeight: number,
+    displayWidth: number,
+    displayHeight: number
   ): number;
   tapcam_verify_result_len(): number;
   tapcam_verify_clear_result(): void;
@@ -126,6 +141,55 @@ export async function prepareOriginalPreviewRgba(
   }
 }
 
+export async function projectDepthPixels(
+  fileBytes: Uint8Array,
+  rgbImage: DecodedPrimaryImage,
+  depthPlane: DecodedDepthPlane,
+  displayReference?: DisplayOrientationReference
+): Promise<PixelProjectionReport> {
+  const wasm = await loadVerifierWasm();
+  const filePtr = wasm.tapcam_verify_alloc(fileBytes.length);
+  const rgbaPtr = wasm.tapcam_verify_alloc(rgbImage.rgba.length);
+  const depthPtr = wasm.tapcam_verify_alloc(depthPlane.luma.length);
+
+  try {
+    new Uint8Array(wasm.memory.buffer, filePtr, fileBytes.length).set(fileBytes);
+    new Uint8Array(wasm.memory.buffer, rgbaPtr, rgbImage.rgba.length).set(rgbImage.rgba);
+    new Uint8Array(wasm.memory.buffer, depthPtr, depthPlane.luma.length).set(depthPlane.luma);
+    const resultPtr = wasm.tapcam_project_depth_pixels(
+      filePtr,
+      fileBytes.length,
+      rgbaPtr,
+      rgbImage.rgba.length,
+      rgbImage.width,
+      rgbImage.height,
+      depthPtr,
+      depthPlane.luma.length,
+      depthPlane.width,
+      depthPlane.height,
+      displayReference?.width ?? 0,
+      displayReference?.height ?? 0
+    );
+
+    const result = readJsonResult(wasm, resultPtr) as PixelProjectionReport & {
+      positionsBase64?: string;
+      colorsBase64?: string;
+    };
+    if (result.status === "available") {
+      result.positions = decodeBase64Float32(result.positionsBase64 ?? "");
+      result.colors = decodeBase64Bytes(result.colorsBase64 ?? "");
+      delete result.positionsBase64;
+      delete result.colorsBase64;
+    }
+    return result;
+  } finally {
+    wasm.tapcam_verify_dealloc(filePtr, fileBytes.length);
+    wasm.tapcam_verify_dealloc(rgbaPtr, rgbImage.rgba.length);
+    wasm.tapcam_verify_dealloc(depthPtr, depthPlane.luma.length);
+    wasm.tapcam_verify_clear_result();
+  }
+}
+
 async function loadVerifierWasm(): Promise<TapcamVerifierExports> {
   exportsPromise ??= instantiateVerifierWasm();
   return exportsPromise;
@@ -152,10 +216,19 @@ function readJsonResult(wasm: TapcamVerifierExports, resultPtr: number): unknown
 }
 
 function decodeBase64(value: string): Uint8ClampedArray {
+  return new Uint8ClampedArray(decodeBase64Bytes(value));
+}
+
+function decodeBase64Bytes(value: string): Uint8Array {
   const binary = atob(value);
-  const bytes = new Uint8ClampedArray(binary.length);
+  const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function decodeBase64Float32(value: string): Float32Array {
+  const bytes = decodeBase64Bytes(value);
+  return new Float32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 4));
 }

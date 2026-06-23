@@ -22,6 +22,7 @@ const PROOF_PAYLOAD_BYTE_COUNT: usize = 60 * 1024;
 const PROOF_HEADER_BYTE_COUNT: usize = 32;
 const PROOF_MAGIC: &[u8] = b"TAPCAM-PROOF-SLOT-V1";
 const BMFF_PROOF_UUID: &[u8] = b"TAPCAMPROOFSLOT1";
+const PIXEL_PROJECTION_TARGET_MAX_EDGE: u32 = 320;
 
 #[no_mangle]
 pub extern "C" fn tapcam_verify_alloc(len: usize) -> *mut u8 {
@@ -118,6 +119,41 @@ pub unsafe extern "C" fn tapcam_prepare_original_rgba(
     ))
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn tapcam_project_depth_pixels(
+    file_ptr: *const u8,
+    file_len: usize,
+    rgba_ptr: *const u8,
+    rgba_len: usize,
+    rgb_width: u32,
+    rgb_height: u32,
+    depth_ptr: *const u8,
+    depth_len: usize,
+    depth_width: u32,
+    depth_height: u32,
+    display_width: u32,
+    display_height: u32,
+) -> *const u8 {
+    let file_bytes = slice::from_raw_parts(file_ptr, file_len);
+    let rgba = slice::from_raw_parts(rgba_ptr, rgba_len);
+    let depth = slice::from_raw_parts(depth_ptr, depth_len);
+    let display_reference = if display_width > 0 && display_height > 0 {
+        Some((display_width, display_height))
+    } else {
+        None
+    };
+    store_result(pixel_projection_result(project_depth_pixels_inner(
+        file_bytes,
+        rgba,
+        rgb_width,
+        rgb_height,
+        depth,
+        depth_width,
+        depth_height,
+        display_reference,
+    )))
+}
+
 fn store_result(report: Value) -> *const u8 {
     let mut result = serde_json::to_vec(&report).unwrap_or_else(|error| {
         json!({
@@ -211,6 +247,41 @@ pub fn prepare_original_rgba(
     max_edge: u32,
 ) -> Value {
     match prepare_original_rgba_inner(file_bytes, rgba, width, height, max_edge) {
+        Ok(report) => report,
+        Err(error) => json!({
+            "status": "error",
+            "message": error,
+            "warnings": [error]
+        }),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn project_depth_pixels(
+    file_bytes: &[u8],
+    rgba: &[u8],
+    rgb_width: u32,
+    rgb_height: u32,
+    depth: &[u8],
+    depth_width: u32,
+    depth_height: u32,
+    display_width: u32,
+    display_height: u32,
+) -> Value {
+    pixel_projection_result(project_depth_pixels_inner(
+        file_bytes,
+        rgba,
+        rgb_width,
+        rgb_height,
+        depth,
+        depth_width,
+        depth_height,
+        Some((display_width, display_height)),
+    ))
+}
+
+fn pixel_projection_result(result: Result<Value, String>) -> Value {
+    match result {
         Ok(report) => report,
         Err(error) => json!({
             "status": "error",
@@ -678,6 +749,208 @@ fn prepare_original_rgba_inner(
         "rotation": transform.as_report_str(),
         "scale": scale,
         "previewRgbaBase64": STANDARD.encode(preview),
+        "warnings": warnings
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_depth_pixels_inner(
+    file_bytes: &[u8],
+    rgba: &[u8],
+    rgb_width: u32,
+    rgb_height: u32,
+    depth_luma: &[u8],
+    depth_width: u32,
+    depth_height: u32,
+    display_reference: Option<(u32, u32)>,
+) -> Result<Value, String> {
+    if rgb_width == 0 || rgb_height == 0 {
+        return Err("decoded RGB image has zero dimensions".to_string());
+    }
+    if depth_width == 0 || depth_height == 0 {
+        return Err("decoded depth plane has zero dimensions".to_string());
+    }
+
+    let expected_rgba_len = (rgb_width as usize)
+        .checked_mul(rgb_height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("decoded RGB image dimensions overflow")?;
+    if rgba.len() < expected_rgba_len {
+        return Err(format!(
+            "decoded RGB RGBA is too short: got {}, expected {}",
+            rgba.len(),
+            expected_rgba_len
+        ));
+    }
+
+    let expected_depth_len = (depth_width as usize)
+        .checked_mul(depth_height as usize)
+        .ok_or("decoded depth plane dimensions overflow")?;
+    if depth_luma.len() < expected_depth_len {
+        return Err(format!(
+            "decoded depth plane is too short: got {}, expected {}",
+            depth_luma.len(),
+            expected_depth_len
+        ));
+    }
+
+    let manifest_json = extract_tap_manifest_json(file_bytes)?;
+    let manifest: Value = serde_json::from_str(&manifest_json)
+        .map_err(|error| format!("tapdepth:Manifest is not valid JSON: {error}"))?;
+    let payload = field(&manifest, "payload")?;
+    let depth = field(payload, "depth")?;
+    let manifest_width = optional_u32(depth, "width");
+    let manifest_height = optional_u32(depth, "height");
+    let source_kind = depth
+        .get("auxiliaryDataKind")
+        .and_then(Value::as_str)
+        .or_else(|| depth.get("pixelFormat").and_then(Value::as_str))
+        .unwrap_or("unknown");
+    let pixel_format = depth
+        .get("pixelFormat")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let metric_unit = depth
+        .get("metricUnit")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let orientation = depth
+        .get("orientation")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let photo_orientation = payload
+        .get("photo")
+        .and_then(|photo| photo.get("orientation"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+
+    let (display_width, display_height) = display_reference
+        .map(|(width, height)| (Some(width), Some(height)))
+        .unwrap_or((manifest_width, manifest_height));
+    let transform = display_orientation_transform(
+        depth_width,
+        depth_height,
+        display_width,
+        display_height,
+        Some(photo_orientation),
+    );
+    let (output_width, output_height) = transform.output_dimensions(depth_width, depth_height);
+
+    let raw_min = *depth_luma[..expected_depth_len]
+        .iter()
+        .min()
+        .ok_or("decoded depth plane is empty")?;
+    let raw_max = *depth_luma[..expected_depth_len]
+        .iter()
+        .max()
+        .ok_or("decoded depth plane is empty")?;
+    let apdi_min = extract_xml_number(file_bytes, "apdi:FloatMinValue");
+    let apdi_max = extract_xml_number(file_bytes, "apdi:FloatMaxValue");
+    let (min_value, max_value, value_range_kind) = match (apdi_min, apdi_max) {
+        (Some(min), Some(max)) if max > min => (min, max, "apdi-float-range"),
+        _ => (raw_min as f64, raw_max as f64, "decoded-luma-range"),
+    };
+    let value_unit = infer_depth_value_unit(source_kind, pixel_format, metric_unit, value_range_kind);
+    let relative_geometry = true;
+    let sample_step = output_width
+        .max(output_height)
+        .div_ceil(PIXEL_PROJECTION_TARGET_MAX_EDGE)
+        .max(1);
+    let depth_width_usize = depth_width as usize;
+    let mut positions = Vec::new();
+    let mut colors = Vec::new();
+
+    for y in (0..output_height).step_by(sample_step as usize) {
+        for x in (0..output_width).step_by(sample_step as usize) {
+            let (source_x, source_y) = inverse_orientation_transform(
+                x as f64,
+                y as f64,
+                depth_width,
+                depth_height,
+                transform,
+            );
+            let source_x = source_x.round().clamp(0.0, (depth_width - 1) as f64) as usize;
+            let source_y = source_y.round().clamp(0.0, (depth_height - 1) as f64) as usize;
+            let raw_value = depth_luma[source_y * depth_width_usize + source_x];
+            let normalized = normalize_u8(raw_value, raw_min, raw_max) as f64;
+            let display_value = depth_display_value(normalized, min_value, max_value);
+            let relative_depth =
+                relative_depth_from_value(display_value, min_value, max_value, value_unit);
+            let x_unit = normalized_pixel_axis(x, output_width) * relative_depth;
+            let y_unit = -normalized_pixel_axis(y, output_height) * relative_depth;
+            push_f32_le(&mut positions, x_unit as f32);
+            push_f32_le(&mut positions, y_unit as f32);
+            push_f32_le(&mut positions, relative_depth as f32);
+
+            let rgb_x = scaled_coordinate(x, output_width, rgb_width);
+            let rgb_y = scaled_coordinate(y, output_height, rgb_height);
+            let rgb_offset = (rgb_y * rgb_width as usize + rgb_x) * 4;
+            colors.push(rgba[rgb_offset]);
+            colors.push(rgba[rgb_offset + 1]);
+            colors.push(rgba[rgb_offset + 2]);
+        }
+    }
+
+    let mut warnings = Vec::new();
+    warnings.push(
+        "relative geometry: camera intrinsics, focal length, and baseline are not available"
+            .to_string(),
+    );
+    if value_unit == "disparity" {
+        warnings.push("disparity was converted to relative depth for inspection only".to_string());
+    }
+    if sample_step > 1 {
+        warnings.push(format!(
+            "point cloud was sampled every {} pixels for browser performance",
+            sample_step
+        ));
+    }
+    if manifest_width != Some(output_width) || manifest_height != Some(output_height) {
+        warnings.push(format!(
+            "projected depth is {}x{} but manifest depth is {}x{}",
+            output_width,
+            output_height,
+            manifest_width
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            manifest_height
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        ));
+    }
+    if aspect_ratio_delta(output_width, output_height, rgb_width, rgb_height) > 0.05 {
+        warnings.push(format!(
+            "RGB aspect ratio {}x{} does not closely match projected depth {}x{}",
+            rgb_width, rgb_height, output_width, output_height
+        ));
+    }
+
+    Ok(json!({
+        "status": "available",
+        "geometryKind": "signed-depth-pixel-point-cloud",
+        "sourceKind": source_kind,
+        "valueUnit": value_unit,
+        "relativeGeometry": relative_geometry,
+        "pointCount": positions.len() / 12,
+        "sampleStep": sample_step,
+        "width": output_width,
+        "height": output_height,
+        "inputDepthWidth": depth_width,
+        "inputDepthHeight": depth_height,
+        "rgbWidth": rgb_width,
+        "rgbHeight": rgb_height,
+        "orientation": orientation,
+        "photoOrientation": photo_orientation,
+        "rotation": transform.as_report_str(),
+        "depthRange": {
+            "min": min_value,
+            "max": max_value,
+            "kind": value_range_kind,
+            "rawMin": raw_min,
+            "rawMax": raw_max
+        },
+        "positionsBase64": STANDARD.encode(positions),
+        "colorsBase64": STANDARD.encode(colors),
         "warnings": warnings
     }))
 }
@@ -1307,6 +1580,65 @@ fn sample_bilinear_rgba(
     }
 }
 
+fn normalized_pixel_axis(pixel: u32, extent: u32) -> f64 {
+    if extent <= 1 {
+        return 0.0;
+    }
+    ((pixel as f64 / (extent - 1) as f64) - 0.5) * 2.0
+}
+
+fn scaled_coordinate(pixel: u32, source_extent: u32, target_extent: u32) -> usize {
+    if target_extent <= 1 || source_extent <= 1 {
+        return 0;
+    }
+    ((pixel as f64 / (source_extent - 1) as f64) * (target_extent - 1) as f64)
+        .round()
+        .clamp(0.0, (target_extent - 1) as f64) as usize
+}
+
+fn depth_display_value(normalized: f64, min_value: f64, max_value: f64) -> f64 {
+    if max_value <= min_value {
+        return min_value;
+    }
+    min_value + normalized.clamp(0.0, 1.0) * (max_value - min_value)
+}
+
+fn relative_depth_from_value(value: f64, min_value: f64, max_value: f64, value_unit: &str) -> f64 {
+    if max_value <= min_value {
+        return 1.0;
+    }
+
+    let normalized = if value_unit == "disparity" {
+        let safe_min = min_value.max(0.000_001);
+        let safe_max = max_value.max(0.000_001);
+        let near_depth = 1.0 / safe_max;
+        let far_depth = 1.0 / safe_min;
+        let current_depth = 1.0 / value.max(0.000_001);
+        if far_depth <= near_depth {
+            0.5
+        } else {
+            ((current_depth - near_depth) / (far_depth - near_depth)).clamp(0.0, 1.0)
+        }
+    } else {
+        ((value - min_value) / (max_value - min_value)).clamp(0.0, 1.0)
+    };
+
+    0.25 + normalized * 1.75
+}
+
+fn aspect_ratio_delta(width: u32, height: u32, other_width: u32, other_height: u32) -> f64 {
+    if height == 0 || other_height == 0 {
+        return 1.0;
+    }
+    let ratio = width as f64 / height as f64;
+    let other_ratio = other_width as f64 / other_height as f64;
+    ((ratio - other_ratio) / ratio.max(other_ratio)).abs()
+}
+
+fn push_f32_le(output: &mut Vec<u8>, value: f32) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+
 fn normalize_u8(value: u8, min: u8, max: u8) -> f32 {
     if max <= min {
         return 0.0;
@@ -1628,6 +1960,65 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("downscaled"));
+    }
+
+    #[test]
+    fn pixel_projection_builds_stable_cloud_from_depth_and_rgb() {
+        let bytes = depth_manifest_fixture(4, 2, "cgImagePropertyOrientation:1", "")
+            .replace(
+                "<x:xmpmeta>",
+                "<x:xmpmeta><apdi:FloatMinValue>3.5</apdi:FloatMinValue><apdi:FloatMaxValue>12.25</apdi:FloatMaxValue>",
+            );
+        let rgba = [
+            10, 20, 30, 255, 20, 30, 40, 255, 30, 40, 50, 255, 40, 50, 60, 255, 50, 60, 70, 255,
+            60, 70, 80, 255, 70, 80, 90, 255, 80, 90, 100, 255,
+        ];
+        let depth = [4, 8, 12, 16, 20, 24, 28, 32];
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 4, 2, &depth, 4, 2, 4, 2);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["geometryKind"], "signed-depth-pixel-point-cloud");
+        assert_eq!(report["pointCount"], 8);
+        assert_eq!(report["sampleStep"], 1);
+        assert_eq!(report["valueUnit"], "disparity");
+        assert_eq!(report["relativeGeometry"], true);
+        let positions = STANDARD
+            .decode(report["positionsBase64"].as_str().unwrap())
+            .unwrap();
+        let colors = STANDARD
+            .decode(report["colorsBase64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(positions.len(), 8 * 3 * 4);
+        assert_eq!(colors.len(), 8 * 3);
+        assert_eq!(&colors[0..3], &[10, 20, 30]);
+    }
+
+    #[test]
+    fn pixel_projection_uses_display_orientation() {
+        let bytes = depth_manifest_fixture(3, 2, "cgImagePropertyOrientation:6", "");
+        let rgba = vec![128u8; 3 * 2 * 4];
+        let depth = [0, 10, 20, 30, 40, 50];
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 3, 2, &depth, 2, 3, 3, 2);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["width"], 3);
+        assert_eq!(report["height"], 2);
+        assert_eq!(report["rotation"], "clockwise90");
+    }
+
+    #[test]
+    fn pixel_projection_samples_large_planes_for_browser_budget() {
+        let bytes = depth_manifest_fixture(800, 1, "cgImagePropertyOrientation:1", "");
+        let rgba = vec![128u8; 800 * 4];
+        let depth = vec![64u8; 800];
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 800, 1, &depth, 800, 1, 800, 1);
+
+        assert_eq!(report["status"], "available");
+        assert!(report["sampleStep"].as_u64().unwrap() > 1);
+        assert!(report["pointCount"].as_u64().unwrap() <= PIXEL_PROJECTION_TARGET_MAX_EDGE as u64);
     }
 
     #[test]

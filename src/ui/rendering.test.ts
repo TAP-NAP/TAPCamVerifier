@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { DepthVisualizationAvailable } from "../depth/types";
+import type { ProjectedPixelCloud } from "../geometry/types";
 import type { OriginalPreviewAvailable } from "../original/types";
 import type { CombinedVerificationResult } from "../verifier/types";
 import {
   renderDepthPanel,
   renderOriginalPreviewLoading,
   renderOriginalPreviewResult,
+  renderPixelProjectionPanel,
   renderVerificationResult
 } from "./rendering";
 
@@ -140,5 +142,57 @@ describe("renderOriginalPreviewResult", () => {
     expect(html).toContain('id="originalFallbackCanvas"');
     expect(html).toContain('width="1200"');
     expect(html).toContain('height="900"');
+  });
+});
+
+describe("renderPixelProjectionPanel", () => {
+  it("renders unavailable projection without a viewer target", () => {
+    const html = renderPixelProjectionPanel({
+      status: "unavailable",
+      message: "No embedded depth pixels.",
+      warnings: ["No embedded depth pixels."]
+    });
+
+    expect(html).toContain("No embedded depth pixels.");
+    expect(html).not.toContain("geometryViewer");
+  });
+
+  it("renders available relative point cloud metadata and viewer target", () => {
+    const state: ProjectedPixelCloud = {
+      status: "available",
+      geometryKind: "signed-depth-pixel-point-cloud",
+      sourceKind: "disparity",
+      valueUnit: "disparity",
+      relativeGeometry: true,
+      pointCount: 8192,
+      sampleStep: 3,
+      width: 576,
+      height: 768,
+      inputDepthWidth: 576,
+      inputDepthHeight: 768,
+      rgbWidth: 3024,
+      rgbHeight: 4032,
+      orientation: "appleAuxiliaryDepthNative",
+      photoOrientation: "cgImagePropertyOrientation:6",
+      rotation: "none",
+      depthRange: {
+        min: 3.917969,
+        max: 12.304688,
+        kind: "apdi-float-range",
+        rawMin: 0,
+        rawMax: 255
+      },
+      positions: new Float32Array(8192 * 3),
+      colors: new Uint8Array(8192 * 3),
+      warnings: ["relative geometry"]
+    };
+
+    const html = renderPixelProjectionPanel(state);
+
+    expect(html).toContain('id="geometryViewer"');
+    expect(html).toContain("signed-depth-pixel-point-cloud");
+    expect(html).toContain("8192");
+    expect(html).toContain("relative");
+    expect(html).toContain("3.9180 – 12.3047 disparity");
   });
 });

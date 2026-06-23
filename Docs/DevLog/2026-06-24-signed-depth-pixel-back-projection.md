@@ -1,0 +1,34 @@
+# 2026-06-24 Signed Depth Pixel Back-Projection
+
+## Conversation Record
+
+The geometry feature should not be described as `Depth-to-3D Textured
+Inspection` or as RGB reconstruction. The accurate direction is signed depth
+pixel back-projection: take embedded depth/disparity pixels from the signed file,
+back-project those pixels into relative 3D, then attach the aligned RGB pixels as
+per-point color.
+
+The user goal is to inspect what object shape the signed depth describes and
+which visible image pixels sit on that shape. This makes the 3D view an
+inspection model, not an independent reconstruction or a new verification input.
+
+## Implemented Direction
+
+- Added a downstream `3D Pixel Projection` pane after the original and depth
+  panes.
+- Added a Rust/WASM `tapcam_project_depth_pixels` path that generates a sampled
+  relative point cloud from decoded RGB plus decoded depth/disparity.
+- Kept Three.js responsible only for browser rendering and interaction.
+- Marked the model as relative geometry because current fixture metadata does
+  not include camera intrinsics, focal length, or baseline.
+- Kept the local/server verifier status unchanged. Geometry unavailable/error
+  states do not affect final `valid` / `invalid`.
+
+## Deferred TODO
+
+- Build a depth-grid mesh and skip triangles across large depth discontinuities.
+- Add RGB as vertex color or UV texture on that mesh.
+- Add surface continuity, depth coverage, and RGB/depth alignment warnings.
+- Research 3D Gaussian Splatting data requirements before implementation. The
+  likely missing data includes multi-view images or burst/video, camera poses,
+  sparse point cloud, or a COLMAP-compatible export package.

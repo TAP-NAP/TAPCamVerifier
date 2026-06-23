@@ -1,6 +1,9 @@
 import "./styles.css";
-import { visualizeCaptureDepth } from "./depth/depthVisualization";
-import type { DepthPanelState, DisplayOrientationReference } from "./depth/types";
+import { decodeHeifAuxiliaryDepthPlane } from "./depth/heifDepthDecoder";
+import type { DecodedDepthPlane, DepthPanelState, DisplayOrientationReference } from "./depth/types";
+import { mountGeometryViewer, type GeometryViewerCleanup } from "./geometry/geometryViewer";
+import { decodeRgbForPixelProjection, projectSignedDepthPixels } from "./geometry/pixelProjection";
+import type { DecodedRgbImage, PixelProjectionState } from "./geometry/types";
 import { visualizeOriginalHeicFallback } from "./original/originalVisualization";
 import type { OriginalPreviewResult } from "./original/types";
 import {
@@ -11,11 +14,12 @@ import {
   renderDepthPanel,
   renderOriginalPreviewLoading,
   renderOriginalPreviewResult,
+  renderPixelProjectionPanel,
   renderVerificationBusy,
   renderVerificationError,
   renderVerificationResult
 } from "./ui/rendering";
-import { verifyCaptureLocally } from "./wasm/tapcamVerifier";
+import { verifyCaptureLocally, visualizeDepthPlane } from "./wasm/tapcamVerifier";
 import { verifyCaptureSignature } from "./verifier/serverVerify";
 import type {
   CaptureSignatureVerifyResponse,
@@ -57,11 +61,18 @@ const visualizationEl = visualizationPanel;
 let activeRunId = 0;
 let activeObjectUrl: string | null = null;
 let activeFileBytes: Uint8Array | null = null;
+let activeDepthPlane: DecodedDepthPlane | null = null;
+let activeRgbImage: DecodedRgbImage | null = null;
 let activeOriginalDisplayReference: DisplayOrientationReference | null = null;
+let activeGeometryViewerCleanup: GeometryViewerCleanup | null = null;
 let originalDisplayResolvedRunId = 0;
 let originalFallbackNeededRunId = 0;
 let originalFallbackStartedRunId = 0;
 let depthStartedRunId = 0;
+let depthResolvedRunId = 0;
+let rgbStartedRunId = 0;
+let rgbResolvedRunId = 0;
+let pixelProjectionStartedRunId = 0;
 
 dropzone.addEventListener("click", () => fileInput.click());
 dropzone.addEventListener("dragover", (event) => {
@@ -95,6 +106,7 @@ async function verifyFile(file: File): Promise<void> {
       activeFileBytes = fileBytes;
       requestOriginalFallback(runId, file.name);
       requestDepthVisualization(runId);
+      requestRgbAnalysis(runId, file);
     }
     const result = await verifyFileBytes(file, fileBytes);
     if (runId === activeRunId) {
@@ -108,6 +120,11 @@ async function verifyFile(file: File): Promise<void> {
         message: error instanceof Error ? error.message : String(error),
         warnings: [error instanceof Error ? error.message : String(error)]
       });
+      updateGeometryPanel({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+        warnings: [error instanceof Error ? error.message : String(error)]
+      });
     }
   }
 }
@@ -115,11 +132,18 @@ async function verifyFile(file: File): Promise<void> {
 function beginSelectedFile(file: File): number {
   activeRunId += 1;
   activeFileBytes = null;
+  activeDepthPlane = null;
+  activeRgbImage = null;
   activeOriginalDisplayReference = null;
   originalDisplayResolvedRunId = 0;
   originalFallbackNeededRunId = 0;
   originalFallbackStartedRunId = 0;
   depthStartedRunId = 0;
+  depthResolvedRunId = 0;
+  rgbStartedRunId = 0;
+  rgbResolvedRunId = 0;
+  pixelProjectionStartedRunId = 0;
+  cleanupGeometryViewer();
   if (activeObjectUrl) {
     URL.revokeObjectURL(activeObjectUrl);
   }
@@ -127,6 +151,7 @@ function beginSelectedFile(file: File): number {
 
   renderVisualizationScaffold(file, activeObjectUrl);
   updateDepthPanel({ status: "loading" });
+  updateGeometryPanel({ status: "loading" });
   resultEl.innerHTML = renderVerificationBusy(file.name, file.size);
   return activeRunId;
 }
@@ -155,6 +180,72 @@ function requestDepthVisualization(runId: number): void {
   void visualizeSelectedDepth(runId, activeFileBytes, activeOriginalDisplayReference ?? undefined);
 }
 
+function requestRgbAnalysis(runId: number, file: File): void {
+  if (
+    runId !== activeRunId ||
+    rgbStartedRunId === runId ||
+    !activeFileBytes
+  ) {
+    return;
+  }
+
+  rgbStartedRunId = runId;
+  void decodeSelectedRgb(runId, file, activeFileBytes);
+}
+
+function requestPixelProjection(runId: number): void {
+  if (
+    runId !== activeRunId ||
+    pixelProjectionStartedRunId === runId ||
+    depthResolvedRunId !== runId ||
+    rgbResolvedRunId !== runId ||
+    !activeFileBytes ||
+    !activeDepthPlane ||
+    !activeRgbImage
+  ) {
+    return;
+  }
+
+  pixelProjectionStartedRunId = runId;
+  void projectSelectedPixels(
+    runId,
+    activeFileBytes,
+    activeRgbImage,
+    activeDepthPlane,
+    activeOriginalDisplayReference ?? undefined
+  );
+}
+
+async function decodeSelectedRgb(runId: number, file: File, fileBytes: Uint8Array): Promise<void> {
+  try {
+    const rgbImage = await decodeRgbForPixelProjection(file, fileBytes);
+    if (runId !== activeRunId) {
+      return;
+    }
+    if (!rgbImage) {
+      updateGeometryPanel({
+        status: "unavailable",
+        message: "Decoded RGB pixels are not available for 3D projection.",
+        warnings: ["Decoded RGB pixels are not available for 3D projection."]
+      });
+      return;
+    }
+
+    activeRgbImage = rgbImage;
+    rgbResolvedRunId = runId;
+    requestPixelProjection(runId);
+  } catch (error) {
+    if (runId === activeRunId) {
+      const message = error instanceof Error ? error.message : String(error);
+      updateGeometryPanel({
+        status: "error",
+        message,
+        warnings: [message]
+      });
+    }
+  }
+}
+
 async function visualizeSelectedOriginalFallback(
   runId: number,
   fileName: string,
@@ -171,9 +262,60 @@ async function visualizeSelectedDepth(
   fileBytes: Uint8Array,
   displayReference?: DisplayOrientationReference
 ): Promise<void> {
-  const depthState = await visualizeCaptureDepth(fileBytes, displayReference);
+  try {
+    const depthPlane = await decodeHeifAuxiliaryDepthPlane(fileBytes);
+    if (runId !== activeRunId) {
+      return;
+    }
+    if (!depthPlane) {
+      const state: DepthPanelState = {
+        status: "unavailable",
+        message: "No embedded HEIF auxiliary depth or disparity plane was found.",
+        warnings: ["No embedded HEIF auxiliary depth or disparity plane was found."]
+      };
+      updateDepthPanel(state);
+      updateGeometryPanel({
+        status: "unavailable",
+        message: "No embedded depth or disparity pixels are available for 3D projection.",
+        warnings: ["No embedded depth or disparity pixels are available for 3D projection."]
+      });
+      return;
+    }
+
+    activeDepthPlane = depthPlane;
+    depthResolvedRunId = runId;
+    const depthState = await visualizeDepthPlane(fileBytes, depthPlane, displayReference);
+    if (runId === activeRunId) {
+      updateDepthPanel(depthState);
+      requestPixelProjection(runId);
+    }
+  } catch (error) {
+    if (runId === activeRunId) {
+      const message = error instanceof Error ? error.message : String(error);
+      updateDepthPanel({
+        status: "error",
+        message,
+        warnings: [message]
+      });
+      updateGeometryPanel({
+        status: "error",
+        message,
+        warnings: [message]
+      });
+    }
+  }
+}
+
+async function projectSelectedPixels(
+  runId: number,
+  fileBytes: Uint8Array,
+  rgbImage: DecodedRgbImage,
+  depthPlane: DecodedDepthPlane,
+  displayReference?: DisplayOrientationReference
+): Promise<void> {
+  const projectionState = await projectSignedDepthPixels(fileBytes, rgbImage, depthPlane, displayReference);
   if (runId === activeRunId) {
-    updateDepthPanel(depthState);
+    updateGeometryPanel(projectionState);
   }
 }
 
@@ -196,6 +338,13 @@ function renderVisualizationScaffold(file: File, objectUrl: string): void {
           <span>Embedded depth/disparity</span>
         </header>
         <div class="depth-panel" id="depthPanel"></div>
+      </article>
+      <article class="visual-pane visual-pane--geometry">
+        <header>
+          <h2>3D Pixel Projection</h2>
+          <span>Relative geometry</span>
+        </header>
+        <div class="geometry-panel" id="geometryPanel"></div>
       </article>
     </div>
   `;
@@ -285,6 +434,27 @@ function updateDepthPanel(state: DepthPanelState): void {
       drawDepthCanvas(state, canvas);
     }
   }
+}
+
+function updateGeometryPanel(state: PixelProjectionState): void {
+  const geometryPanel = document.querySelector<HTMLElement>("#geometryPanel");
+  if (!geometryPanel) {
+    return;
+  }
+
+  cleanupGeometryViewer();
+  geometryPanel.innerHTML = renderPixelProjectionPanel(state);
+  if (state.status === "available") {
+    const host = document.querySelector<HTMLElement>("#geometryViewer");
+    if (host) {
+      activeGeometryViewerCleanup = mountGeometryViewer(host, state);
+    }
+  }
+}
+
+function cleanupGeometryViewer(): void {
+  activeGeometryViewerCleanup?.();
+  activeGeometryViewerCleanup = null;
 }
 
 async function verifyFileBytes(file: File, fileBytes: Uint8Array): Promise<CombinedVerificationResult> {

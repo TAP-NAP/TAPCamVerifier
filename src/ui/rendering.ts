@@ -1,4 +1,5 @@
 import type { DepthPanelState, DepthVisualizationAvailable } from "../depth/types";
+import type { PixelProjectionState, ProjectedPixelCloud } from "../geometry/types";
 import type { OriginalPreviewAvailable, OriginalPreviewResult } from "../original/types";
 import type { CombinedVerificationResult, VerificationCheck } from "../verifier/types";
 
@@ -107,6 +108,47 @@ export function renderDepthPanel(state: DepthPanelState): string {
   `;
 }
 
+export function renderPixelProjectionPanel(state: PixelProjectionState): string {
+  if (state.status === "idle") {
+    return renderProjectionMessage("No projection data selected.");
+  }
+  if (state.status === "loading") {
+    return renderProjectionMessage("Building point cloud.");
+  }
+  if (state.status === "unavailable") {
+    return renderProjectionMessage(state.message);
+  }
+  if (state.status === "error") {
+    return renderProjectionMessage(state.message);
+  }
+
+  return `
+    <div class="geometry-viewer-shell">
+      <div id="geometryViewer" class="geometry-viewer" aria-label="Relative 3D pixel projection"></div>
+      <button class="geometry-reset" type="button" data-geometry-reset>Reset view</button>
+    </div>
+    <dl class="depth-meta geometry-meta">
+      <div>
+        <dt>Geometry</dt>
+        <dd>${escapeHtml(state.geometryKind)}</dd>
+      </div>
+      <div>
+        <dt>Points</dt>
+        <dd>${state.pointCount}</dd>
+      </div>
+      <div>
+        <dt>Depth</dt>
+        <dd>${formatNumber(state.depthRange.min)} – ${formatNumber(state.depthRange.max)} ${escapeHtml(state.valueUnit)}</dd>
+      </div>
+      <div>
+        <dt>Scale</dt>
+        <dd>${state.relativeGeometry ? "relative" : "metric"}</dd>
+      </div>
+    </dl>
+    ${renderProjectionWarnings(state)}
+  `;
+}
+
 export function renderOriginalPreviewLoading(fileName: string): string {
   return `
     <div class="preview-message">
@@ -194,6 +236,14 @@ function renderDepthMessage(message: string): string {
   `;
 }
 
+function renderProjectionMessage(message: string): string {
+  return `
+    <div class="geometry-message">
+      <span>${escapeHtml(message)}</span>
+    </div>
+  `;
+}
+
 function renderDepthWarnings(state: DepthVisualizationAvailable): string {
   if (state.warnings.length === 0) {
     return "";
@@ -207,6 +257,18 @@ function renderDepthWarnings(state: DepthVisualizationAvailable): string {
 }
 
 function renderOriginalWarnings(state: OriginalPreviewAvailable): string {
+  if (state.warnings.length === 0) {
+    return "";
+  }
+
+  return `
+    <ul class="depth-warnings">
+      ${state.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}
+    </ul>
+  `;
+}
+
+function renderProjectionWarnings(state: ProjectedPixelCloud): string {
   if (state.warnings.length === 0) {
     return "";
   }
