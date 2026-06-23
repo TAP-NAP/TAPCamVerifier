@@ -31,9 +31,9 @@ flowchart TD
     R --> S["Rebuild CaptureSigningBinding"]
     S --> T["Compare with proofValue.signingBinding"]
     T --> U["Local valid only if every hard-binding check passes"]
-    U --> V["Current slice records server verification as deferred"]
-    V --> W["Later: POST keyId + assertionObject + signingBinding to same origin"]
-    W --> X["Server verifies App Attest assertion"]
+    U --> V["POST keyId + assertionObject + signingBinding to server"]
+    V --> W["Server verifies App Attest assertion"]
+    W --> X["Final valid only if local and server checks pass"]
 ```
 
 ## Implemented Checks
@@ -70,10 +70,14 @@ signature path because decoded pixels are not signature inputs.
 
 ## Server Boundary
 
-The current static page does not call the server yet; it reports server
-verification as `deferred`. When the same-origin backend is enabled, the browser
-must still never upload the original HEIC/JPG. After local hard-binding checks
-pass, the server request body will be:
+The browser never uploads the original HEIC/JPG. After local hard-binding checks
+pass, the page posts to:
+
+```text
+https://www.tapnap.net/tapcam/capture-signatures/verify
+```
+
+The request body is:
 
 ```json
 {
@@ -87,3 +91,7 @@ pass, the server request body will be:
   }
 }
 ```
+
+The production page origin is `https://verifier.tapnap.net`. Local development
+origins such as `http://127.0.0.1:4174` are expected to fail server verification
+unless the server CORS allowlist includes them.

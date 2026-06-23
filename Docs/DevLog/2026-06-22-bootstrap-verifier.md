@@ -5,13 +5,12 @@
 - The verifier is a static web app intended for GitHub Pages.
 - GitHub Actions builds `dist/` and deploys it through GitHub Pages on pushes to
   `main`.
-- Deployment will use the same domain as the verify API. The frontend reserves
-  `/tapcam/capture-signatures/verify` as the server handoff path, but this slice
-  keeps App Attest server verification deferred.
+- Deployment uses GitHub Pages at `verifier.tapnap.net`; the App Attest verify
+  API remains on `www.tapnap.net`.
 - The original HEIC is never uploaded to the server.
 - Rust/WASM owns local binary parsing and hash checks.
-- TypeScript owns drag-and-drop, rendering, WASM loading, and the deferred
-  server handoff.
+- TypeScript owns drag-and-drop, rendering, WASM loading, and the server verify
+  call after local verification passes.
 - The verifier is strict: missing or duplicated proof slots, duplicated
   manifests, malformed slot padding, profile drift, or hash mismatches are
   `invalid`.

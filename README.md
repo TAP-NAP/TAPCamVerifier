@@ -2,12 +2,12 @@
 
 TAPCamVerifier is a static web verifier for TAPCam signed HEIC/JPG captures.
 
-The page accepts a dropped image and runs the local Rust/WASM verifier. Server
-verification is intentionally deferred, but the local hard-binding checks now
-produce a complete `valid`/`invalid` result:
+The page accepts a dropped image and runs the local Rust/WASM verifier. When the
+local hard-binding checks pass, the page posts the proof material to the TAP-NAP
+server:
 
 ```text
-POST /tapcam/capture-signatures/verify
+POST https://www.tapnap.net/tapcam/capture-signatures/verify
 ```
 
 The original HEIC file stays in the browser. The server request only includes
@@ -48,9 +48,9 @@ npm run build
 ```
 
 The build output is `dist/`, suitable for GitHub Pages. Vite uses a relative
-asset base. The server verification handoff is reserved for the same-origin path
-`/tapcam/capture-signatures/verify`, but the current slice keeps it deferred so
-the browser-local content binding can be validated first.
+asset base. Local development can validate the Rust/WASM hash flow, but browser
+calls to the production server may fail locally if server CORS only allows the
+production Pages origin.
 
 ## Deploy To GitHub Pages
 
@@ -73,17 +73,29 @@ Without a custom domain, the project page should be available at:
 https://tap-nap.github.io/TAPCamVerifier/
 ```
 
-If a custom domain is used, configure it in `Settings` -> `Pages` and point DNS
-to GitHub Pages. Later, when server verification is enabled, route both the
-static site and `/tapcam/capture-signatures/verify` through the same public
-origin.
+The production custom domain is:
+
+```text
+https://verifier.tapnap.net/
+```
+
+The server endpoint is:
+
+```text
+https://www.tapnap.net/tapcam/capture-signatures/verify
+```
+
+Because those are different origins, the server must allow the exact production
+origin `https://verifier.tapnap.net` through CORS. `http://127.0.0.1:*` is not
+expected to pass server verification unless it is explicitly added to the server
+CORS allowlist.
 
 ## Project Map
 
 - `src/main.ts` owns the simple drag-and-drop workflow.
 - `src/wasm/tapcamVerifier.ts` loads the Rust-generated WebAssembly module.
-- `src/verifier/serverVerify.ts` is reserved for the same-origin verify request
-  once the backend is reachable.
+- `src/verifier/serverVerify.ts` posts the proof material to the TAP-NAP server
+  verify endpoint after local verification passes.
 - `crates/tapcam-verifier-wasm/` owns proof-slot parsing, manifest parsing,
   canonical JSON hashing, asset hashing, and local content-binding self-checks.
 - `src/decorations/` is intentionally empty for future designer-owned UI layers.

@@ -1,6 +1,8 @@
 import "./styles.css";
 import { verifyCaptureLocally } from "./wasm/tapcamVerifier";
+import { verifyCaptureSignature } from "./verifier/serverVerify";
 import type {
+  CaptureSignatureVerifyResponse,
   CombinedVerificationResult,
   LocalVerificationReport,
   VerificationCheck
@@ -71,27 +73,51 @@ async function verifyFile(file: File): Promise<void> {
 
 async function verifyFileBytes(file: File, fileBytes: Uint8Array): Promise<CombinedVerificationResult> {
   const local = await verifyCaptureLocally(fileBytes);
+  const localFailure = hasLocalFailure(local);
+
+  if (localFailure || !local.serverRequest) {
+    return {
+      fileName: file.name,
+      fileSize: file.size,
+      local,
+      server: null,
+      serverError: localFailure ? "not run: local verification failed" : "not run: missing server request",
+      finalStatus: "invalid"
+    };
+  }
+
+  let server: CaptureSignatureVerifyResponse | null = null;
+  let serverError: string | null = null;
+
+  try {
+    server = await verifyCaptureSignature(local.serverRequest);
+  } catch (error) {
+    serverError = error instanceof Error ? error.message : String(error);
+  }
 
   return {
     fileName: file.name,
     fileSize: file.size,
     local,
-    server: null,
-    serverError: "deferred",
-    finalStatus: finalStatus(local)
+    server,
+    serverError,
+    finalStatus: finalStatus(local, server)
   };
 }
 
 function finalStatus(
-  local: LocalVerificationReport
+  local: LocalVerificationReport,
+  server: CaptureSignatureVerifyResponse | null
 ): CombinedVerificationResult["finalStatus"] {
-  const hasLocalFailure = local.checks.some((check) => check.status === "fail");
-
-  if (hasLocalFailure) {
+  if (hasLocalFailure(local)) {
     return "invalid";
   }
 
-  return "valid";
+  return server?.status === "valid" ? "valid" : "invalid";
+}
+
+function hasLocalFailure(local: LocalVerificationReport): boolean {
+  return local.status !== "valid" || local.checks.some((check) => check.status === "fail");
 }
 
 function renderBusy(file: File): void {

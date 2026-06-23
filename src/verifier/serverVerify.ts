@@ -4,12 +4,15 @@ import type {
 } from "./types";
 
 export const CAPTURE_SIGNATURE_VERIFY_PATH = "/tapcam/capture-signatures/verify";
+export const CAPTURE_SIGNATURE_VERIFY_URL =
+  "https://www.tapnap.net/tapcam/capture-signatures/verify";
 
 export async function verifyCaptureSignature(
   request: CaptureSignatureVerifyRequest,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = fetch,
+  endpoint: string = CAPTURE_SIGNATURE_VERIFY_URL
 ): Promise<CaptureSignatureVerifyResponse> {
-  const response = await fetcher(CAPTURE_SIGNATURE_VERIFY_PATH, {
+  const response = await fetcher(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
