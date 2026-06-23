@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+dist/
+target/
+public/wasm/*.wasm
+
+# Local real-device TAPCam samples. Keep README tracked, keep photos local.
+test/*
+!test/README.md
