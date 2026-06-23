@@ -1,11 +1,26 @@
 import "./styles.css";
+import { visualizeCaptureDepth } from "./depth/depthVisualization";
+import type { DepthPanelState, DisplayOrientationReference } from "./depth/types";
+import { visualizeOriginalHeicFallback } from "./original/originalVisualization";
+import type { OriginalPreviewResult } from "./original/types";
+import {
+  drawDepthCanvas,
+  drawOriginalCanvas,
+  escapeHtml,
+  formatBytes,
+  renderDepthPanel,
+  renderOriginalPreviewLoading,
+  renderOriginalPreviewResult,
+  renderVerificationBusy,
+  renderVerificationError,
+  renderVerificationResult
+} from "./ui/rendering";
 import { verifyCaptureLocally } from "./wasm/tapcamVerifier";
 import { verifyCaptureSignature } from "./verifier/serverVerify";
 import type {
   CaptureSignatureVerifyResponse,
   CombinedVerificationResult,
-  LocalVerificationReport,
-  VerificationCheck
+  LocalVerificationReport
 } from "./verifier/types";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -23,19 +38,30 @@ app.innerHTML = `
         <p>Drop a signed HEIC or JPG here.</p>
       </div>
     </div>
+    <section class="visualization" id="visualization" hidden></section>
     <section class="result" id="result" aria-live="polite"></section>
   </section>
 `;
 
 const dropzone = document.querySelector<HTMLDivElement>("#dropzone");
 const fileInput = document.querySelector<HTMLInputElement>("#fileInput");
+const visualizationPanel = document.querySelector<HTMLElement>("#visualization");
 const resultPanel = document.querySelector<HTMLElement>("#result");
 
-if (!dropzone || !fileInput || !resultPanel) {
+if (!dropzone || !fileInput || !visualizationPanel || !resultPanel) {
   throw new Error("Verifier UI did not mount.");
 }
 
 const resultEl = resultPanel;
+const visualizationEl = visualizationPanel;
+let activeRunId = 0;
+let activeObjectUrl: string | null = null;
+let activeFileBytes: Uint8Array | null = null;
+let activeOriginalDisplayReference: DisplayOrientationReference | null = null;
+let originalDisplayResolvedRunId = 0;
+let originalFallbackNeededRunId = 0;
+let originalFallbackStartedRunId = 0;
+let depthStartedRunId = 0;
 
 dropzone.addEventListener("click", () => fileInput.click());
 dropzone.addEventListener("dragover", (event) => {
@@ -61,13 +87,203 @@ fileInput.addEventListener("change", () => {
 });
 
 async function verifyFile(file: File): Promise<void> {
-  renderBusy(file);
+  const runId = beginSelectedFile(file);
 
   try {
     const fileBytes = new Uint8Array(await file.arrayBuffer());
-    renderResult(await verifyFileBytes(file, fileBytes));
+    if (runId === activeRunId) {
+      activeFileBytes = fileBytes;
+      requestOriginalFallback(runId, file.name);
+      requestDepthVisualization(runId);
+    }
+    const result = await verifyFileBytes(file, fileBytes);
+    if (runId === activeRunId) {
+      resultEl.innerHTML = renderVerificationResult(result);
+    }
   } catch (error) {
-    renderError(error);
+    if (runId === activeRunId) {
+      resultEl.innerHTML = renderVerificationError(error);
+      updateDepthPanel({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+        warnings: [error instanceof Error ? error.message : String(error)]
+      });
+    }
+  }
+}
+
+function beginSelectedFile(file: File): number {
+  activeRunId += 1;
+  activeFileBytes = null;
+  activeOriginalDisplayReference = null;
+  originalDisplayResolvedRunId = 0;
+  originalFallbackNeededRunId = 0;
+  originalFallbackStartedRunId = 0;
+  depthStartedRunId = 0;
+  if (activeObjectUrl) {
+    URL.revokeObjectURL(activeObjectUrl);
+  }
+  activeObjectUrl = URL.createObjectURL(file);
+
+  renderVisualizationScaffold(file, activeObjectUrl);
+  updateDepthPanel({ status: "loading" });
+  resultEl.innerHTML = renderVerificationBusy(file.name, file.size);
+  return activeRunId;
+}
+
+function resolveOriginalDisplay(runId: number, reference: DisplayOrientationReference | null): void {
+  if (runId !== activeRunId) {
+    return;
+  }
+
+  activeOriginalDisplayReference = reference;
+  originalDisplayResolvedRunId = runId;
+  requestDepthVisualization(runId);
+}
+
+function requestDepthVisualization(runId: number): void {
+  if (
+    runId !== activeRunId ||
+    depthStartedRunId === runId ||
+    !activeFileBytes ||
+    originalDisplayResolvedRunId !== runId
+  ) {
+    return;
+  }
+
+  depthStartedRunId = runId;
+  void visualizeSelectedDepth(runId, activeFileBytes, activeOriginalDisplayReference ?? undefined);
+}
+
+async function visualizeSelectedOriginalFallback(
+  runId: number,
+  fileName: string,
+  fileBytes: Uint8Array
+): Promise<void> {
+  const previewState = await visualizeOriginalHeicFallback(fileBytes);
+  if (runId === activeRunId) {
+    updateOriginalPreview(previewState, fileName);
+  }
+}
+
+async function visualizeSelectedDepth(
+  runId: number,
+  fileBytes: Uint8Array,
+  displayReference?: DisplayOrientationReference
+): Promise<void> {
+  const depthState = await visualizeCaptureDepth(fileBytes, displayReference);
+  if (runId === activeRunId) {
+    updateDepthPanel(depthState);
+  }
+}
+
+function renderVisualizationScaffold(file: File, objectUrl: string): void {
+  visualizationEl.hidden = false;
+  visualizationEl.innerHTML = `
+    <div class="visual-grid">
+      <article class="visual-pane">
+        <header>
+          <h2>Original</h2>
+          <span>${escapeHtml(file.name)} · ${formatBytes(file.size)}</span>
+        </header>
+        <div class="media-frame" id="originalFrame">
+          <img id="originalPreview" src="${objectUrl}" alt="${escapeHtml(file.name)}" />
+        </div>
+      </article>
+      <article class="visual-pane">
+        <header>
+          <h2>Depth</h2>
+          <span>Embedded depth/disparity</span>
+        </header>
+        <div class="depth-panel" id="depthPanel"></div>
+      </article>
+    </div>
+  `;
+  attachOriginalPreviewFallback(file, activeRunId);
+}
+
+function attachOriginalPreviewFallback(file: File, runId: number): void {
+  const image = document.querySelector<HTMLImageElement>("#originalPreview");
+  const frame = document.querySelector<HTMLElement>("#originalFrame");
+  if (!image || !frame) {
+    return;
+  }
+
+  image.addEventListener("error", () => {
+    if (runId !== activeRunId) {
+      return;
+    }
+
+    originalFallbackNeededRunId = runId;
+    frame.innerHTML = renderOriginalPreviewLoading(file.name);
+    requestOriginalFallback(runId, file.name);
+  });
+
+  image.addEventListener("load", () => {
+    if (runId !== activeRunId) {
+      return;
+    }
+
+    const width = image.naturalWidth;
+    const height = image.naturalHeight;
+    resolveOriginalDisplay(runId, width > 0 && height > 0 ? { width, height } : null);
+  });
+
+  if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+    resolveOriginalDisplay(runId, {
+      width: image.naturalWidth,
+      height: image.naturalHeight
+    });
+  }
+}
+
+function requestOriginalFallback(runId: number, fileName: string): void {
+  if (
+    runId !== activeRunId ||
+    originalFallbackNeededRunId !== runId ||
+    originalFallbackStartedRunId === runId ||
+    !activeFileBytes
+  ) {
+    return;
+  }
+
+  originalFallbackStartedRunId = runId;
+  void visualizeSelectedOriginalFallback(runId, fileName, activeFileBytes);
+}
+
+function updateOriginalPreview(state: OriginalPreviewResult, fileName: string): void {
+  const frame = document.querySelector<HTMLElement>("#originalFrame");
+  if (!frame) {
+    return;
+  }
+
+  frame.innerHTML = renderOriginalPreviewResult(state, fileName);
+  if (state.status === "available") {
+    const canvas = document.querySelector<HTMLCanvasElement>("#originalFallbackCanvas");
+    if (canvas) {
+      drawOriginalCanvas(state, canvas);
+    }
+    resolveOriginalDisplay(activeRunId, {
+      width: state.orientedWidth,
+      height: state.orientedHeight
+    });
+  } else {
+    resolveOriginalDisplay(activeRunId, null);
+  }
+}
+
+function updateDepthPanel(state: DepthPanelState): void {
+  const depthPanel = document.querySelector<HTMLElement>("#depthPanel");
+  if (!depthPanel) {
+    return;
+  }
+
+  depthPanel.innerHTML = renderDepthPanel(state);
+  if (state.status === "available") {
+    const canvas = document.querySelector<HTMLCanvasElement>("#depthCanvas");
+    if (canvas) {
+      drawDepthCanvas(state, canvas);
+    }
   }
 }
 
@@ -92,7 +308,7 @@ async function verifyFileBytes(file: File, fileBytes: Uint8Array): Promise<Combi
   try {
     server = await verifyCaptureSignature(local.serverRequest);
   } catch (error) {
-    serverError = error instanceof Error ? error.message : String(error);
+    serverError = formatServerVerifyError(error);
   }
 
   return {
@@ -120,105 +336,12 @@ function hasLocalFailure(local: LocalVerificationReport): boolean {
   return local.status !== "valid" || local.checks.some((check) => check.status === "fail");
 }
 
-function renderBusy(file: File): void {
-  resultEl.innerHTML = `
-    <div class="status-line">
-      <span class="status-pill status-pill--busy">verifying</span>
-      <span>${escapeHtml(file.name)} · ${formatBytes(file.size)}</span>
-    </div>
-  `;
-}
-
-function renderError(error: unknown): void {
+function formatServerVerifyError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  resultEl.innerHTML = `
-    <div class="status-line">
-      <span class="status-pill status-pill--invalid">invalid</span>
-      <span>${escapeHtml(message)}</span>
-    </div>
-  `;
-}
 
-function renderResult(result: CombinedVerificationResult): void {
-  const serverStatus = result.server
-    ? `${result.server.status}${result.server.reason ? ` · ${result.server.reason}` : ""}`
-    : result.serverError ?? "not run";
-
-  resultEl.innerHTML = `
-    <div class="status-line">
-      <span class="status-pill status-pill--${result.finalStatus}">${result.finalStatus}</span>
-      <span>${escapeHtml(result.fileName)} · ${formatBytes(result.fileSize)}</span>
-    </div>
-    <dl class="summary-grid">
-      <div>
-        <dt>Capture ID</dt>
-        <dd>${escapeHtml(result.local.captureId ?? "missing")}</dd>
-      </div>
-      <div>
-        <dt>Captured At</dt>
-        <dd>${escapeHtml(result.local.capturedAt ?? "missing")}</dd>
-      </div>
-      <div>
-        <dt>Format</dt>
-        <dd>${escapeHtml(result.local.manifest?.containerFormat ?? "unknown")}</dd>
-      </div>
-      <div>
-        <dt>Server</dt>
-        <dd>${escapeHtml(serverStatus)}</dd>
-      </div>
-      <div>
-        <dt>Asset SHA-256</dt>
-        <dd>${escapeHtml(result.local.recomputed?.assetSHA256 ?? "missing")}</dd>
-      </div>
-      <div>
-        <dt>Signing Binding SHA-256</dt>
-        <dd>${escapeHtml(result.local.recomputed?.signingBindingSHA256 ?? "missing")}</dd>
-      </div>
-    </dl>
-    <p class="summary">${escapeHtml(result.local.summary)}</p>
-    <div class="checks">
-      ${result.local.checks.map(renderCheck).join("")}
-    </div>
-  `;
-}
-
-function renderCheck(check: VerificationCheck): string {
-  return `
-    <article class="check check--${check.status}">
-      <div>
-        <strong>${escapeHtml(check.label)}</strong>
-        <p>${escapeHtml(check.detail)}</p>
-      </div>
-      <span>${check.status}</span>
-    </article>
-  `;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
+  if (error instanceof TypeError && message === "Failed to fetch") {
+    return "Failed to fetch. Browser blocked the server verify request; check HTTPS, CORS preflight, and network reachability.";
   }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => {
-    switch (character) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#039;";
-      default:
-        return character;
-    }
-  });
+  return message;
 }

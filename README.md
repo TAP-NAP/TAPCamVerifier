@@ -29,6 +29,16 @@ DepthFloat32 for the base signature. Rust/WASM verifies:
 - reconstructed `CaptureContentBinding` equality;
 - `signingBinding.bodySHA256` and full signing binding equality.
 
+The page also includes a downstream visual inspection path. After selection, the
+left pane first tries the browser's native image decoder for the original file.
+If that decoder cannot render HEIC, the browser falls back to `libheif-js` WASM
+to decode the primary HEIF image and sends the RGBA plane to Rust/WASM for TAP
+orientation handling and preview downscaling. The right pane decodes the
+embedded HEIF auxiliary depth/disparity plane in the browser and sends that luma
+plane to Rust/WASM for TAP metadata interpretation, orientation, normalization,
+and RGBA preview generation. These visualizations are not signature inputs and
+do not change local `valid` / `invalid` semantics.
+
 Strict means there is no tolerant fallback. Any mismatch in the proof slot,
 manifest, asset hash, metadata hash, content binding, or signing binding is
 `invalid`.
@@ -93,13 +103,20 @@ CORS allowlist.
 ## Project Map
 
 - `src/main.ts` owns the simple drag-and-drop workflow.
+- `src/depth/` owns HEIF auxiliary depth discovery and visual preview
+  orchestration.
+- `src/original/` owns the HEIC primary-image fallback path for browsers that
+  cannot natively preview HEIC.
+- `src/ui/` owns render helpers for the verification and depth panels.
 - `src/wasm/tapcamVerifier.ts` loads the Rust-generated WebAssembly module.
 - `src/verifier/serverVerify.ts` posts the proof material to the TAP-NAP server
   verify endpoint after local verification passes.
 - `crates/tapcam-verifier-wasm/` owns proof-slot parsing, manifest parsing,
-  canonical JSON hashing, asset hashing, and local content-binding self-checks.
+  canonical JSON hashing, asset hashing, local content-binding self-checks, and
+  original/depth preview normalization for decoded image planes.
 - `src/decorations/` is intentionally empty for future designer-owned UI layers.
 - `Docs/VerificationFlow.md` documents the hard-binding hash flow.
+- `Docs/Roadmap.md` records the depth-to-geometry roadmap.
 - `Docs/Scorecard.md` tracks engineering health.
 - `Docs/DevLog/` records decisions and handoff context.
 

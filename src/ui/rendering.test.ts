@@ -1,0 +1,144 @@
+import { describe, expect, it } from "vitest";
+import type { DepthVisualizationAvailable } from "../depth/types";
+import type { OriginalPreviewAvailable } from "../original/types";
+import type { CombinedVerificationResult } from "../verifier/types";
+import {
+  renderDepthPanel,
+  renderOriginalPreviewLoading,
+  renderOriginalPreviewResult,
+  renderVerificationResult
+} from "./rendering";
+
+const result: CombinedVerificationResult = {
+  fileName: "capture.HEIC",
+  fileSize: 2048,
+  finalStatus: "valid",
+  server: {
+    status: "valid",
+    signingBindingSHA256: "server-binding"
+  },
+  serverError: null,
+  local: {
+    status: "valid",
+    summary: "All local content binding checks passed.",
+    captureId: "capture-id",
+    capturedAt: "2026-06-23T00:00:00.000Z",
+    manifest: {
+      containerFormat: "heif"
+    },
+    recomputed: {
+      assetSHA256: "asset",
+      signingBindingSHA256: "binding"
+    },
+    serverRequest: null,
+    checks: [
+      {
+        id: "asset-hash",
+        label: "Recompute asset hash excluding proof slot",
+        detail: "Values match.",
+        status: "pass"
+      }
+    ]
+  }
+};
+
+describe("renderVerificationResult", () => {
+  it("keeps the local summary visible and collapses detailed checks", () => {
+    const html = renderVerificationResult(result);
+
+    expect(html).toContain("All local content binding checks passed.");
+    expect(html).toContain('<details class="checks-disclosure">');
+    expect(html).not.toContain('<details class="checks-disclosure" open>');
+    expect(html).toContain("Local content binding checks");
+    expect(html).toContain("Recompute asset hash excluding proof slot");
+  });
+});
+
+describe("renderDepthPanel", () => {
+  it("renders unavailable depth without a canvas", () => {
+    const html = renderDepthPanel({
+      status: "unavailable",
+      message: "No embedded depth plane.",
+      warnings: ["No embedded depth plane."]
+    });
+
+    expect(html).toContain("No embedded depth plane.");
+    expect(html).not.toContain("<canvas");
+  });
+
+  it("renders available depth metadata and canvas target", () => {
+    const state: DepthVisualizationAvailable = {
+      status: "available",
+      sourceKind: "disparity",
+      width: 768,
+      height: 576,
+      inputWidth: 576,
+      inputHeight: 768,
+      minValue: 3.917969,
+      maxValue: 12.304688,
+      valueRangeKind: "apdi-float-range",
+      valueUnit: "disparity",
+      rawMin: 0,
+      rawMax: 255,
+      orientation: "appleAuxiliaryDepthNative",
+      photoOrientation: "cgImagePropertyOrientation:6",
+      rotation: "clockwise90",
+      previewRgba: new Uint8ClampedArray(768 * 576 * 4),
+      warnings: []
+    };
+
+    const html = renderDepthPanel(state);
+
+    expect(html).toContain('id="depthCanvas"');
+    expect(html).toContain("768 × 576");
+    expect(html).toContain("3.9180 – 12.3047 disparity");
+    expect(html).toContain("clockwise90");
+  });
+});
+
+describe("renderOriginalPreviewResult", () => {
+  it("renders fallback loading copy", () => {
+    const html = renderOriginalPreviewLoading("capture.HEIC");
+
+    expect(html).toContain("Decoding original image with WASM.");
+    expect(html).toContain("capture.HEIC");
+  });
+
+  it("renders unavailable original preview without a canvas", () => {
+    const html = renderOriginalPreviewResult(
+      {
+        status: "unavailable",
+        message: "No HEIF primary image was found.",
+        warnings: ["No HEIF primary image was found."]
+      },
+      "capture.HEIC"
+    );
+
+    expect(html).toContain("No HEIF primary image was found.");
+    expect(html).not.toContain("<canvas");
+  });
+
+  it("renders available original preview canvas", () => {
+    const state: OriginalPreviewAvailable = {
+      status: "available",
+      sourceKind: "heif-primary-image",
+      width: 1200,
+      height: 900,
+      inputWidth: 3024,
+      inputHeight: 4032,
+      orientedWidth: 4032,
+      orientedHeight: 3024,
+      photoOrientation: "cgImagePropertyOrientation:6",
+      rotation: "clockwise90",
+      scale: 0.2976,
+      previewRgba: new Uint8ClampedArray(1200 * 900 * 4),
+      warnings: []
+    };
+
+    const html = renderOriginalPreviewResult(state, "capture.HEIC");
+
+    expect(html).toContain('id="originalFallbackCanvas"');
+    expect(html).toContain('width="1200"');
+    expect(html).toContain('height="900"');
+  });
+});

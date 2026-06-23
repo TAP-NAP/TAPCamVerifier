@@ -120,3 +120,15 @@ Reference checks from this round:
   removed.
 - `npm run test`, `npm run build`, the fixture CLI, and a manual Chrome upload
   on `http://127.0.0.1:4174/` all verified the fixture as `valid`.
+
+## 2026-06-23 Server Verify Integration
+
+- The production page at `https://verifier.tapnap.net/` calls
+  `https://www.tapnap.net/tapcam/capture-signatures/verify` after local
+  verification passes.
+- A direct server call with the real fixture `serverRequest` returns
+  `status: valid` and `signingBindingSHA256`
+  `dXA6ou1QxqT1PgTYP5qj336Zvp1Z_EhCrss_dbQkzPw`.
+- Browser fetch still fails until the server returns CORS headers for
+  `https://verifier.tapnap.net` and handles the OPTIONS preflight. Current
+  observed preflight response is `405 Allow: POST`.

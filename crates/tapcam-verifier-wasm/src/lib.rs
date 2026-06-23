@@ -1,6 +1,6 @@
 #![allow(static_mut_refs)]
 
-use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
+use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -74,6 +74,50 @@ pub unsafe extern "C" fn tapcam_verify_file_with_assets(
     store_result(verify_capture_bytes(bytes))
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn tapcam_visualize_depth_u8(
+    file_ptr: *const u8,
+    file_len: usize,
+    luma_ptr: *const u8,
+    luma_len: usize,
+    width: u32,
+    height: u32,
+    display_width: u32,
+    display_height: u32,
+) -> *const u8 {
+    let file_bytes = slice::from_raw_parts(file_ptr, file_len);
+    let luma = slice::from_raw_parts(luma_ptr, luma_len);
+    let display_reference = if display_width > 0 && display_height > 0 {
+        Some((display_width, display_height))
+    } else {
+        None
+    };
+    store_result(depth_visualization_result(visualize_depth_u8_inner(
+        file_bytes,
+        luma,
+        width,
+        height,
+        display_reference,
+    )))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tapcam_prepare_original_rgba(
+    file_ptr: *const u8,
+    file_len: usize,
+    rgba_ptr: *const u8,
+    rgba_len: usize,
+    width: u32,
+    height: u32,
+    max_edge: u32,
+) -> *const u8 {
+    let file_bytes = slice::from_raw_parts(file_ptr, file_len);
+    let rgba = slice::from_raw_parts(rgba_ptr, rgba_len);
+    store_result(prepare_original_rgba(
+        file_bytes, rgba, width, height, max_edge,
+    ))
+}
+
 fn store_result(report: Value) -> *const u8 {
     let mut result = serde_json::to_vec(&report).unwrap_or_else(|error| {
         json!({
@@ -127,6 +171,55 @@ pub fn verify_capture_bytes(bytes: &[u8]) -> Value {
     }
 }
 
+pub fn visualize_depth_u8(file_bytes: &[u8], luma: &[u8], width: u32, height: u32) -> Value {
+    depth_visualization_result(visualize_depth_u8_inner(file_bytes, luma, width, height, None))
+}
+
+pub fn visualize_depth_u8_for_display(
+    file_bytes: &[u8],
+    luma: &[u8],
+    width: u32,
+    height: u32,
+    display_width: u32,
+    display_height: u32,
+) -> Value {
+    depth_visualization_result(visualize_depth_u8_inner(
+        file_bytes,
+        luma,
+        width,
+        height,
+        Some((display_width, display_height)),
+    ))
+}
+
+fn depth_visualization_result(result: Result<Value, String>) -> Value {
+    match result {
+        Ok(report) => report,
+        Err(error) => json!({
+            "status": "error",
+            "message": error,
+            "warnings": [error]
+        }),
+    }
+}
+
+pub fn prepare_original_rgba(
+    file_bytes: &[u8],
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    max_edge: u32,
+) -> Value {
+    match prepare_original_rgba_inner(file_bytes, rgba, width, height, max_edge) {
+        Ok(report) => report,
+        Err(error) => json!({
+            "status": "error",
+            "message": error,
+            "warnings": [error]
+        }),
+    }
+}
+
 fn verify_capture_bytes_inner(bytes: &[u8]) -> Result<Value, String> {
     let container = detect_container(bytes)?;
     let slot = locate_proof_slot(bytes, container)?;
@@ -160,7 +253,8 @@ fn verify_capture_bytes_inner(bytes: &[u8]) -> Result<Value, String> {
     let assertion_object = string_field(&proof_value, "assertionObject")?;
     let proof_value_key_id = string_field(&proof_value, "keyId")?;
 
-    let asset_hash_actual = sha256_base64url_excluding(bytes, slot.container_offset, slot.container_length)?;
+    let asset_hash_actual =
+        sha256_base64url_excluding(bytes, slot.container_offset, slot.container_length)?;
     let payload_canonical = canonical_json_bytes(payload)?;
     let metadata_hash_actual = sha256_base64url(&payload_canonical);
     let recomputed_digest = recompute_content_digest(
@@ -231,7 +325,12 @@ fn verify_capture_bytes_inner(bytes: &[u8]) -> Result<Value, String> {
         schema_check(schema),
         manifest_proofs_empty_check(proofs.len()),
         capture_policy_check(container, payload.get("capture")),
-        equality_check("proof-type", "Require appAttestAssertion proof", proof_type, PROOF_TYPE),
+        equality_check(
+            "proof-type",
+            "Require appAttestAssertion proof",
+            proof_type,
+            PROOF_TYPE,
+        ),
         equality_check(
             "proof-algorithm",
             "Require TAPCam signature algorithm",
@@ -370,6 +469,216 @@ fn verify_capture_bytes_inner(bytes: &[u8]) -> Result<Value, String> {
         },
         "serverRequest": server_request,
         "checks": checks
+    }))
+}
+
+fn visualize_depth_u8_inner(
+    file_bytes: &[u8],
+    luma: &[u8],
+    width: u32,
+    height: u32,
+    display_reference: Option<(u32, u32)>,
+) -> Result<Value, String> {
+    if width == 0 || height == 0 {
+        return Err("decoded depth plane has zero dimensions".to_string());
+    }
+    let width_usize = width as usize;
+    let height_usize = height as usize;
+    let expected_len = width_usize
+        .checked_mul(height_usize)
+        .ok_or("decoded depth plane dimensions overflow")?;
+    if luma.len() < expected_len {
+        return Err(format!(
+            "decoded depth plane is too short: got {}, expected {}",
+            luma.len(),
+            expected_len
+        ));
+    }
+
+    let manifest_json = extract_tap_manifest_json(file_bytes)?;
+    let manifest: Value = serde_json::from_str(&manifest_json)
+        .map_err(|error| format!("tapdepth:Manifest is not valid JSON: {error}"))?;
+    let payload = field(&manifest, "payload")?;
+    let depth = field(payload, "depth")?;
+    let manifest_width = optional_u32(depth, "width");
+    let manifest_height = optional_u32(depth, "height");
+    let source_kind = depth
+        .get("auxiliaryDataKind")
+        .and_then(Value::as_str)
+        .or_else(|| depth.get("pixelFormat").and_then(Value::as_str))
+        .unwrap_or("unknown");
+    let pixel_format = depth
+        .get("pixelFormat")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let metric_unit = depth
+        .get("metricUnit")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let orientation = depth
+        .get("orientation")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let photo_orientation = payload
+        .get("photo")
+        .and_then(|photo| photo.get("orientation"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+
+    let (display_width, display_height) = display_reference
+        .map(|(width, height)| (Some(width), Some(height)))
+        .unwrap_or((manifest_width, manifest_height));
+
+    let transform = display_orientation_transform(
+        width,
+        height,
+        display_width,
+        display_height,
+        Some(photo_orientation),
+    );
+    let (output_width, output_height) = transform.output_dimensions(width, height);
+
+    let raw_min = *luma[..expected_len]
+        .iter()
+        .min()
+        .ok_or("decoded depth plane is empty")?;
+    let raw_max = *luma[..expected_len]
+        .iter()
+        .max()
+        .ok_or("decoded depth plane is empty")?;
+    let apdi_min = extract_xml_number(file_bytes, "apdi:FloatMinValue");
+    let apdi_max = extract_xml_number(file_bytes, "apdi:FloatMaxValue");
+    let (min_value, max_value, value_range_kind) = match (apdi_min, apdi_max) {
+        (Some(min), Some(max)) if max > min => (min, max, "apdi-float-range"),
+        _ => (raw_min as f64, raw_max as f64, "decoded-luma-range"),
+    };
+    let value_unit = infer_depth_value_unit(source_kind, pixel_format, metric_unit, value_range_kind);
+
+    let mut rgba = vec![0u8; output_width as usize * output_height as usize * 4];
+    for y in 0..output_height as usize {
+        for x in 0..output_width as usize {
+            let (source_x, source_y) =
+                inverse_orientation_transform(x as f64, y as f64, width, height, transform);
+            let source_x = source_x.round().clamp(0.0, (width - 1) as f64) as usize;
+            let source_y = source_y.round().clamp(0.0, (height - 1) as f64) as usize;
+            let value = luma[source_y * width_usize + source_x];
+            let normalized = normalize_u8(value, raw_min, raw_max);
+            let (red, green, blue) = depth_color(normalized);
+            let offset = (y * output_width as usize + x) * 4;
+            rgba[offset] = red;
+            rgba[offset + 1] = green;
+            rgba[offset + 2] = blue;
+            rgba[offset + 3] = 255;
+        }
+    }
+
+    let mut warnings = Vec::new();
+    if manifest_width != Some(output_width) || manifest_height != Some(output_height) {
+        warnings.push(format!(
+            "decoded depth preview is {}x{} but manifest depth is {}x{}",
+            output_width,
+            output_height,
+            manifest_width
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            manifest_height
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        ));
+    }
+
+    Ok(json!({
+        "status": "available",
+        "sourceKind": source_kind,
+        "width": output_width,
+        "height": output_height,
+        "inputWidth": width,
+        "inputHeight": height,
+        "minValue": min_value,
+        "maxValue": max_value,
+        "valueRangeKind": value_range_kind,
+        "valueUnit": value_unit,
+        "rawMin": raw_min,
+        "rawMax": raw_max,
+        "orientation": orientation,
+        "photoOrientation": photo_orientation,
+        "rotation": transform.as_report_str(),
+        "previewRgbaBase64": STANDARD.encode(rgba),
+        "warnings": warnings
+    }))
+}
+
+fn prepare_original_rgba_inner(
+    file_bytes: &[u8],
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    max_edge: u32,
+) -> Result<Value, String> {
+    if width == 0 || height == 0 {
+        return Err("decoded original image has zero dimensions".to_string());
+    }
+
+    let width_usize = width as usize;
+    let height_usize = height as usize;
+    let expected_len = width_usize
+        .checked_mul(height_usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("decoded original image dimensions overflow")?;
+    if rgba.len() < expected_len {
+        return Err(format!(
+            "decoded original RGBA is too short: got {}, expected {}",
+            rgba.len(),
+            expected_len
+        ));
+    }
+
+    let photo_metadata = read_photo_metadata(file_bytes).unwrap_or_default();
+    let transform = OrientationTransform::None;
+    let (oriented_width, oriented_height) = transform.output_dimensions(width, height);
+    let max_edge = if max_edge == 0 {
+        oriented_width.max(oriented_height)
+    } else {
+        max_edge
+    };
+    let scale = (max_edge as f64 / oriented_width.max(oriented_height) as f64).min(1.0);
+    let output_width = ((oriented_width as f64 * scale).round() as u32).max(1);
+    let output_height = ((oriented_height as f64 * scale).round() as u32).max(1);
+
+    let mut preview = vec![0u8; output_width as usize * output_height as usize * 4];
+    resample_original_rgba(
+        rgba,
+        width,
+        height,
+        transform,
+        oriented_width,
+        oriented_height,
+        output_width,
+        output_height,
+        &mut preview,
+    );
+
+    let mut warnings = Vec::new();
+    if output_width != oriented_width || output_height != oriented_height {
+        warnings.push(format!(
+            "original preview was downscaled from {}x{} to {}x{}",
+            oriented_width, oriented_height, output_width, output_height
+        ));
+    }
+    Ok(json!({
+        "status": "available",
+        "sourceKind": "heif-primary-image",
+        "width": output_width,
+        "height": output_height,
+        "inputWidth": width,
+        "inputHeight": height,
+        "orientedWidth": oriented_width,
+        "orientedHeight": oriented_height,
+        "photoOrientation": photo_metadata.orientation.unwrap_or_else(|| "unknown".to_string()),
+        "rotation": transform.as_report_str(),
+        "scale": scale,
+        "previewRgbaBase64": STANDARD.encode(preview),
+        "warnings": warnings
     }))
 }
 
@@ -648,8 +957,14 @@ fn read_proof_envelope<'a>(bytes: &'a [u8], slot: &ProofSlot) -> Result<&'a [u8]
     Ok(&payload[envelope_start..envelope_end])
 }
 
-fn sha256_base64url_excluding(bytes: &[u8], offset: usize, length: usize) -> Result<String, String> {
-    let end = offset.checked_add(length).ok_or("invalid proof slot range")?;
+fn sha256_base64url_excluding(
+    bytes: &[u8],
+    offset: usize,
+    length: usize,
+) -> Result<String, String> {
+    let end = offset
+        .checked_add(length)
+        .ok_or("invalid proof slot range")?;
     if end > bytes.len() {
         return Err("invalid proof slot range".to_string());
     }
@@ -683,6 +998,15 @@ fn extract_tap_manifest_json(bytes: &[u8]) -> Result<String, String> {
     Ok(xml_unescape(text[content_start..close_start].trim()))
 }
 
+fn extract_xml_number(bytes: &[u8], tag_name: &str) -> Option<f64> {
+    let text = String::from_utf8_lossy(bytes);
+    let open_marker = format!("<{tag_name}>");
+    let close_marker = format!("</{tag_name}>");
+    let start = text.find(&open_marker)? + open_marker.len();
+    let end = text[start..].find(&close_marker)? + start;
+    text[start..end].trim().parse::<f64>().ok()
+}
+
 fn xml_unescape(input: &str) -> String {
     input
         .replace("&quot;", "\"")
@@ -702,8 +1026,13 @@ fn string_field<'a>(value: &'a Value, name: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("{name} is not a string"))
 }
 
+fn optional_u32(value: &Value, name: &str) -> Option<u32> {
+    value.get(name)?.as_u64()?.try_into().ok()
+}
+
 fn canonical_json_bytes(value: &Value) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(value).map_err(|error| format!("canonical JSON serialization failed: {error}"))
+    serde_json::to_vec(value)
+        .map_err(|error| format!("canonical JSON serialization failed: {error}"))
 }
 
 fn sha256_base64url(bytes: &[u8]) -> String {
@@ -742,6 +1071,263 @@ fn read_u64_be(bytes: &[u8], offset: usize) -> Result<u64, String> {
         value = (value << 8) | (*byte as u64);
     }
     Ok(value)
+}
+
+fn display_orientation_transform(
+    width: u32,
+    height: u32,
+    display_width: Option<u32>,
+    display_height: Option<u32>,
+    photo_orientation: Option<&str>,
+) -> OrientationTransform {
+    let Some(display_width) = display_width else {
+        return OrientationTransform::None;
+    };
+    let Some(display_height) = display_height else {
+        return OrientationTransform::None;
+    };
+
+    let photo_transform = photo_orientation
+        .map(OrientationTransform::from_photo_orientation_str)
+        .unwrap_or(OrientationTransform::None);
+    let candidates = [
+        OrientationTransform::None,
+        photo_transform,
+        OrientationTransform::Clockwise90,
+        OrientationTransform::CounterClockwise90,
+        OrientationTransform::Rotate180,
+    ];
+
+    for transform in candidates {
+        let (output_width, output_height) = transform.output_dimensions(width, height);
+        if output_width == display_width && output_height == display_height {
+            return transform;
+        }
+    }
+
+    if same_display_axis(width, height, display_width, display_height) {
+        return OrientationTransform::None;
+    }
+
+    let (photo_width, photo_height) = photo_transform.output_dimensions(width, height);
+    if same_display_axis(photo_width, photo_height, display_width, display_height) {
+        return photo_transform;
+    }
+
+    for transform in [
+        OrientationTransform::Clockwise90,
+        OrientationTransform::CounterClockwise90,
+        OrientationTransform::Rotate180,
+    ] {
+        let (output_width, output_height) = transform.output_dimensions(width, height);
+        if same_display_axis(output_width, output_height, display_width, display_height) {
+            return transform;
+        }
+    }
+
+    OrientationTransform::None
+}
+
+fn same_display_axis(width: u32, height: u32, display_width: u32, display_height: u32) -> bool {
+    width.cmp(&height) == display_width.cmp(&display_height)
+}
+
+fn infer_depth_value_unit(
+    source_kind: &str,
+    pixel_format: &str,
+    metric_unit: &str,
+    value_range_kind: &str,
+) -> &'static str {
+    if value_range_kind == "decoded-luma-range" {
+        return "luma";
+    }
+
+    if source_kind.eq_ignore_ascii_case("disparity")
+        || pixel_format.eq_ignore_ascii_case("hdis")
+        || metric_unit.to_ascii_lowercase().contains("disparity")
+    {
+        return "disparity";
+    }
+
+    let metric_unit_lower = metric_unit.to_ascii_lowercase();
+    if source_kind.to_ascii_lowercase().contains("depth")
+        || metric_unit_lower.contains("meter")
+        || metric_unit_lower.contains("metre")
+    {
+        return "m";
+    }
+
+    "value"
+}
+
+#[derive(Clone, Copy)]
+enum OrientationTransform {
+    None,
+    Rotate180,
+    Clockwise90,
+    CounterClockwise90,
+}
+
+impl OrientationTransform {
+    fn from_photo_orientation_str(orientation: &str) -> Self {
+        match orientation {
+            value if value.ends_with(":3") || value == "3" => Self::Rotate180,
+            value if value.ends_with(":6") || value == "6" => Self::Clockwise90,
+            value if value.ends_with(":8") || value == "8" => Self::CounterClockwise90,
+            _ => Self::None,
+        }
+    }
+
+    fn output_dimensions(self, width: u32, height: u32) -> (u32, u32) {
+        match self {
+            Self::Clockwise90 | Self::CounterClockwise90 => (height, width),
+            Self::None | Self::Rotate180 => (width, height),
+        }
+    }
+
+    fn as_report_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Rotate180 => "rotate180",
+            Self::Clockwise90 => "clockwise90",
+            Self::CounterClockwise90 => "counterClockwise90",
+        }
+    }
+}
+
+#[derive(Default)]
+struct PhotoMetadata {
+    orientation: Option<String>,
+}
+
+fn read_photo_metadata(file_bytes: &[u8]) -> Result<PhotoMetadata, String> {
+    let manifest_json = extract_tap_manifest_json(file_bytes)?;
+    let manifest: Value = serde_json::from_str(&manifest_json)
+        .map_err(|error| format!("tapdepth:Manifest is not valid JSON: {error}"))?;
+    let photo = manifest
+        .get("payload")
+        .and_then(|payload| payload.get("photo"));
+
+    Ok(PhotoMetadata {
+        orientation: photo
+            .and_then(|value| value.get("orientation"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resample_original_rgba(
+    source: &[u8],
+    source_width: u32,
+    source_height: u32,
+    transform: OrientationTransform,
+    oriented_width: u32,
+    oriented_height: u32,
+    output_width: u32,
+    output_height: u32,
+    output: &mut [u8],
+) {
+    let x_scale = oriented_width as f64 / output_width as f64;
+    let y_scale = oriented_height as f64 / output_height as f64;
+
+    for y in 0..output_height as usize {
+        for x in 0..output_width as usize {
+            let oriented_x =
+                ((x as f64 + 0.5) * x_scale - 0.5).clamp(0.0, (oriented_width - 1) as f64);
+            let oriented_y =
+                ((y as f64 + 0.5) * y_scale - 0.5).clamp(0.0, (oriented_height - 1) as f64);
+            let (source_x, source_y) = inverse_orientation_transform(
+                oriented_x,
+                oriented_y,
+                source_width,
+                source_height,
+                transform,
+            );
+            let offset = (y * output_width as usize + x) * 4;
+            sample_bilinear_rgba(
+                source,
+                source_width,
+                source_height,
+                source_x,
+                source_y,
+                output,
+                offset,
+            );
+        }
+    }
+}
+
+fn inverse_orientation_transform(
+    x: f64,
+    y: f64,
+    source_width: u32,
+    source_height: u32,
+    transform: OrientationTransform,
+) -> (f64, f64) {
+    match transform {
+        OrientationTransform::None => (x, y),
+        OrientationTransform::Rotate180 => (
+            (source_width - 1) as f64 - x,
+            (source_height - 1) as f64 - y,
+        ),
+        OrientationTransform::Clockwise90 => (y, (source_height - 1) as f64 - x),
+        OrientationTransform::CounterClockwise90 => ((source_width - 1) as f64 - y, x),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sample_bilinear_rgba(
+    source: &[u8],
+    width: u32,
+    height: u32,
+    x: f64,
+    y: f64,
+    output: &mut [u8],
+    output_offset: usize,
+) {
+    let x0 = x.floor().clamp(0.0, (width - 1) as f64) as usize;
+    let y0 = y.floor().clamp(0.0, (height - 1) as f64) as usize;
+    let x1 = (x0 + 1).min(width as usize - 1);
+    let y1 = (y0 + 1).min(height as usize - 1);
+    let wx = x - x0 as f64;
+    let wy = y - y0 as f64;
+
+    let top_left = (y0 * width as usize + x0) * 4;
+    let top_right = (y0 * width as usize + x1) * 4;
+    let bottom_left = (y1 * width as usize + x0) * 4;
+    let bottom_right = (y1 * width as usize + x1) * 4;
+
+    for channel in 0..4 {
+        let top = source[top_left + channel] as f64 * (1.0 - wx)
+            + source[top_right + channel] as f64 * wx;
+        let bottom = source[bottom_left + channel] as f64 * (1.0 - wx)
+            + source[bottom_right + channel] as f64 * wx;
+        output[output_offset + channel] = (top * (1.0 - wy) + bottom * wy).round() as u8;
+    }
+}
+
+fn normalize_u8(value: u8, min: u8, max: u8) -> f32 {
+    if max <= min {
+        return 0.0;
+    }
+    (value.saturating_sub(min)) as f32 / (max - min) as f32
+}
+
+fn depth_color(value: f32) -> (u8, u8, u8) {
+    let value = value.clamp(0.0, 1.0);
+    let red = (255.0 * smoothstep(0.35, 0.95, value)) as u8;
+    let green = (255.0 * (1.0 - (value - 0.5).abs() * 1.7).clamp(0.0, 1.0)) as u8;
+    let blue = (255.0 * (1.0 - smoothstep(0.05, 0.65, value))) as u8;
+    (red, green, blue)
+}
+
+fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    if edge1 <= edge0 {
+        return if value >= edge1 { 1.0 } else { 0.0 };
+    }
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 fn check_pass(id: &str, label: &str, detail: &str) -> Value {
@@ -847,10 +1433,18 @@ fn capture_policy_check(container: Container, capture: Option<&Value>) -> Value 
     if capture.get("requestedCodec").and_then(Value::as_str) != Some(expected_codec) {
         violations.push(format!("requestedCodec must be {expected_codec}"));
     }
-    if capture.get("depthDataDeliveryEnabled").and_then(Value::as_bool) != Some(true) {
+    if capture
+        .get("depthDataDeliveryEnabled")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
         violations.push("depthDataDeliveryEnabled must be true".to_string());
     }
-    if capture.get("embedsDepthDataInPhoto").and_then(Value::as_bool) != Some(true) {
+    if capture
+        .get("embedsDepthDataInPhoto")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
         violations.push("embedsDepthDataInPhoto must be true".to_string());
     }
     if capture.get("depthDataFiltered").and_then(Value::as_bool) != Some(true) {
@@ -921,6 +1515,122 @@ mod tests {
     }
 
     #[test]
+    fn depth_visualization_uses_apdi_range() {
+        let bytes = depth_manifest_fixture(2, 2, "cgImagePropertyOrientation:1", "")
+            .replace(
+                "<x:xmpmeta>",
+                "<x:xmpmeta><apdi:FloatMinValue>3.5</apdi:FloatMinValue><apdi:FloatMaxValue>12.25</apdi:FloatMaxValue>",
+            );
+        let report = visualize_depth_u8(bytes.as_bytes(), &[4, 8, 12, 16], 2, 2);
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["minValue"], 3.5);
+        assert_eq!(report["maxValue"], 12.25);
+        assert_eq!(report["valueRangeKind"], "apdi-float-range");
+        assert_eq!(report["valueUnit"], "disparity");
+        assert_eq!(report["rawMin"], 4);
+        assert_eq!(report["rawMax"], 16);
+    }
+
+    #[test]
+    fn depth_visualization_rotates_to_manifest_dimensions() {
+        let bytes = depth_manifest_fixture(3, 2, "cgImagePropertyOrientation:6", "");
+        let report = visualize_depth_u8(bytes.as_bytes(), &[0, 10, 20, 30, 40, 50], 2, 3);
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["width"], 3);
+        assert_eq!(report["height"], 2);
+        assert_eq!(report["rotation"], "clockwise90");
+        assert_eq!(report["valueUnit"], "luma");
+
+        let preview = STANDARD
+            .decode(report["previewRgbaBase64"].as_str().unwrap())
+            .unwrap();
+        let expected_first_pixel = depth_color(normalize_u8(40, 0, 50));
+        assert_eq!(
+            &preview[0..4],
+            &[
+                expected_first_pixel.0,
+                expected_first_pixel.1,
+                expected_first_pixel.2,
+                255
+            ]
+        );
+    }
+
+    #[test]
+    fn depth_visualization_uses_manifest_display_direction() {
+        let bytes = depth_manifest_fixture(3, 2, "cgImagePropertyOrientation:1", "");
+        let report = visualize_depth_u8(bytes.as_bytes(), &[0, 10, 20, 30, 40, 50], 2, 3);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["width"], 3);
+        assert_eq!(report["height"], 2);
+        assert_eq!(report["rotation"], "clockwise90");
+    }
+
+    #[test]
+    fn depth_visualization_supports_counter_clockwise_display_orientation() {
+        let bytes = depth_manifest_fixture(3, 2, "cgImagePropertyOrientation:8", "");
+        let report = visualize_depth_u8(bytes.as_bytes(), &[0, 10, 20, 30, 40, 50], 2, 3);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["width"], 3);
+        assert_eq!(report["height"], 2);
+        assert_eq!(report["rotation"], "counterClockwise90");
+
+        let preview = STANDARD
+            .decode(report["previewRgbaBase64"].as_str().unwrap())
+            .unwrap();
+        let expected_first_pixel = depth_color(normalize_u8(10, 0, 50));
+        assert_eq!(
+            &preview[0..4],
+            &[
+                expected_first_pixel.0,
+                expected_first_pixel.1,
+                expected_first_pixel.2,
+                255
+            ]
+        );
+    }
+
+    #[test]
+    fn original_preview_preserves_decoded_portrait_display_direction() {
+        let bytes = depth_manifest_fixture(2, 3, "cgImagePropertyOrientation:6", "").replace(
+            r#""photo":{"orientation":"cgImagePropertyOrientation:6"}"#,
+            r#""photo":{"height":2,"orientation":"cgImagePropertyOrientation:6","width":3}"#,
+        );
+        let rgba = [
+            10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255, 40, 0, 0, 255, 50, 0, 0, 255, 60, 0, 0,
+            255,
+        ];
+        let report = prepare_original_rgba(bytes.as_bytes(), &rgba, 2, 3, 100);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["width"], 2);
+        assert_eq!(report["height"], 3);
+        assert_eq!(report["rotation"], "none");
+
+        let preview = STANDARD
+            .decode(report["previewRgbaBase64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(&preview[0..4], &[10, 0, 0, 255]);
+    }
+
+    #[test]
+    fn original_preview_downscales_for_browser_display() {
+        let rgba = vec![128u8; 4 * 2 * 4];
+        let report = prepare_original_rgba(b"not a manifest", &rgba, 4, 2, 2);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["width"], 2);
+        assert_eq!(report["height"], 1);
+        assert_eq!(report["rotation"], "none");
+        assert!(report["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("downscaled"));
+    }
+
+    #[test]
     fn locates_and_reads_bmff_proof_slot() {
         let payload = proof_slot_payload(br#"{"ok":true}"#);
         let slot_box = bmff_proof_box(&payload);
@@ -929,7 +1639,10 @@ mod tests {
         let slot = locate_proof_slot(&bytes, Container::Heic).unwrap();
         assert_eq!(slot.kind, "bmff-uuid-proof-slot");
         assert_eq!(slot.payload_length, PROOF_PAYLOAD_BYTE_COUNT);
-        assert_eq!(read_proof_envelope(&bytes, &slot).unwrap(), br#"{"ok":true}"#);
+        assert_eq!(
+            read_proof_envelope(&bytes, &slot).unwrap(),
+            br#"{"ok":true}"#
+        );
     }
 
     #[test]
@@ -975,6 +1688,48 @@ mod tests {
             report["recomputed"]["bodySHA256"],
             "6ZIqezCAIVp2RtZyOAA_lW3vWTn5iuHLVrLGEw1jiv0"
         );
+    }
+
+    #[test]
+    fn local_fixture_depth_metadata_visualizes_when_available() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("test/tap-depth-photo.HEIC");
+
+        if !fixture.exists() {
+            return;
+        }
+
+        let bytes = std::fs::read(fixture).unwrap();
+        let luma = vec![64u8; 576 * 768];
+        let report = visualize_depth_u8(&bytes, &luma, 576, 768);
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["sourceKind"], "disparity");
+        assert_eq!(report["width"], 768);
+        assert_eq!(report["height"], 576);
+        assert_eq!(report["rotation"], "clockwise90");
+        assert_eq!(report["minValue"], 3.917969);
+        assert_eq!(report["maxValue"], 12.304688);
+        assert_eq!(report["valueUnit"], "disparity");
+    }
+
+    #[test]
+    fn local_fixture_depth_aligns_to_original_display_when_available() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("test/tap-depth-photo.HEIC");
+
+        if !fixture.exists() {
+            return;
+        }
+
+        let bytes = std::fs::read(fixture).unwrap();
+        let luma = vec![64u8; 576 * 768];
+        let report = visualize_depth_u8_for_display(&bytes, &luma, 576, 768, 3024, 4032);
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["width"], 576);
+        assert_eq!(report["height"], 768);
+        assert_eq!(report["rotation"], "none");
     }
 
     fn synthetic_signed_heic() -> Vec<u8> {
@@ -1054,6 +1809,22 @@ mod tests {
         let payload_range = slot.payload_offset..slot.payload_offset + slot.payload_length;
         signed[payload_range].copy_from_slice(&signed_payload);
         signed
+    }
+
+    fn depth_manifest_fixture(
+        depth_width: u32,
+        depth_height: u32,
+        photo_orientation: &str,
+        extra_payload_json: &str,
+    ) -> String {
+        let extra = if extra_payload_json.is_empty() {
+            "".to_string()
+        } else {
+            format!(",{extra_payload_json}")
+        };
+        format!(
+            r#"<x:xmpmeta><tapdepth:Manifest>{{"payload":{{"depth":{{"auxiliaryDataKind":"disparity","height":{depth_height},"orientation":"appleAuxiliaryDepthNative","pixelFormat":"hdis","width":{depth_width}}},"photo":{{"orientation":"{photo_orientation}"}}{extra}}},"proofs":[]}}</tapdepth:Manifest></x:xmpmeta>"#
+        )
     }
 
     fn proof_slot_payload(envelope: &[u8]) -> Vec<u8> {
