@@ -77,19 +77,36 @@ let pixelProjectionStartedRunId = 0;
 
 dropzone.addEventListener("click", () => fileInput.click());
 dropzone.addEventListener("dragover", (event) => {
+  if (!isFileDrag(event)) {
+    return;
+  }
   event.preventDefault();
+  setDropEffect(event);
   dropzone.classList.add("is-dragging");
 });
 dropzone.addEventListener("dragleave", () => {
   dropzone.classList.remove("is-dragging");
 });
 dropzone.addEventListener("drop", (event) => {
-  event.preventDefault();
+  event.stopPropagation();
   dropzone.classList.remove("is-dragging");
-  const file = event.dataTransfer?.files.item(0);
-  if (file) {
-    void verifyFile(file);
+  handleDroppedFile(event);
+});
+document.addEventListener("dragover", (event) => {
+  if (!isFileDrag(event)) {
+    return;
   }
+
+  event.preventDefault();
+  setDropEffect(event);
+});
+document.addEventListener("drop", (event) => {
+  if (!isFileDrag(event)) {
+    return;
+  }
+
+  dropzone.classList.remove("is-dragging");
+  handleDroppedFile(event);
 });
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.item(0);
@@ -97,6 +114,29 @@ fileInput.addEventListener("change", () => {
     void verifyFile(file);
   }
 });
+
+function isFileDrag(event: DragEvent): boolean {
+  const dataTransfer = event.dataTransfer;
+  return Boolean(
+    dataTransfer &&
+      (Array.from(dataTransfer.types).includes("Files") || dataTransfer.files.length > 0)
+  );
+}
+
+function setDropEffect(event: DragEvent): void {
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+}
+
+function handleDroppedFile(event: DragEvent): void {
+  event.preventDefault();
+  setDropEffect(event);
+  const file = event.dataTransfer?.files.item(0);
+  if (file) {
+    void verifyFile(file);
+  }
+}
 
 async function verifyFile(file: File): Promise<void> {
   const runId = beginSelectedFile(file);
