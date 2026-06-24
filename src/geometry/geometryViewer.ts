@@ -50,7 +50,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   const targetDepth = targetDepthForBounds(bounds);
 
   let userMovedCamera = false;
-  let renderViewport = { x: 0, y: 0, width: 1, height: 1 };
+  let canvasSize = { width: 1, height: 1 };
 
   const resetView = (): void => {
     camera.position.set(0, 0, 0);
@@ -76,9 +76,9 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     const rect = host.getBoundingClientRect();
     const width = Math.max(1, Math.floor(rect.width));
     const height = Math.max(1, Math.floor(rect.height));
+    canvasSize = { width, height };
     renderer.setSize(width, height, false);
-    renderViewport = fitImageViewport(width, height, cloud.imageWidth, cloud.imageHeight);
-    updateCaptureCameraProjection(camera, cloud);
+    updateCaptureCameraProjection(camera, cloud, width, height);
     if (!userMovedCamera) {
       resetView();
     }
@@ -90,11 +90,9 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   let animationFrame = 0;
   const render = (): void => {
     controls.update();
-    renderer.setScissorTest(false);
     renderer.clear(true, true, true);
-    renderer.setViewport(renderViewport.x, renderViewport.y, renderViewport.width, renderViewport.height);
-    renderer.setScissor(renderViewport.x, renderViewport.y, renderViewport.width, renderViewport.height);
-    renderer.setScissorTest(true);
+    renderer.setViewport(0, 0, canvasSize.width, canvasSize.height);
+    renderer.setScissorTest(false);
     renderer.render(scene, camera);
     animationFrame = window.requestAnimationFrame(render);
   };
@@ -119,19 +117,25 @@ function pointSizeForCloud(cloud: ProjectedPixelCloud): number {
   return clamp(projectedSpacing * 2.4, 0.015, 0.034);
 }
 
-function updateCaptureCameraProjection(camera: THREE.PerspectiveCamera, cloud: ProjectedPixelCloud): void {
+function updateCaptureCameraProjection(
+  camera: THREE.PerspectiveCamera,
+  cloud: ProjectedPixelCloud,
+  canvasWidth: number,
+  canvasHeight: number
+): void {
   const near = 0.01;
   const far = 100;
+  const canvasIntrinsics = cameraIntrinsicsForFullCanvas(cloud, canvasWidth, canvasHeight);
   camera.near = near;
   camera.far = far;
   camera.projectionMatrix.set(
-    2 * cloud.fx / cloud.imageWidth,
+    2 * canvasIntrinsics.fx / canvasWidth,
     0,
-    1 - 2 * cloud.cx / cloud.imageWidth,
+    1 - 2 * canvasIntrinsics.cx / canvasWidth,
     0,
     0,
-    2 * cloud.fy / cloud.imageHeight,
-    2 * cloud.cy / cloud.imageHeight - 1,
+    2 * canvasIntrinsics.fy / canvasHeight,
+    2 * canvasIntrinsics.cy / canvasHeight - 1,
     0,
     0,
     0,
@@ -145,30 +149,33 @@ function updateCaptureCameraProjection(camera: THREE.PerspectiveCamera, cloud: P
   camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
 }
 
-function fitImageViewport(
+function cameraIntrinsicsForFullCanvas(
+  cloud: ProjectedPixelCloud,
   canvasWidth: number,
-  canvasHeight: number,
-  imageWidth: number,
-  imageHeight: number
-): { x: number; y: number; width: number; height: number } {
-  const imageAspect = imageWidth > 0 && imageHeight > 0 ? imageWidth / imageHeight : 1;
+  canvasHeight: number
+): { fx: number; fy: number; cx: number; cy: number } {
+  const imageAspect = cloud.imageWidth > 0 && cloud.imageHeight > 0 ? cloud.imageWidth / cloud.imageHeight : 1;
   const canvasAspect = canvasWidth / canvasHeight;
   if (canvasAspect > imageAspect) {
-    const width = Math.max(1, Math.floor(canvasHeight * imageAspect));
+    const fittedWidth = canvasHeight * imageAspect;
+    const xOffset = (canvasWidth - fittedWidth) / 2;
+    const scale = fittedWidth / cloud.imageWidth;
     return {
-      x: Math.floor((canvasWidth - width) / 2),
-      y: 0,
-      width,
-      height: canvasHeight
+      fx: cloud.fx * scale,
+      fy: cloud.fy * scale,
+      cx: xOffset + cloud.cx * scale,
+      cy: cloud.cy * scale
     };
   }
 
-  const height = Math.max(1, Math.floor(canvasWidth / imageAspect));
+  const fittedHeight = canvasWidth / imageAspect;
+  const yOffset = (canvasHeight - fittedHeight) / 2;
+  const scale = fittedHeight / cloud.imageHeight;
   return {
-    x: 0,
-    y: Math.floor((canvasHeight - height) / 2),
-    width: canvasWidth,
-    height
+    fx: cloud.fx * scale,
+    fy: cloud.fy * scale,
+    cx: cloud.cx * scale,
+    cy: yOffset + cloud.cy * scale
   };
 }
 
