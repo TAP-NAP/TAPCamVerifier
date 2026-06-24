@@ -23,6 +23,7 @@ const PROOF_HEADER_BYTE_COUNT: usize = 32;
 const PROOF_MAGIC: &[u8] = b"TAPCAM-PROOF-SLOT-V1";
 const BMFF_PROOF_UUID: &[u8] = b"TAPCAMPROOFSLOT1";
 const PIXEL_PROJECTION_TARGET_MAX_EDGE: u32 = 480;
+const PIXEL_PROJECTION_MESH_DISCONTINUITY_THRESHOLD: f32 = 0.35;
 
 #[no_mangle]
 pub extern "C" fn tapcam_verify_alloc(len: usize) -> *mut u8 {
@@ -858,12 +859,17 @@ fn project_depth_pixels_inner(
         .max(output_height)
         .div_ceil(PIXEL_PROJECTION_TARGET_MAX_EDGE)
         .max(1);
+    let sampled_xs = sampled_axis_indices(output_width, sample_step);
+    let sampled_ys = sampled_axis_indices(output_height, sample_step);
+    let mesh_grid_width = sampled_xs.len() as u32;
+    let mesh_grid_height = sampled_ys.len() as u32;
     let depth_width_usize = depth_width as usize;
     let mut positions = Vec::new();
     let mut colors = Vec::new();
+    let mut relative_depths = Vec::new();
 
-    for y in (0..output_height).step_by(sample_step as usize) {
-        for x in (0..output_width).step_by(sample_step as usize) {
+    for &y in &sampled_ys {
+        for &x in &sampled_xs {
             let (source_x, source_y) = inverse_orientation_transform(
                 x as f64,
                 y as f64,
@@ -878,6 +884,7 @@ fn project_depth_pixels_inner(
             let display_value = depth_display_value(normalized, min_value, max_value);
             let relative_depth =
                 relative_depth_from_value(display_value, min_value, max_value, value_unit);
+            relative_depths.push(relative_depth as f32);
             let (x_unit, y_unit, view_z) = back_project_pixel_to_view_space(
                 x as f64,
                 y as f64,
@@ -896,6 +903,13 @@ fn project_depth_pixels_inner(
             colors.push(rgba[rgb_offset + 2]);
         }
     }
+    let (mesh_indices, mesh_skipped_triangle_count) = build_depth_mesh_indices(
+        mesh_grid_width,
+        mesh_grid_height,
+        &relative_depths,
+        PIXEL_PROJECTION_MESH_DISCONTINUITY_THRESHOLD,
+    );
+    let mesh_triangle_count = mesh_indices.len() / 12;
 
     let mut warnings = Vec::new();
     if camera.model == "metadata-pinhole" {
@@ -937,6 +951,12 @@ fn project_depth_pixels_inner(
             rgb_width, rgb_height, output_width, output_height
         ));
     }
+    if mesh_skipped_triangle_count > 0 {
+        warnings.push(format!(
+            "mesh skipped {} triangles across depth discontinuities",
+            mesh_skipped_triangle_count
+        ));
+    }
 
     Ok(json!({
         "status": "available",
@@ -972,6 +992,15 @@ fn project_depth_pixels_inner(
         },
         "positionsBase64": STANDARD.encode(positions),
         "colorsBase64": STANDARD.encode(colors),
+        "mesh": {
+            "gridWidth": mesh_grid_width,
+            "gridHeight": mesh_grid_height,
+            "triangleCount": mesh_triangle_count,
+            "skippedTriangleCount": mesh_skipped_triangle_count,
+            "discontinuityThreshold": PIXEL_PROJECTION_MESH_DISCONTINUITY_THRESHOLD,
+            "colorMode": "vertex-rgb",
+            "indicesBase64": STANDARD.encode(mesh_indices)
+        },
         "warnings": warnings
     }))
 }
@@ -1610,6 +1639,88 @@ fn scaled_coordinate(pixel: u32, source_extent: u32, target_extent: u32) -> usiz
         .clamp(0.0, (target_extent - 1) as f64) as usize
 }
 
+fn sampled_axis_indices(extent: u32, sample_step: u32) -> Vec<u32> {
+    (0..extent).step_by(sample_step.max(1) as usize).collect()
+}
+
+fn build_depth_mesh_indices(
+    grid_width: u32,
+    grid_height: u32,
+    relative_depths: &[f32],
+    discontinuity_threshold: f32,
+) -> (Vec<u8>, usize) {
+    if grid_width < 2 || grid_height < 2 {
+        return (Vec::new(), 0);
+    }
+
+    let mut indices = Vec::new();
+    let mut skipped_triangle_count = 0;
+    let grid_width_usize = grid_width as usize;
+
+    for row in 0..(grid_height as usize - 1) {
+        for column in 0..(grid_width as usize - 1) {
+            let top_left = row * grid_width_usize + column;
+            let top_right = top_left + 1;
+            let bottom_left = top_left + grid_width_usize;
+            let bottom_right = bottom_left + 1;
+
+            if triangle_depth_is_continuous(
+                relative_depths,
+                [top_left, bottom_left, top_right],
+                discontinuity_threshold,
+            ) {
+                push_u32_le(&mut indices, top_left as u32);
+                push_u32_le(&mut indices, bottom_left as u32);
+                push_u32_le(&mut indices, top_right as u32);
+            } else {
+                skipped_triangle_count += 1;
+            }
+
+            if triangle_depth_is_continuous(
+                relative_depths,
+                [top_right, bottom_left, bottom_right],
+                discontinuity_threshold,
+            ) {
+                push_u32_le(&mut indices, top_right as u32);
+                push_u32_le(&mut indices, bottom_left as u32);
+                push_u32_le(&mut indices, bottom_right as u32);
+            } else {
+                skipped_triangle_count += 1;
+            }
+        }
+    }
+
+    (indices, skipped_triangle_count)
+}
+
+fn triangle_depth_is_continuous(
+    relative_depths: &[f32],
+    triangle: [usize; 3],
+    discontinuity_threshold: f32,
+) -> bool {
+    let depths = [
+        relative_depths.get(triangle[0]).copied(),
+        relative_depths.get(triangle[1]).copied(),
+        relative_depths.get(triangle[2]).copied(),
+    ];
+    let Some(first) = depths[0] else {
+        return false;
+    };
+    let Some(second) = depths[1] else {
+        return false;
+    };
+    let Some(third) = depths[2] else {
+        return false;
+    };
+    if !first.is_finite() || !second.is_finite() || !third.is_finite() {
+        return false;
+    }
+
+    let min_depth = first.min(second).min(third);
+    let max_depth = first.max(second).max(third);
+    max_depth - min_depth <= discontinuity_threshold
+}
+
 fn depth_display_value(normalized: f64, min_value: f64, max_value: f64) -> f64 {
     if max_value <= min_value {
         return min_value;
@@ -1772,6 +1883,10 @@ fn aspect_ratio_delta(width: u32, height: u32, other_width: u32, other_height: u
 }
 
 fn push_f32_le(output: &mut Vec<u8>, value: f32) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_u32_le(output: &mut Vec<u8>, value: u32) {
     output.extend_from_slice(&value.to_le_bytes());
 }
 
@@ -2135,6 +2250,54 @@ mod tests {
     }
 
     #[test]
+    fn pixel_projection_builds_mesh_indices_from_sample_grid() {
+        let bytes = depth_manifest_fixture(3, 2, "cgImagePropertyOrientation:1", "");
+        let rgba = vec![128u8; 3 * 2 * 4];
+        let depth = [8, 8, 8, 8, 8, 8];
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 3, 2, &depth, 3, 2, 3, 2);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["mesh"]["gridWidth"], 3);
+        assert_eq!(report["mesh"]["gridHeight"], 2);
+        assert_eq!(report["mesh"]["triangleCount"], 4);
+        assert_eq!(report["mesh"]["skippedTriangleCount"], 0);
+        assert_eq!(report["mesh"]["colorMode"], "vertex-rgb");
+        assert_eq!(
+            report["mesh"]["discontinuityThreshold"],
+            PIXEL_PROJECTION_MESH_DISCONTINUITY_THRESHOLD
+        );
+        assert_eq!(
+            read_mesh_indices(&report),
+            vec![0, 3, 1, 1, 3, 4, 1, 4, 2, 2, 4, 5]
+        );
+    }
+
+    #[test]
+    fn pixel_projection_skips_mesh_triangles_across_depth_discontinuities() {
+        let bytes = depth_manifest_fixture(2, 2, "cgImagePropertyOrientation:1", "");
+        let rgba = vec![128u8; 2 * 2 * 4];
+        let depth = [0, 255, 255, 0];
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 2, 2, &depth, 2, 2, 2, 2);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["mesh"]["gridWidth"], 2);
+        assert_eq!(report["mesh"]["gridHeight"], 2);
+        assert_eq!(report["mesh"]["triangleCount"], 0);
+        assert_eq!(report["mesh"]["skippedTriangleCount"], 2);
+        assert_eq!(read_mesh_indices(&report), Vec::<u32>::new());
+        assert!(report["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap()
+                .contains("mesh skipped 2 triangles")));
+    }
+
+    #[test]
     fn pixel_projection_uses_manifest_camera_calibration_intrinsics() {
         let calibration = r#""cameraCalibration":{
             "intrinsicMatrixReferenceWidth": 8,
@@ -2442,6 +2605,20 @@ mod tests {
     fn read_f32_le(bytes: &[u8], index: usize) -> f32 {
         let offset = index * 4;
         f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    fn read_u32_le(bytes: &[u8], index: usize) -> u32 {
+        let offset = index * 4;
+        u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    fn read_mesh_indices(report: &Value) -> Vec<u32> {
+        let indices = STANDARD
+            .decode(report["mesh"]["indicesBase64"].as_str().unwrap())
+            .unwrap();
+        (0..indices.len() / 4)
+            .map(|index| read_u32_le(&indices, index))
+            .collect()
     }
 
     fn proof_slot_payload(envelope: &[u8]) -> Vec<u8> {

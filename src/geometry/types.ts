@@ -8,6 +8,18 @@ export interface PixelProjectionDepthRange {
   rawMax: number;
 }
 
+export type GeometryRenderMode = "point-cloud" | "mesh-rgb";
+
+export interface PixelProjectionMesh {
+  gridWidth: number;
+  gridHeight: number;
+  triangleCount: number;
+  skippedTriangleCount: number;
+  discontinuityThreshold: number;
+  colorMode: "vertex-rgb" | string;
+  indices: Uint32Array;
+}
+
 export interface ProjectedPixelCloud {
   status: "available";
   geometryKind: "signed-depth-pixel-point-cloud";
@@ -36,6 +48,7 @@ export interface ProjectedPixelCloud {
   depthRange: PixelProjectionDepthRange;
   positions: Float32Array;
   colors: Uint8Array;
+  mesh?: PixelProjectionMesh;
   warnings: string[];
 }
 

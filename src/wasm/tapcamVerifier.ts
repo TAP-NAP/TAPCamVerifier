@@ -1,5 +1,5 @@
 import type { DecodedDepthPlane, DepthVisualizationResult, DisplayOrientationReference } from "../depth/types";
-import type { PixelProjectionReport } from "../geometry/types";
+import type { PixelProjectionMesh, PixelProjectionReport } from "../geometry/types";
 import type { DecodedPrimaryImage, OriginalPreviewResult } from "../original/types";
 import type { LocalVerificationReport } from "../verifier/types";
 
@@ -171,23 +171,33 @@ export async function projectDepthPixels(
       displayReference?.height ?? 0
     );
 
-    const result = readJsonResult(wasm, resultPtr) as PixelProjectionReport & {
-      positionsBase64?: string;
-      colorsBase64?: string;
-    };
-    if (result.status === "available") {
-      result.positions = decodeBase64Float32(result.positionsBase64 ?? "");
-      result.colors = decodeBase64Bytes(result.colorsBase64 ?? "");
-      delete result.positionsBase64;
-      delete result.colorsBase64;
-    }
-    return result;
+    return decodePixelProjectionReport(readJsonResult(wasm, resultPtr) as EncodedPixelProjectionReport);
   } finally {
     wasm.tapcam_verify_dealloc(filePtr, fileBytes.length);
     wasm.tapcam_verify_dealloc(rgbaPtr, rgbImage.rgba.length);
     wasm.tapcam_verify_dealloc(depthPtr, depthPlane.luma.length);
     wasm.tapcam_verify_clear_result();
   }
+}
+
+type EncodedPixelProjectionReport = PixelProjectionReport & {
+  positionsBase64?: string;
+  colorsBase64?: string;
+  mesh?: (Partial<PixelProjectionMesh> & { indicesBase64?: string });
+};
+
+export function decodePixelProjectionReport(result: EncodedPixelProjectionReport): PixelProjectionReport {
+  if (result.status === "available") {
+    result.positions = decodeBase64Float32(result.positionsBase64 ?? "");
+    result.colors = decodeBase64Bytes(result.colorsBase64 ?? "");
+    if (result.mesh) {
+      result.mesh.indices = decodeBase64Uint32(result.mesh.indicesBase64 ?? "");
+      delete result.mesh.indicesBase64;
+    }
+    delete result.positionsBase64;
+    delete result.colorsBase64;
+  }
+  return result;
 }
 
 async function loadVerifierWasm(): Promise<TapcamVerifierExports> {
@@ -231,4 +241,9 @@ function decodeBase64Bytes(value: string): Uint8Array {
 function decodeBase64Float32(value: string): Float32Array {
   const bytes = decodeBase64Bytes(value);
   return new Float32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 4));
+}
+
+function decodeBase64Uint32(value: string): Uint32Array {
+  const bytes = decodeBase64Bytes(value);
+  return new Uint32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 4));
 }

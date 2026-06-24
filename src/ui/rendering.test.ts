@@ -192,12 +192,25 @@ describe("renderPixelProjectionPanel", () => {
       },
       positions: new Float32Array(8192 * 3),
       colors: new Uint8Array(8192 * 3),
+      mesh: {
+        gridWidth: 192,
+        gridHeight: 256,
+        triangleCount: 88420,
+        skippedTriangleCount: 120,
+        discontinuityThreshold: 0.35,
+        colorMode: "vertex-rgb",
+        indices: new Uint32Array(88420 * 3)
+      },
       warnings: ["relative geometry"]
     };
 
     const html = renderPixelProjectionPanel(state);
 
     expect(html).toContain('id="geometryViewer"');
+    expect(html).toContain('data-geometry-mode="point-cloud" aria-pressed="true"');
+    expect(html).toContain('data-geometry-mode="mesh-rgb" aria-pressed="false"');
+    expect(html).toContain("Point Cloud");
+    expect(html).toContain("Mesh RGB");
     expect(html).toContain("signed-depth-pixel-point-cloud");
     expect(html).toContain("capture camera");
     expect(html).toContain("metadata-pinhole");
@@ -211,5 +224,10 @@ describe("renderPixelProjectionPanel", () => {
     expect(html).toContain("cgImagePropertyOrientation:6");
     expect(html).toContain("relative");
     expect(html).toContain("3.9180 – 12.3047 disparity");
+    expect(html).toContain("192 × 256");
+    expect(html).toContain("88420");
+    expect(html).toContain("120");
+    expect(html).toContain("vertex RGB");
+    expect(html).toContain("0.3500");
   });
 });

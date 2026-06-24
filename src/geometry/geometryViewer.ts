@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { ProjectedPixelCloud } from "./types";
+import type { GeometryRenderMode, ProjectedPixelCloud } from "./types";
 
 export type GeometryViewerCleanup = () => void;
 
@@ -20,25 +20,40 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   renderer.domElement.dataset.projectionCanvas = "true";
   host.append(renderer.domElement);
 
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(cloud.positions, 3));
-  geometry.setAttribute("color", new THREE.Uint8BufferAttribute(cloud.colors, 3, true));
-  geometry.computeBoundingBox();
+  const pointGeometry = createColoredGeometry(cloud);
+  pointGeometry.computeBoundingBox();
 
-  const bounds = geometry.boundingBox ?? new THREE.Box3(
+  const bounds = pointGeometry.boundingBox ?? new THREE.Box3(
     new THREE.Vector3(-1, -1, -1),
     new THREE.Vector3(1, 1, 1)
   );
 
-  const model = new THREE.Points(
-    geometry,
-    new THREE.PointsMaterial({
-      size: pointSizeForCloud(cloud),
-      sizeAttenuation: true,
-      vertexColors: true
-    })
-  );
-  scene.add(model);
+  const pointMaterial = new THREE.PointsMaterial({
+    size: pointSizeForCloud(cloud),
+    sizeAttenuation: true,
+    vertexColors: true
+  });
+  const pointModel = new THREE.Points(pointGeometry, pointMaterial);
+  scene.add(pointModel);
+
+  const meshGeometry = cloud.mesh ? createColoredGeometry(cloud) : null;
+  const meshMaterial = cloud.mesh
+    ? new THREE.MeshBasicMaterial({
+        side: THREE.DoubleSide,
+        vertexColors: true
+      })
+    : null;
+  const meshModel = meshGeometry && meshMaterial && cloud.mesh
+    ? new THREE.Mesh(meshGeometry, meshMaterial)
+    : null;
+  if (meshGeometry && cloud.mesh) {
+    meshGeometry.setIndex(new THREE.BufferAttribute(cloud.mesh.indices, 1));
+    meshGeometry.computeVertexNormals();
+  }
+  if (meshModel) {
+    meshModel.visible = false;
+    scene.add(meshModel);
+  }
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -66,11 +81,43 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   controls.addEventListener("start", markCameraMoved);
 
   const resetButton = host.parentElement?.querySelector<HTMLButtonElement>("[data-geometry-reset]");
+  const modeButtons = Array.from(
+    host.parentElement?.querySelectorAll<HTMLButtonElement>("[data-geometry-mode]") ?? []
+  );
+  const activeModeLabel = host.parentElement?.parentElement?.querySelector<HTMLElement>(
+    "[data-geometry-active-mode]"
+  );
   const handleResetButtonClick = (): void => {
     userMovedCamera = false;
     resetView();
   };
   resetButton?.addEventListener("click", handleResetButtonClick);
+  const setMode = (mode: GeometryRenderMode): void => {
+    const nextMode: GeometryRenderMode = mode === "mesh-rgb" && meshModel ? "mesh-rgb" : "point-cloud";
+    pointModel.visible = nextMode === "point-cloud";
+    if (meshModel) {
+      meshModel.visible = nextMode === "mesh-rgb";
+    }
+    renderer.domElement.dataset.geometryMode = nextMode;
+    if (activeModeLabel) {
+      activeModeLabel.textContent = formatGeometryRenderMode(nextMode);
+    }
+    for (const button of modeButtons) {
+      const pressed = button.dataset.geometryMode === nextMode;
+      button.setAttribute("aria-pressed", pressed ? "true" : "false");
+    }
+  };
+  const handleModeButtonClick = (event: Event): void => {
+    const button = event.currentTarget as HTMLButtonElement;
+    const mode = button.dataset.geometryMode;
+    if (mode === "point-cloud" || mode === "mesh-rgb") {
+      setMode(mode);
+    }
+  };
+  for (const button of modeButtons) {
+    button.addEventListener("click", handleModeButtonClick);
+  }
+  setMode("point-cloud");
 
   const resize = (): void => {
     const rect = host.getBoundingClientRect();
@@ -101,14 +148,26 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   return () => {
     window.cancelAnimationFrame(animationFrame);
     resetButton?.removeEventListener("click", handleResetButtonClick);
+    for (const button of modeButtons) {
+      button.removeEventListener("click", handleModeButtonClick);
+    }
     controls.removeEventListener("start", markCameraMoved);
     resizeObserver.disconnect();
     controls.dispose();
-    geometry.dispose();
-    (model.material as THREE.Material).dispose();
+    pointGeometry.dispose();
+    pointMaterial.dispose();
+    meshGeometry?.dispose();
+    meshMaterial?.dispose();
     renderer.dispose();
     renderer.domElement.remove();
   };
+}
+
+function createColoredGeometry(cloud: ProjectedPixelCloud): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(cloud.positions, 3));
+  geometry.setAttribute("color", new THREE.Uint8BufferAttribute(cloud.colors, 3, true));
+  return geometry;
 }
 
 function pointSizeForCloud(cloud: ProjectedPixelCloud): number {
@@ -189,4 +248,8 @@ function targetDepthForBounds(bounds: THREE.Box3): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function formatGeometryRenderMode(mode: GeometryRenderMode): string {
+  return mode === "mesh-rgb" ? "Mesh RGB" : "Point Cloud";
 }

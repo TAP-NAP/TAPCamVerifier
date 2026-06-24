@@ -31,9 +31,12 @@ inspection model, not an independent reconstruction or a new verification input.
 
 ## Current Product Decision
 
-Keep the geometry viewer in point-cloud style for now. Mesh rendering is
-deferred because the current mesh effect is visually too rough for the verifier
-experience.
+Keep Point Cloud as the default geometry view. Mesh rendering is reactivated as
+a staged Mesh RGB inspection mode after the capture-camera reprojection fix.
+The first mesh version uses the same sampled depth vertices, skips triangles
+across large relative-depth discontinuities, and colors the surface with
+per-vertex RGB. UV texture remains deferred until the topology is stable enough
+to justify texture coordinates.
 
 ## Deferred TODO
 
@@ -42,8 +45,8 @@ experience.
 - Add RGB/depth alignment warnings when dimensions, orientation, or aspect ratio
   suggest unreliable color overlay.
 - Add browser drag/drop automation and canvas/screenshot checks for the 3D
-  point-cloud pane.
-- Defer mesh and texture work until a cleaner inspection surface is justified.
+  point-cloud and Mesh RGB pane.
+- Defer UV texture projection until the staged Mesh RGB topology is stable.
 - Research 3D Gaussian Splatting data requirements before implementation. The
   likely missing data includes multi-view images or burst/video, camera poses,
   sparse point cloud, or a COLMAP-compatible export package.
@@ -69,3 +72,15 @@ experience.
 - Changed point back-projection to pinhole camera coordinates:
   `X = (u - cx) / fx * Z`, `Y = (v - cy) / fy * Z`, with view-space `Z` kept
   negative for Three.js.
+
+## 2026-06-24 Mesh RGB Restart
+
+- Extended the Rust/WASM pixel-projection report with optional mesh metadata:
+  sampled grid size, triangle indices, triangle count, skipped triangle count,
+  discontinuity threshold, and `vertex-rgb` color mode.
+- Generated mesh triangles from the sampled depth grid and skipped triangles
+  whose relative-depth range crosses the discontinuity threshold.
+- Added a same-panel Point Cloud / Mesh RGB toggle in the Three.js viewer.
+  Point Cloud remains the default mode and both modes share camera intrinsics,
+  reset behavior, and OrbitControls.
+- Kept mesh unavailable/error behavior non-fatal for local/server verification.

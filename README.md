@@ -37,9 +37,12 @@ orientation handling and preview downscaling. The right pane decodes the
 embedded HEIF auxiliary depth/disparity plane in the browser and sends that luma
 plane to Rust/WASM for TAP metadata interpretation, orientation, normalization,
 and RGBA preview generation. A third pane uses decoded RGB plus embedded
-depth/disparity pixels to build a signed depth pixel back-projection point cloud
-for relative 3D inspection. These visualizations are not signature inputs and do
-not change local `valid` / `invalid` semantics.
+depth/disparity pixels to build a signed depth pixel back-projection model for
+relative 3D inspection. Point Cloud remains the default view; Mesh RGB is a
+second render mode that builds a triangle surface from the same sampled depth
+vertices, skips triangles across large depth discontinuities, and colors the
+surface with per-vertex RGB. These visualizations are not signature inputs and
+do not change local `valid` / `invalid` semantics.
 
 Strict means there is no tolerant fallback. Any mismatch in the proof slot,
 manifest, asset hash, metadata hash, content binding, or signing binding is
@@ -108,7 +111,7 @@ CORS allowlist.
 - `src/depth/` owns HEIF auxiliary depth discovery and visual preview
   orchestration.
 - `src/geometry/` owns signed depth pixel back-projection, decoded RGB analysis
-  input, and the Three.js point-cloud viewer.
+  input, and the Three.js point-cloud / Mesh RGB viewer.
 - `src/original/` owns the HEIC primary-image fallback path for browsers that
   cannot natively preview HEIC.
 - `src/ui/` owns render helpers for the verification and depth panels.

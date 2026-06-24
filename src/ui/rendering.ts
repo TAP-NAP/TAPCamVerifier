@@ -124,6 +124,10 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
 
   return `
     <div class="geometry-viewer-shell">
+      <div class="geometry-mode-toggle" role="group" aria-label="Geometry render mode">
+        <button class="geometry-mode-button" type="button" data-geometry-mode="point-cloud" aria-pressed="true">Point Cloud</button>
+        <button class="geometry-mode-button" type="button" data-geometry-mode="mesh-rgb" aria-pressed="false"${state.mesh ? "" : " disabled"}>Mesh RGB</button>
+      </div>
       <div id="geometryViewer" class="geometry-viewer" aria-label="Relative 3D pixel projection"></div>
       <button class="geometry-reset" type="button" data-geometry-reset>Reset view</button>
     </div>
@@ -131,6 +135,10 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
       <div>
         <dt>Geometry</dt>
         <dd>${escapeHtml(state.geometryKind)}</dd>
+      </div>
+      <div>
+        <dt>Mode</dt>
+        <dd data-geometry-active-mode>${formatGeometryMode("point-cloud")}</dd>
       </div>
       <div>
         <dt>View</dt>
@@ -188,6 +196,7 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
         <dt>Scale</dt>
         <dd>${state.relativeGeometry ? "relative" : "metric"}</dd>
       </div>
+      ${renderMeshMetadata(state)}
     </dl>
     ${renderProjectionWarnings(state)}
   `;
@@ -294,6 +303,49 @@ function formatSampleStep(sampleStep: number): string {
 
 function formatProjectionViewMode(viewMode: string): string {
   return viewMode === "capture-camera" ? "capture camera" : viewMode;
+}
+
+function formatGeometryMode(mode: string): string {
+  if (mode === "point-cloud") {
+    return "Point Cloud";
+  }
+  if (mode === "mesh-rgb") {
+    return "Mesh RGB";
+  }
+  return mode;
+}
+
+function formatMeshColorMode(mode: string): string {
+  return mode === "vertex-rgb" ? "vertex RGB" : mode;
+}
+
+function renderMeshMetadata(state: ProjectedPixelCloud): string {
+  if (!state.mesh) {
+    return "";
+  }
+
+  return `
+    <div>
+      <dt>Mesh Grid</dt>
+      <dd>${state.mesh.gridWidth} × ${state.mesh.gridHeight}</dd>
+    </div>
+    <div>
+      <dt>Triangles</dt>
+      <dd>${state.mesh.triangleCount}</dd>
+    </div>
+    <div>
+      <dt>Skipped Triangles</dt>
+      <dd>${state.mesh.skippedTriangleCount}</dd>
+    </div>
+    <div>
+      <dt>Mesh Color</dt>
+      <dd>${escapeHtml(formatMeshColorMode(state.mesh.colorMode))}</dd>
+    </div>
+    <div>
+      <dt>Discontinuity</dt>
+      <dd>${formatNumber(state.mesh.discontinuityThreshold)}</dd>
+    </div>
+  `;
 }
 
 function renderDepthWarnings(state: DepthVisualizationAvailable): string {
