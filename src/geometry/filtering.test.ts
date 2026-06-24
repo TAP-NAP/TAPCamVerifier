@@ -6,6 +6,7 @@ import {
   RISK_DISCONTINUITY_EDGE,
   RISK_ISOLATED_OUTLIER,
   defaultFilterOptions,
+  filterMeshStretchTriangleIndices,
   filterProjectedPixelCloud,
   remapFilteredTriangleIndices
 } from "./filtering";
@@ -130,6 +131,24 @@ describe("filterProjectedPixelCloud", () => {
 
     expect(Array.from(filtered.sourceIndices ?? [])).toEqual([0, 1, 4]);
     expect(Array.from(remapped)).toEqual([0, 1, 2]);
+  });
+
+  it("hides visually stretched mesh triangles according to strength", () => {
+    const positions = new Float32Array([
+      0, 0, -1,
+      0.01, 0, -1,
+      0, 0.01, -1,
+      0, 0.01, -1.25
+    ]);
+    const indices = new Uint32Array([0, 1, 2, 0, 1, 3]);
+
+    const low = filterMeshStretchTriangleIndices(positions, indices, "low");
+    const medium = filterMeshStretchTriangleIndices(positions, indices, "medium");
+
+    expect(low.hiddenTriangleCount).toBe(0);
+    expect(Array.from(low.indices)).toEqual([0, 1, 2, 0, 1, 3]);
+    expect(medium.hiddenTriangleCount).toBe(1);
+    expect(Array.from(medium.indices)).toEqual([0, 1, 2]);
   });
 });
 

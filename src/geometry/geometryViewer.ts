@@ -2,12 +2,16 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
   defaultFilterOptions,
+  filterMeshStretchTriangleIndices,
   filterProjectedPixelCloud,
+  formatMeshStretchStrength,
   formatSensitivity,
+  meshStretchStrengthFromSliderValue,
   remapFilteredTriangleIndices,
   sensitivityFromSliderValue,
+  sliderValueFromMeshStretchStrength,
   sliderValueFromSensitivity,
-  type FilteredPixelCloud,
+  type MeshStretchSuppressionStrength,
   type PixelProjectionFilterOptions
 } from "./filtering";
 import type { GeometryRenderMode, ProjectedPixelCloud } from "./types";
@@ -96,10 +100,14 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   const activeFilter = shell?.parentElement?.querySelector<HTMLElement>("[data-geometry-active-filter]");
   const activeMode = shell?.parentElement?.querySelector<HTMLElement>("[data-geometry-active-mode]");
   const visibleTriangles = shell?.parentElement?.querySelector<HTMLElement>("[data-geometry-visible-triangles]");
+  const hiddenStretchTriangles = shell?.parentElement?.querySelector<HTMLElement>("[data-geometry-hidden-stretch]");
   const modeButtons = Array.from(
     shell?.querySelectorAll<HTMLButtonElement>("[data-geometry-mode]") ?? []
   );
+  const stretchControls = shell?.querySelector<HTMLElement>("[data-geometry-mesh-controls]");
   const stretchButton = shell?.querySelector<HTMLButtonElement>("[data-geometry-mesh-stretch]");
+  const stretchStrengthInput = shell?.querySelector<HTMLInputElement>("[data-geometry-stretch-strength]");
+  const stretchStrengthLabel = shell?.querySelector<HTMLElement>("[data-geometry-stretch-strength-label]");
   const riskShowButtons = Array.from(
     shell?.querySelectorAll<HTMLButtonElement>("[data-geometry-risk-show]") ?? []
   );
@@ -110,6 +118,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   let filterPanelCollapsed = false;
   let renderMode: GeometryRenderMode = "point-cloud";
   let showStretchedMeshTriangles = false;
+  let meshStretchStrength: MeshStretchSuppressionStrength = "medium";
 
   const applyFilter = (): void => {
     const filtered = filterProjectedPixelCloud(cloud, filterOptions);
@@ -120,7 +129,8 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
 
     if (meshModel && cloud.mesh) {
       const nextMeshGeometry = createColoredGeometry(filtered.positions, filtered.colors);
-      const meshIndices = remapMeshIndicesForFilter(cloud, filtered, showStretchedMeshTriangles);
+      const meshFilter = meshIndicesForStretchMode(cloud, showStretchedMeshTriangles, meshStretchStrength);
+      const meshIndices = remapFilteredTriangleIndices(meshFilter.indices, filtered);
       nextMeshGeometry.setIndex(new THREE.BufferAttribute(meshIndices, 1));
       nextMeshGeometry.computeVertexNormals();
       meshGeometry?.dispose();
@@ -128,6 +138,9 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
       meshModel.geometry = meshGeometry;
       if (visibleTriangles) {
         visibleTriangles.textContent = String(meshIndices.length / 3);
+      }
+      if (hiddenStretchTriangles) {
+        hiddenStretchTriangles.textContent = String(meshFilter.hiddenTriangleCount);
       }
     }
 
@@ -152,6 +165,12 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     if (sensitivityLabel) {
       sensitivityLabel.textContent = formatSensitivity(filterOptions.sensitivity);
     }
+    if (stretchStrengthInput) {
+      stretchStrengthInput.value = sliderValueFromMeshStretchStrength(meshStretchStrength);
+    }
+    if (stretchStrengthLabel) {
+      stretchStrengthLabel.textContent = formatMeshStretchStrength(meshStretchStrength);
+    }
     syncFilterPanelToggle(filterPanel, filterToggle, filterPanelCollapsed);
     for (const button of modeButtons) {
       const mode = button.dataset.geometryMode;
@@ -159,10 +178,18 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
       button.setAttribute("aria-pressed", active ? "true" : "false");
       button.disabled = mode === "mesh-rgb" && !cloud.mesh;
     }
+    if (stretchControls) {
+      stretchControls.hidden = renderMode !== "mesh-rgb" || !cloud.mesh;
+    }
     if (stretchButton) {
-      stretchButton.textContent = showStretchedMeshTriangles ? "Hide" : "Show";
-      stretchButton.setAttribute("aria-pressed", showStretchedMeshTriangles ? "true" : "false");
-      stretchButton.disabled = renderMode !== "mesh-rgb" || !cloud.mesh || !cloud.mesh.stretchedTriangleCount;
+      const hiddenStretchCandidateCount = meshHiddenStretchCandidateCount(cloud, meshStretchStrength);
+      syncRiskToggle(
+        stretchButton,
+        showStretchedMeshTriangles,
+        "Show",
+        "Hide",
+        renderMode !== "mesh-rgb" || !cloud.mesh || hiddenStretchCandidateCount === 0
+      );
     }
     for (const button of riskShowButtons) {
       switch (button.dataset.geometryRiskShow) {
@@ -229,6 +256,11 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     syncControls();
     applyFilter();
   };
+  const handleStretchStrengthInput = (): void => {
+    meshStretchStrength = meshStretchStrengthFromSliderValue(stretchStrengthInput?.value ?? "1");
+    syncControls();
+    applyFilter();
+  };
   const handleRiskToggleClick = (event: Event): void => {
     const button = event.currentTarget as HTMLButtonElement;
     const showRisk = button.dataset.geometryRiskShow;
@@ -274,6 +306,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   filterToggle?.addEventListener("click", handleFilterToggleClick);
   resetButton?.addEventListener("click", handleResetButtonClick);
   sensitivityInput?.addEventListener("input", handleSensitivityInput);
+  stretchStrengthInput?.addEventListener("input", handleStretchStrengthInput);
   for (const button of modeButtons) {
     button.addEventListener("click", handleModeButtonClick);
   }
@@ -318,6 +351,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     filterToggle?.removeEventListener("click", handleFilterToggleClick);
     resetButton?.removeEventListener("click", handleResetButtonClick);
     sensitivityInput?.removeEventListener("input", handleSensitivityInput);
+    stretchStrengthInput?.removeEventListener("input", handleStretchStrengthInput);
     for (const button of modeButtons) {
       button.removeEventListener("click", handleModeButtonClick);
     }
@@ -347,19 +381,45 @@ function createColoredGeometry(positions: Float32Array, colors: Uint8Array): THR
   return geometry;
 }
 
-function remapMeshIndicesForFilter(
+interface MeshStretchModeResult {
+  indices: Uint32Array;
+  hiddenTriangleCount: number;
+}
+
+function meshIndicesForStretchMode(
   cloud: ProjectedPixelCloud,
-  filtered: FilteredPixelCloud,
-  includeStretchedTriangles: boolean
-): Uint32Array {
+  includeStretchedTriangles: boolean,
+  stretchStrength: MeshStretchSuppressionStrength
+): MeshStretchModeResult {
   if (!cloud.mesh) {
-    return new Uint32Array();
+    return { indices: new Uint32Array(), hiddenTriangleCount: 0 };
   }
 
-  const sourceIndices = includeStretchedTriangles
-    ? concatUint32Arrays(cloud.mesh.indices, cloud.mesh.stretchedIndices)
-    : cloud.mesh.indices;
-  return remapFilteredTriangleIndices(sourceIndices, filtered);
+  if (includeStretchedTriangles) {
+    return {
+      indices: concatUint32Arrays(cloud.mesh.indices, cloud.mesh.stretchedIndices),
+      hiddenTriangleCount: 0
+    };
+  }
+
+  const filtered = filterMeshStretchTriangleIndices(cloud.positions, cloud.mesh.indices, stretchStrength);
+  return {
+    indices: filtered.indices,
+    hiddenTriangleCount: cloud.mesh.stretchedTriangleCount + filtered.hiddenTriangleCount
+  };
+}
+
+function meshHiddenStretchCandidateCount(
+  cloud: ProjectedPixelCloud,
+  stretchStrength: MeshStretchSuppressionStrength
+): number {
+  if (!cloud.mesh) {
+    return 0;
+  }
+  return (
+    cloud.mesh.stretchedTriangleCount +
+    filterMeshStretchTriangleIndices(cloud.positions, cloud.mesh.indices, stretchStrength).hiddenTriangleCount
+  );
 }
 
 function concatUint32Arrays(first: Uint32Array, second: Uint32Array): Uint32Array {

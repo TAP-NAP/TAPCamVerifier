@@ -9,6 +9,7 @@ export const RISK_ALIGNMENT_EDGE_RISK = 1 << 5;
 export const RISK_DISTORTION_UNCORRECTED_EDGE = 1 << 6;
 
 export type PixelProjectionFilterSensitivity = "low" | "medium" | "high";
+export type MeshStretchSuppressionStrength = "low" | "medium" | "high";
 
 export interface PixelProjectionFilterOptions {
   sensitivity: PixelProjectionFilterSensitivity;
@@ -30,6 +31,11 @@ export interface FilteredPixelCloud {
   totalPointCount: number;
 }
 
+export interface MeshStretchFilterResult {
+  indices: Uint32Array;
+  hiddenTriangleCount: number;
+}
+
 const OUTLIER_THRESHOLD: Record<PixelProjectionFilterSensitivity, number> = {
   low: 30,
   medium: 20,
@@ -40,6 +46,18 @@ const DISCONTINUITY_THRESHOLD: Record<PixelProjectionFilterSensitivity, number> 
   low: 40,
   medium: 25,
   high: 18
+};
+
+const MESH_STRETCH_DEPTH_THRESHOLD: Record<MeshStretchSuppressionStrength, number> = {
+  low: 0.35,
+  medium: 0.22,
+  high: 0.12
+};
+
+const MESH_STRETCH_ASPECT_THRESHOLD: Record<MeshStretchSuppressionStrength, number> = {
+  low: 48,
+  medium: 24,
+  high: 12
 };
 
 export function defaultFilterOptions(): PixelProjectionFilterOptions {
@@ -124,6 +142,31 @@ export function remapFilteredTriangleIndices(indices: Uint32Array, filtered: Fil
   return Uint32Array.from(remapped);
 }
 
+export function filterMeshStretchTriangleIndices(
+  positions: Float32Array,
+  indices: Uint32Array,
+  strength: MeshStretchSuppressionStrength
+): MeshStretchFilterResult {
+  const kept: number[] = [];
+  let hiddenTriangleCount = 0;
+
+  for (let index = 0; index + 2 < indices.length; index += 3) {
+    const a = indices[index];
+    const b = indices[index + 1];
+    const c = indices[index + 2];
+    if (triangleLooksStretched(positions, a, b, c, strength)) {
+      hiddenTriangleCount += 1;
+    } else {
+      kept.push(a, b, c);
+    }
+  }
+
+  return {
+    indices: hiddenTriangleCount > 0 ? Uint32Array.from(kept) : indices,
+    hiddenTriangleCount
+  };
+}
+
 export function pointMatchesShownRisk(
   cloud: ProjectedPixelCloud,
   options: PixelProjectionFilterOptions,
@@ -198,6 +241,26 @@ export function sliderValueFromSensitivity(sensitivity: PixelProjectionFilterSen
   return "1";
 }
 
+export function meshStretchStrengthFromSliderValue(value: string): MeshStretchSuppressionStrength {
+  if (value === "0") {
+    return "low";
+  }
+  if (value === "2") {
+    return "high";
+  }
+  return "medium";
+}
+
+export function sliderValueFromMeshStretchStrength(strength: MeshStretchSuppressionStrength): string {
+  if (strength === "low") {
+    return "0";
+  }
+  if (strength === "high") {
+    return "2";
+  }
+  return "1";
+}
+
 export function formatSensitivity(sensitivity: PixelProjectionFilterSensitivity): string {
   if (sensitivity === "low") {
     return "Low";
@@ -206,6 +269,72 @@ export function formatSensitivity(sensitivity: PixelProjectionFilterSensitivity)
     return "High";
   }
   return "Medium";
+}
+
+export function formatMeshStretchStrength(strength: MeshStretchSuppressionStrength): string {
+  if (strength === "low") {
+    return "Low";
+  }
+  if (strength === "high") {
+    return "High";
+  }
+  return "Medium";
+}
+
+function triangleLooksStretched(
+  positions: Float32Array,
+  a: number,
+  b: number,
+  c: number,
+  strength: MeshStretchSuppressionStrength
+): boolean {
+  const first = readPosition(positions, a);
+  const second = readPosition(positions, b);
+  const third = readPosition(positions, c);
+  if (!first || !second || !third) {
+    return true;
+  }
+
+  const minDepth = Math.min(first.depth, second.depth, third.depth);
+  const maxDepth = Math.max(first.depth, second.depth, third.depth);
+  if (maxDepth - minDepth > MESH_STRETCH_DEPTH_THRESHOLD[strength]) {
+    return true;
+  }
+
+  const ab = distance(first, second);
+  const bc = distance(second, third);
+  const ca = distance(third, first);
+  const shortest = Math.min(ab, bc, ca);
+  const longest = Math.max(ab, bc, ca);
+  if (!Number.isFinite(shortest) || !Number.isFinite(longest) || shortest <= 0.000_001) {
+    return true;
+  }
+
+  return longest / shortest > MESH_STRETCH_ASPECT_THRESHOLD[strength];
+}
+
+function readPosition(
+  positions: Float32Array,
+  index: number
+): { x: number; y: number; z: number; depth: number } | null {
+  const offset = index * 3;
+  const x = positions[offset];
+  const y = positions[offset + 1];
+  const z = positions[offset + 2];
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    return null;
+  }
+  return { x, y, z, depth: Math.abs(z) };
+}
+
+function distance(
+  first: { x: number; y: number; z: number },
+  second: { x: number; y: number; z: number }
+): number {
+  const dx = first.x - second.x;
+  const dy = first.y - second.y;
+  const dz = first.z - second.z;
+  return Math.hypot(dx, dy, dz);
 }
 
 function allRiskTypesShown(options: PixelProjectionFilterOptions): boolean {

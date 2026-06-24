@@ -394,7 +394,7 @@ function renderMeshMetadata(state: ProjectedPixelCloud): string {
     </div>
     <div>
       <dt>Hidden Stretch</dt>
-      <dd>${state.mesh.skippedTriangleCount}</dd>
+      <dd><span data-geometry-hidden-stretch>${state.mesh.skippedTriangleCount}</span></dd>
     </div>
     <div>
       <dt>Mesh Color</dt>
@@ -408,6 +408,8 @@ function renderMeshMetadata(state: ProjectedPixelCloud): string {
 }
 
 function renderGeometryFilterControls(meshAvailable: boolean, stretchedTriangleCount: number): string {
+  const stretchDescription =
+    "Hidden by default because long mesh faces can make depth jumps look like surfaces.";
   return `
       <div class="geometry-filter-panel" data-geometry-filter-panel>
       <button class="geometry-filter-collapse" data-geometry-filter-toggle type="button" aria-expanded="true" aria-label="Collapse point filters"></button>
@@ -419,19 +421,26 @@ function renderGeometryFilterControls(meshAvailable: boolean, stretchedTriangleC
             <button class="geometry-mode-button" type="button" data-geometry-mode="mesh-rgb" aria-pressed="false"${meshAvailable ? "" : " disabled"}>Mesh RGB</button>
           </div>
         </div>
-        <div class="geometry-risk-row geometry-risk-row--stretch">
-          <span class="geometry-risk-name">
-            <span class="geometry-risk-swatch geometry-risk-swatch--stretch"></span>
-            <span>Stretched faces</span>
-            <em class="geometry-info">Hidden by default because long mesh faces can make depth jumps look like surfaces.</em>
-          </span>
-          <button
-            class="geometry-risk-toggle"
-            data-geometry-mesh-stretch
-            type="button"
-            aria-pressed="false"
-            ${meshAvailable && stretchedTriangleCount > 0 ? "" : "disabled"}
-          >Show</button>
+        <div class="geometry-mesh-options" data-geometry-mesh-controls hidden>
+          <div class="geometry-risk-row geometry-risk-row--stretch">
+            <span class="geometry-risk-name">
+              <span>Stretched faces</span>
+              <span class="geometry-risk-swatch geometry-risk-swatch--stretch" aria-hidden="true"></span>
+            </span>
+            <button
+              class="geometry-risk-toggle geometry-risk-toggle--show"
+              data-geometry-mesh-stretch
+              type="button"
+              aria-pressed="false"
+              ${meshAvailable && stretchedTriangleCount > 0 ? "" : "disabled"}
+            >Hide</button>
+            <span class="geometry-info" tabindex="0" aria-label="${escapeHtml(stretchDescription)}" data-tooltip="${escapeHtml(stretchDescription)}">i</span>
+          </div>
+          <label class="geometry-stretch-strength-control">
+            <span>Stretch strength</span>
+            <input data-geometry-stretch-strength type="range" min="0" max="2" step="1" value="1" />
+            <b data-geometry-stretch-strength-label>Medium</b>
+          </label>
         </div>
         <label class="geometry-sensitivity-control">
           <span>Sensitivity</span>
