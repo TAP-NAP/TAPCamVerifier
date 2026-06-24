@@ -192,6 +192,11 @@ describe("renderPixelProjectionPanel", () => {
     expect(html).toContain('id="geometryViewer"');
     expect(html).toContain("signed-depth-pixel-point-cloud");
     expect(html).toContain("8192");
+    expect(html).toContain("every 3 px");
+    expect(html).toContain("576 × 768");
+    expect(html).toContain("3024 × 4032");
+    expect(html).toContain("appleAuxiliaryDepthNative");
+    expect(html).toContain("cgImagePropertyOrientation:6");
     expect(html).toContain("relative");
     expect(html).toContain("3.9180 – 12.3047 disparity");
   });

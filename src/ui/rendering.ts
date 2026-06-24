@@ -137,8 +137,36 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
         <dd>${state.pointCount}</dd>
       </div>
       <div>
-        <dt>Depth</dt>
+        <dt>Sample</dt>
+        <dd>${formatSampleStep(state.sampleStep)}</dd>
+      </div>
+      <div>
+        <dt>Projected Depth</dt>
+        <dd>${state.width} × ${state.height}</dd>
+      </div>
+      <div>
+        <dt>Source Depth</dt>
+        <dd>${state.inputDepthWidth} × ${state.inputDepthHeight}</dd>
+      </div>
+      <div>
+        <dt>RGB</dt>
+        <dd>${state.rgbWidth} × ${state.rgbHeight}</dd>
+      </div>
+      <div>
+        <dt>Range</dt>
         <dd>${formatNumber(state.depthRange.min)} – ${formatNumber(state.depthRange.max)} ${escapeHtml(state.valueUnit)}</dd>
+      </div>
+      <div>
+        <dt>Rotation</dt>
+        <dd>${escapeHtml(state.rotation)}</dd>
+      </div>
+      <div>
+        <dt>Depth Orientation</dt>
+        <dd>${escapeHtml(state.orientation)}</dd>
+      </div>
+      <div>
+        <dt>Photo Orientation</dt>
+        <dd>${escapeHtml(state.photoOrientation)}</dd>
       </div>
       <div>
         <dt>Scale</dt>
@@ -242,6 +270,10 @@ function renderProjectionMessage(message: string): string {
       <span>${escapeHtml(message)}</span>
     </div>
   `;
+}
+
+function formatSampleStep(sampleStep: number): string {
+  return sampleStep <= 1 ? "every pixel" : `every ${sampleStep} px`;
 }
 
 function renderDepthWarnings(state: DepthVisualizationAvailable): string {

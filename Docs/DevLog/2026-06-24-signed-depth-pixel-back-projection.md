@@ -35,10 +35,6 @@ experience.
 
 ## Deferred TODO
 
-- Improve point-cloud readability with tuned point size, sampling density, and
-  default camera framing.
-- Show more point-cloud metadata: sample step, source dimensions, RGB
-  dimensions, orientation, and depth/disparity range.
 - Add depth coverage warnings for empty, saturated, or extremely narrow ranges.
 - Add discontinuity/outlier warnings without generating a triangle surface.
 - Add RGB/depth alignment warnings when dimensions, orientation, or aspect ratio
@@ -49,3 +45,14 @@ experience.
 - Research 3D Gaussian Splatting data requirements before implementation. The
   likely missing data includes multi-view images or burst/video, camera poses,
   sparse point cloud, or a COLMAP-compatible export package.
+
+## 2026-06-24 Point Cloud Readability Pass
+
+- Increased point-cloud sampling density while keeping a fixed browser budget.
+- Made rendered point size depend on sample spacing instead of a single fixed
+  material size.
+- Changed reset/default view to fit the normalized point-cloud bounds for the
+  current viewport aspect ratio.
+- Added point-cloud metadata for sample step, projected/source depth dimensions,
+  RGB dimensions, rotation, depth orientation, photo orientation, depth range,
+  and relative scale.

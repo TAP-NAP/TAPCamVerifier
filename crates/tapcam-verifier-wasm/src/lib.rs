@@ -22,7 +22,7 @@ const PROOF_PAYLOAD_BYTE_COUNT: usize = 60 * 1024;
 const PROOF_HEADER_BYTE_COUNT: usize = 32;
 const PROOF_MAGIC: &[u8] = b"TAPCAM-PROOF-SLOT-V1";
 const BMFF_PROOF_UUID: &[u8] = b"TAPCAMPROOFSLOT1";
-const PIXEL_PROJECTION_TARGET_MAX_EDGE: u32 = 320;
+const PIXEL_PROJECTION_TARGET_MAX_EDGE: u32 = 480;
 
 #[no_mangle]
 pub extern "C" fn tapcam_verify_alloc(len: usize) -> *mut u8 {

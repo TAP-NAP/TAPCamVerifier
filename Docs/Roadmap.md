@@ -35,15 +35,18 @@ App Attest verification. Pixel back-projection reports additional inspection
 signals only; it does not redefine `LocalVerificationReport.status` or final
 `valid` / `invalid`.
 
-## Next Geometry TODO: Point Cloud Inspection
+## Current Geometry Step: Point Cloud Inspection
 
-Keep the geometry view point-cloud-only for now. The next practical work should
-improve inspection quality without introducing a mesh:
+Keep the geometry view point-cloud-only for now. Completed point-cloud
+inspection improvements:
 
-- tune point size, density, and default camera framing so the shape is easier to
-  read on desktop and mobile;
-- expose clear point-cloud metadata, including sample step, source dimensions,
+- tuned point size, sampling density, and default camera framing so the shape is
+  easier to read on desktop and mobile;
+- exposed clear point-cloud metadata, including sample step, source dimensions,
   RGB dimensions, orientation, and depth/disparity range;
+
+Remaining point-cloud inspection TODO:
+
 - add depth coverage warnings for empty, saturated, or extremely narrow depth
   ranges;
 - add discontinuity/outlier warnings that flag abrupt depth jumps without
