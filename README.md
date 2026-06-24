@@ -122,6 +122,7 @@ CORS allowlist.
 - `src/decorations/` is intentionally empty for future designer-owned UI layers.
 - `Docs/VerificationFlow.md` documents the hard-binding hash flow.
 - `Docs/Roadmap.md` records the depth-to-geometry roadmap.
+- `Docs/Research/` records depth/geometry research reports before implementation.
 - `Docs/Scorecard.md` tracks engineering health.
 - `Docs/DevLog/` records decisions and handoff context.
 

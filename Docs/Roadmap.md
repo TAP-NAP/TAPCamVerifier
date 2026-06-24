@@ -90,15 +90,30 @@ Completed verification coverage:
   explicitly reopened. While deferred, preserve the existing `src/main.ts`
   dropzone workflow unless there is a direct product need to change it.
 
-## Research TODO: RGB Reconstruction Comparison
+## Research Direction: RGB-Predicted Depth Consistency
 
-Use RGB data to build a 3D Gaussian Splatting reconstruction, derive a
-reconstructed depth estimate, and compare it against the signed capture's
-embedded depth/disparity data. The intended signal is geometric consistency:
-large disagreement between the RGB-derived geometry and the embedded depth can
-indicate a suspicious or non-real-world capture.
+Use RGB data to predict an independent depth map, then compare it against the
+signed capture's embedded depth/disparity data. The intended signal is geometric
+consistency: large disagreement between RGB-predicted geometry and embedded
+depth can indicate a suspicious or non-real-world capture.
 
-The 3D Gaussian Splatting track is deferred until the data requirements are
-clear. The research task should confirm whether TAPCam needs burst/video,
-multi-view frames, camera poses, a sparse point cloud, or a COLMAP-compatible
-package before this can be treated as an implementation direction.
+Depth Pro is the preferred research target because it can produce a dense depth
+map from a single RGB image. The current research report is
+`Docs/Research/2026-06-25-depth-pro-rgb-depth-consistency.md`.
+
+## Research TODO: 3D Gaussian Splatting Reconstruction
+
+Keep the 3D Gaussian Splatting track as a separate deferred TODO. This direction
+is still useful if TAPCam later captures or imports enough reconstruction input:
+
+- burst or video frames;
+- multi-view stills;
+- camera poses;
+- sparse point clouds;
+- a COLMAP-compatible package.
+
+This TODO should confirm the minimum TAPCam capture/export package needed before
+3DGS can be treated as an implementation direction. It should stay separate from
+the Depth Pro path: Depth Pro is the near-term single-image depth consistency
+check, while 3DGS remains the longer-term multi-view reconstruction research
+track.

@@ -109,3 +109,18 @@ experience.
 - Filtering changes only the inspection view. It does not affect the local
   content-binding checks, server verification, or final `valid` / `invalid`
   result.
+
+## 2026-06-25 Depth Pro Research Pass
+
+- Captured the Depth Pro direction in
+  `Docs/Research/2026-06-25-depth-pro-rgb-depth-consistency.md`.
+- The research direction is RGB-predicted depth consistency, not full
+  single-image 3D reconstruction.
+- Kept the 3D Gaussian Splatting TODO as a separate deferred multi-view
+  reconstruction track in `Docs/Roadmap.md`.
+- Full official Depth Pro is too large for default browser loading, so the
+  implementation path should validate the comparison offline first, prototype
+  browser inference with a smaller WebGPU depth model, and treat Depth Pro as a
+  possible optional high-accuracy mode after export and quantization.
+- The comparison should use tolerant collision-style matching rather than strict
+  pixel equality, then mark meaningful mismatch regions in red.
