@@ -372,7 +372,7 @@ function formatProjectionViewMode(viewMode: string): string {
 function renderGeometryFilterControls(): string {
   return `
       <div class="geometry-filter-panel" data-geometry-filter-panel>
-      <button class="geometry-filter-collapse" data-geometry-filter-toggle type="button" aria-expanded="true" aria-label="Collapse point filters">-</button>
+      <button class="geometry-filter-collapse" data-geometry-filter-toggle type="button" aria-expanded="true" aria-label="Collapse point filters"></button>
       <div class="geometry-filter-body" data-geometry-filter-body>
         <label class="geometry-sensitivity-control">
           <span>Sensitivity</span>
@@ -380,32 +380,32 @@ function renderGeometryFilterControls(): string {
           <b data-geometry-filter-sensitivity-label>Medium</b>
         </label>
         <div class="geometry-filter-group geometry-risk-types">
-          <div class="geometry-risk-title">Risk types</div>
+          <div class="geometry-risk-title">Risk markers</div>
           ${renderRiskTypeControl(
             "clipped",
             "Clipped depth",
-            "Depth samples clipped near the decoded low or high range. These points can collapse or stretch the relative geometry.",
+            "The decoded depth value is near the low or high limit. These samples can flatten surfaces or exaggerate relative spacing, so they are marked for inspection rather than treated as a verification failure.",
             true,
             false
           )}
           ${renderRiskTypeControl(
             "outliers",
             "Isolated outliers",
-            "Single depth samples that differ sharply from nearby pixels. These are treated as local noise candidates.",
+            "This depth sample differs from a mostly consistent local neighborhood. It is a local noise candidate, not proof that the capture is invalid.",
             true,
             false
           )}
           ${renderRiskTypeControl(
             "edges",
             "Depth edges",
-            "Abrupt depth jumps. They may be real object boundaries, so they are off by default.",
+            "Neighboring depth samples change sharply at this point. This often marks a real object boundary, but it can also reveal a depth discontinuity or mapping artifact.",
             true,
             false
           )}
           ${renderRiskTypeControl(
             "color",
             "Color mapping risk",
-            "The signed depth point remains available, but the RGB color attached to it may be less reliable near mapping or distortion-risk areas.",
+            "The depth point is still shown, but the RGB color attached to it may be less reliable near aspect-ratio, alignment, or uncorrected-distortion edges.",
             true,
             false,
             "unstable"

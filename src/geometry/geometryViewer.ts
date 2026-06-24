@@ -357,7 +357,6 @@ function syncFilterPanelToggle(
     return;
   }
   filterPanel.classList.toggle("is-collapsed", filterPanelCollapsed);
-  filterToggle.textContent = filterPanelCollapsed ? "+" : "-";
   filterToggle.setAttribute("aria-expanded", filterPanelCollapsed ? "false" : "true");
   filterToggle.setAttribute(
     "aria-label",

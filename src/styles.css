@@ -229,17 +229,24 @@ input {
   display: grid;
   width: min(460px, calc(100% - 24px));
   gap: 10px;
-  padding: 10px 38px 10px 10px;
+  padding: 10px;
   border: 1px solid rgb(255 255 255 / 18%);
   border-radius: 8px;
   background: rgb(17 24 32 / 88%);
   color: #f6f7f8;
   font-size: 0.78rem;
+  --filter-toggle-right: 4px;
+  --filter-toggle-top: 4px;
 }
 
 .geometry-filter-panel.is-collapsed {
-  width: auto;
-  padding: 8px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  --filter-toggle-right: 0;
+  --filter-toggle-top: 0;
 }
 
 .geometry-filter-body {
@@ -253,24 +260,31 @@ input {
 
 .geometry-filter-collapse {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  display: inline-grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
+  top: var(--filter-toggle-top);
+  right: var(--filter-toggle-right);
+  width: 30px;
+  height: 30px;
   border: 1px solid rgb(255 255 255 / 26%);
   border-radius: 999px;
   background: rgb(8 12 18 / 48%);
   color: #d7dde3;
   cursor: pointer;
-  font-size: 0.9rem;
-  font-weight: 800;
-  line-height: 1;
+  font-size: 0;
 }
 
-.geometry-filter-panel.is-collapsed .geometry-filter-collapse {
-  position: static;
+.geometry-filter-collapse::before {
+  position: absolute;
+  inset: 5px;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23d7dde3'%20stroke-width='2.25'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M4%204l6%206'/%3E%3Cpath%20d='M10%204v6H4'/%3E%3Cpath%20d='M20%2020l-6-6'/%3E%3Cpath%20d='M14%2020v-6h6'/%3E%3C/svg%3E");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 20px 20px;
+  content: "";
+  transition: transform 0.14s ease;
+}
+
+.geometry-filter-collapse[aria-expanded="false"]::before {
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23d7dde3'%20stroke-width='2.25'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M10%2010L4%204'/%3E%3Cpath%20d='M4%2010V4h6'/%3E%3Cpath%20d='M14%2014l6%206'/%3E%3Cpath%20d='M20%2014v6h-6'/%3E%3C/svg%3E");
 }
 
 .geometry-filter-collapse:hover {
@@ -301,6 +315,7 @@ input {
 
 .geometry-sensitivity-control {
   grid-template-columns: 80px minmax(0, 1fr) auto;
+  padding-right: 38px;
 }
 
 .geometry-filter-panel label span,
@@ -698,7 +713,7 @@ input {
   }
 
   .geometry-filter-panel {
-    position: static;
+    position: relative;
     width: 100%;
     border-right: 0;
     border-left: 0;
@@ -706,7 +721,8 @@ input {
   }
 
   .geometry-filter-panel.is-collapsed {
-    width: auto;
+    width: 30px;
+    height: 30px;
   }
 
   .geometry-sensitivity-control {
