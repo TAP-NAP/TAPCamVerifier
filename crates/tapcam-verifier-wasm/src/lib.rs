@@ -878,9 +878,10 @@ fn project_depth_pixels_inner(
                 relative_depth_from_value(display_value, min_value, max_value, value_unit);
             let x_unit = normalized_pixel_axis(x, output_width) * relative_depth;
             let y_unit = -normalized_pixel_axis(y, output_height) * relative_depth;
+            let view_z = -relative_depth;
             push_f32_le(&mut positions, x_unit as f32);
             push_f32_le(&mut positions, y_unit as f32);
-            push_f32_le(&mut positions, relative_depth as f32);
+            push_f32_le(&mut positions, view_z as f32);
 
             let rgb_x = scaled_coordinate(x, output_width, rgb_width);
             let rgb_y = scaled_coordinate(y, output_height, rgb_height);
@@ -1995,6 +1996,34 @@ mod tests {
     }
 
     #[test]
+    fn pixel_projection_places_near_disparity_closer_to_viewer() {
+        let bytes = depth_manifest_fixture(2, 1, "cgImagePropertyOrientation:1", "")
+            .replace(
+                "<x:xmpmeta>",
+                "<x:xmpmeta><apdi:FloatMinValue>4</apdi:FloatMinValue><apdi:FloatMaxValue>16</apdi:FloatMaxValue>",
+            );
+        let rgba = [
+            10, 20, 30, 255,
+            80, 90, 100, 255,
+        ];
+        let depth = [4, 16];
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 2, 1, &depth, 2, 1, 2, 1);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["valueUnit"], "disparity");
+        let positions = STANDARD
+            .decode(report["positionsBase64"].as_str().unwrap())
+            .unwrap();
+        let far_z = read_f32_le(&positions, 2);
+        let near_z = read_f32_le(&positions, 5);
+        assert!(
+            near_z > far_z,
+            "near disparity sample should have a view-space Z closer to the +Z camera"
+        );
+    }
+
+    #[test]
     fn pixel_projection_uses_display_orientation() {
         let bytes = depth_manifest_fixture(3, 2, "cgImagePropertyOrientation:6", "");
         let rgba = vec![128u8; 3 * 2 * 4];
@@ -2216,6 +2245,11 @@ mod tests {
         format!(
             r#"<x:xmpmeta><tapdepth:Manifest>{{"payload":{{"depth":{{"auxiliaryDataKind":"disparity","height":{depth_height},"orientation":"appleAuxiliaryDepthNative","pixelFormat":"hdis","width":{depth_width}}},"photo":{{"orientation":"{photo_orientation}"}}{extra}}},"proofs":[]}}</tapdepth:Manifest></x:xmpmeta>"#
         )
+    }
+
+    fn read_f32_le(bytes: &[u8], index: usize) -> f32 {
+        let offset = index * 4;
+        f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
     }
 
     fn proof_slot_payload(envelope: &[u8]) -> Vec<u8> {

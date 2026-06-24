@@ -21,6 +21,9 @@ inspection model, not an independent reconstruction or a new verification input.
 - Kept Three.js responsible only for browser rendering and interaction.
 - Marked the model as relative geometry because current fixture metadata does
   not include camera intrinsics, focal length, or baseline.
+- Uses a Three.js-compatible view-space depth convention: projected Z is the
+  negative relative depth, so nearer samples sit closer to the default +Z camera
+  and farther samples sit farther away.
 - Kept the local/server verifier status unchanged. Geometry unavailable/error
   states do not affect final `valid` / `invalid`.
 

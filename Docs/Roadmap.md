@@ -26,6 +26,8 @@ Version 1 is a point-cloud inspection model:
 - depth/disparity pixels -> relative 3D point cloud;
 - RGB pixels -> per-point color;
 - browser rotate, pan, zoom, and reset controls;
+- negative-Z view-space convention, where near samples are closer to the default
+  +Z camera and far samples are farther away;
 - explicit `relative geometry` labeling, with no metric-reconstruction claim.
 
 The base verifier remains C2PA-style hard binding over format-native bytes plus
