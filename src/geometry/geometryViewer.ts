@@ -1,5 +1,15 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import {
+  defaultFilterOptions,
+  filterProjectedPixelCloud,
+  formatSensitivity,
+  remapFilteredTriangleIndices,
+  sensitivityFromSliderValue,
+  sliderValueFromSensitivity,
+  type FilteredPixelCloud,
+  type PixelProjectionFilterOptions
+} from "./filtering";
 import type { GeometryRenderMode, ProjectedPixelCloud } from "./types";
 
 export type GeometryViewerCleanup = () => void;
@@ -20,14 +30,16 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   renderer.domElement.dataset.projectionCanvas = "true";
   host.append(renderer.domElement);
 
-  const pointGeometry = createColoredGeometry(cloud);
-  pointGeometry.computeBoundingBox();
-
-  const bounds = pointGeometry.boundingBox ?? new THREE.Box3(
+  const boundsGeometry = new THREE.BufferGeometry();
+  boundsGeometry.setAttribute("position", new THREE.BufferAttribute(cloud.positions, 3));
+  boundsGeometry.computeBoundingBox();
+  const bounds = boundsGeometry.boundingBox ?? new THREE.Box3(
     new THREE.Vector3(-1, -1, -1),
     new THREE.Vector3(1, 1, 1)
   );
+  boundsGeometry.dispose();
 
+  let pointGeometry = new THREE.BufferGeometry();
   const pointMaterial = new THREE.PointsMaterial({
     size: pointSizeForCloud(cloud),
     sizeAttenuation: true,
@@ -36,20 +48,14 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   const pointModel = new THREE.Points(pointGeometry, pointMaterial);
   scene.add(pointModel);
 
-  const meshGeometry = cloud.mesh ? createColoredGeometry(cloud) : null;
+  let meshGeometry: THREE.BufferGeometry | null = cloud.mesh ? new THREE.BufferGeometry() : null;
   const meshMaterial = cloud.mesh
     ? new THREE.MeshBasicMaterial({
         side: THREE.DoubleSide,
         vertexColors: true
       })
     : null;
-  const meshModel = meshGeometry && meshMaterial && cloud.mesh
-    ? new THREE.Mesh(meshGeometry, meshMaterial)
-    : null;
-  if (meshGeometry && cloud.mesh) {
-    meshGeometry.setIndex(new THREE.BufferAttribute(cloud.mesh.indices, 1));
-    meshGeometry.computeVertexNormals();
-  }
+  const meshModel = meshGeometry && meshMaterial ? new THREE.Mesh(meshGeometry, meshMaterial) : null;
   if (meshModel) {
     meshModel.visible = false;
     scene.add(meshModel);
@@ -80,44 +86,206 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   };
   controls.addEventListener("start", markCameraMoved);
 
-  const resetButton = host.parentElement?.querySelector<HTMLButtonElement>("[data-geometry-reset]");
+  const shell = host.parentElement;
+  const filterPanel = shell?.querySelector<HTMLElement>("[data-geometry-filter-panel]");
+  const filterToggle = shell?.querySelector<HTMLButtonElement>("[data-geometry-filter-toggle]");
+  const resetButton = shell?.querySelector<HTMLButtonElement>("[data-geometry-reset]");
+  const sensitivityInput = shell?.querySelector<HTMLInputElement>("[data-geometry-filter-sensitivity]");
+  const sensitivityLabel = shell?.querySelector<HTMLElement>("[data-geometry-filter-sensitivity-label]");
+  const visiblePoints = shell?.parentElement?.querySelector<HTMLElement>("[data-geometry-visible-points]");
+  const activeFilter = shell?.parentElement?.querySelector<HTMLElement>("[data-geometry-active-filter]");
+  const activeMode = shell?.parentElement?.querySelector<HTMLElement>("[data-geometry-active-mode]");
+  const visibleTriangles = shell?.parentElement?.querySelector<HTMLElement>("[data-geometry-visible-triangles]");
   const modeButtons = Array.from(
-    host.parentElement?.querySelectorAll<HTMLButtonElement>("[data-geometry-mode]") ?? []
+    shell?.querySelectorAll<HTMLButtonElement>("[data-geometry-mode]") ?? []
   );
-  const activeModeLabel = host.parentElement?.parentElement?.querySelector<HTMLElement>(
-    "[data-geometry-active-mode]"
+  const stretchButton = shell?.querySelector<HTMLButtonElement>("[data-geometry-mesh-stretch]");
+  const riskShowButtons = Array.from(
+    shell?.querySelectorAll<HTMLButtonElement>("[data-geometry-risk-show]") ?? []
   );
-  const handleResetButtonClick = (): void => {
-    userMovedCamera = false;
-    resetView();
-  };
-  resetButton?.addEventListener("click", handleResetButtonClick);
-  const setMode = (mode: GeometryRenderMode): void => {
-    const nextMode: GeometryRenderMode = mode === "mesh-rgb" && meshModel ? "mesh-rgb" : "point-cloud";
-    pointModel.visible = nextMode === "point-cloud";
+  const riskHighlightButtons = Array.from(
+    shell?.querySelectorAll<HTMLButtonElement>("[data-geometry-risk-highlight]") ?? []
+  );
+  let filterOptions = defaultFilterOptions();
+  let filterPanelCollapsed = false;
+  let renderMode: GeometryRenderMode = "point-cloud";
+  let showStretchedMeshTriangles = false;
+
+  const applyFilter = (): void => {
+    const filtered = filterProjectedPixelCloud(cloud, filterOptions);
+    const nextPointGeometry = createColoredGeometry(filtered.positions, filtered.colors);
+    pointGeometry.dispose();
+    pointGeometry = nextPointGeometry;
+    pointModel.geometry = pointGeometry;
+
+    if (meshModel && cloud.mesh) {
+      const nextMeshGeometry = createColoredGeometry(filtered.positions, filtered.colors);
+      const meshIndices = remapMeshIndicesForFilter(cloud, filtered, showStretchedMeshTriangles);
+      nextMeshGeometry.setIndex(new THREE.BufferAttribute(meshIndices, 1));
+      nextMeshGeometry.computeVertexNormals();
+      meshGeometry?.dispose();
+      meshGeometry = nextMeshGeometry;
+      meshModel.geometry = meshGeometry;
+      if (visibleTriangles) {
+        visibleTriangles.textContent = String(meshIndices.length / 3);
+      }
+    }
+
+    pointModel.visible = renderMode === "point-cloud";
     if (meshModel) {
-      meshModel.visible = nextMode === "mesh-rgb";
+      meshModel.visible = renderMode === "mesh-rgb";
     }
-    renderer.domElement.dataset.geometryMode = nextMode;
-    if (activeModeLabel) {
-      activeModeLabel.textContent = formatGeometryRenderMode(nextMode);
+    if (visiblePoints) {
+      visiblePoints.textContent = String(filtered.visiblePointCount);
     }
+    if (activeFilter) {
+      activeFilter.textContent = formatFilterSummary(filterOptions);
+    }
+    if (activeMode) {
+      activeMode.textContent = formatGeometryRenderMode(renderMode);
+    }
+  };
+  const syncControls = (): void => {
+    if (sensitivityInput) {
+      sensitivityInput.value = sliderValueFromSensitivity(filterOptions.sensitivity);
+    }
+    if (sensitivityLabel) {
+      sensitivityLabel.textContent = formatSensitivity(filterOptions.sensitivity);
+    }
+    syncFilterPanelToggle(filterPanel, filterToggle, filterPanelCollapsed);
     for (const button of modeButtons) {
-      const pressed = button.dataset.geometryMode === nextMode;
-      button.setAttribute("aria-pressed", pressed ? "true" : "false");
+      const mode = button.dataset.geometryMode;
+      const active = mode === renderMode;
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+      button.disabled = mode === "mesh-rgb" && !cloud.mesh;
     }
+    if (stretchButton) {
+      stretchButton.textContent = showStretchedMeshTriangles ? "Hide" : "Show";
+      stretchButton.setAttribute("aria-pressed", showStretchedMeshTriangles ? "true" : "false");
+      stretchButton.disabled = renderMode !== "mesh-rgb" || !cloud.mesh || !cloud.mesh.stretchedTriangleCount;
+    }
+    for (const button of riskShowButtons) {
+      switch (button.dataset.geometryRiskShow) {
+        case "clipped":
+          syncRiskToggle(button, filterOptions.showClippedDepth, "Show", "Hide", false);
+          break;
+        case "outliers":
+          syncRiskToggle(button, filterOptions.showIsolatedOutliers, "Show", "Hide", false);
+          break;
+        case "edges":
+          syncRiskToggle(button, filterOptions.showDepthEdges, "Show", "Hide", false);
+          break;
+        case "color":
+          syncRiskToggle(button, filterOptions.showColorMappingRisk, "Show", "Hide", false);
+          break;
+      }
+    }
+    for (const button of riskHighlightButtons) {
+      switch (button.dataset.geometryRiskHighlight) {
+        case "clipped":
+          syncRiskToggle(
+            button,
+            filterOptions.showClippedDepth && filterOptions.highlightClippedDepth,
+            "Highlight",
+            "Unhighlight",
+            !filterOptions.showClippedDepth
+          );
+          break;
+        case "outliers":
+          syncRiskToggle(
+            button,
+            filterOptions.showIsolatedOutliers && filterOptions.highlightIsolatedOutliers,
+            "Highlight",
+            "Unhighlight",
+            !filterOptions.showIsolatedOutliers
+          );
+          break;
+        case "edges":
+          syncRiskToggle(
+            button,
+            filterOptions.showDepthEdges && filterOptions.highlightDepthEdges,
+            "Highlight",
+            "Unhighlight",
+            !filterOptions.showDepthEdges
+          );
+          break;
+        case "color":
+          syncRiskToggle(
+            button,
+            filterOptions.showColorMappingRisk && filterOptions.highlightColorMappingRisk,
+            "Highlight",
+            "Unhighlight",
+            !filterOptions.showColorMappingRisk
+          );
+          break;
+      }
+    }
+  };
+  const handleSensitivityInput = (): void => {
+    filterOptions = {
+      ...filterOptions,
+      sensitivity: sensitivityFromSliderValue(sensitivityInput?.value ?? "1")
+    };
+    syncControls();
+    applyFilter();
+  };
+  const handleRiskToggleClick = (event: Event): void => {
+    const button = event.currentTarget as HTMLButtonElement;
+    const showRisk = button.dataset.geometryRiskShow;
+    const highlightRisk = button.dataset.geometryRiskHighlight;
+    if (showRisk) {
+      filterOptions = setRiskShow(filterOptions, showRisk, !getRiskShow(filterOptions, showRisk));
+    } else if (highlightRisk) {
+      filterOptions = setRiskHighlight(
+        filterOptions,
+        highlightRisk,
+        !getRiskHighlight(filterOptions, highlightRisk)
+      );
+    }
+    syncControls();
+    applyFilter();
+  };
+  const handleFilterToggleClick = (): void => {
+    filterPanelCollapsed = !filterPanelCollapsed;
+    syncControls();
   };
   const handleModeButtonClick = (event: Event): void => {
     const button = event.currentTarget as HTMLButtonElement;
     const mode = button.dataset.geometryMode;
-    if (mode === "point-cloud" || mode === "mesh-rgb") {
-      setMode(mode);
+    if (mode !== "point-cloud" && mode !== "mesh-rgb") {
+      return;
     }
+    renderMode = mode === "mesh-rgb" && cloud.mesh ? "mesh-rgb" : "point-cloud";
+    syncControls();
+    applyFilter();
   };
+  const handleStretchButtonClick = (): void => {
+    if (renderMode !== "mesh-rgb" || !cloud.mesh) {
+      return;
+    }
+    showStretchedMeshTriangles = !showStretchedMeshTriangles;
+    syncControls();
+    applyFilter();
+  };
+  const handleResetButtonClick = (): void => {
+    userMovedCamera = false;
+    resetView();
+  };
+  filterToggle?.addEventListener("click", handleFilterToggleClick);
+  resetButton?.addEventListener("click", handleResetButtonClick);
+  sensitivityInput?.addEventListener("input", handleSensitivityInput);
   for (const button of modeButtons) {
     button.addEventListener("click", handleModeButtonClick);
   }
-  setMode("point-cloud");
+  stretchButton?.addEventListener("click", handleStretchButtonClick);
+  for (const button of riskShowButtons) {
+    button.addEventListener("click", handleRiskToggleClick);
+  }
+  for (const button of riskHighlightButtons) {
+    button.addEventListener("click", handleRiskToggleClick);
+  }
+  syncControls();
+  applyFilter();
 
   const resize = (): void => {
     const rect = host.getBoundingClientRect();
@@ -147,9 +315,18 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
 
   return () => {
     window.cancelAnimationFrame(animationFrame);
+    filterToggle?.removeEventListener("click", handleFilterToggleClick);
     resetButton?.removeEventListener("click", handleResetButtonClick);
+    sensitivityInput?.removeEventListener("input", handleSensitivityInput);
     for (const button of modeButtons) {
       button.removeEventListener("click", handleModeButtonClick);
+    }
+    stretchButton?.removeEventListener("click", handleStretchButtonClick);
+    for (const button of riskShowButtons) {
+      button.removeEventListener("click", handleRiskToggleClick);
+    }
+    for (const button of riskHighlightButtons) {
+      button.removeEventListener("click", handleRiskToggleClick);
     }
     controls.removeEventListener("start", markCameraMoved);
     resizeObserver.disconnect();
@@ -163,11 +340,186 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   };
 }
 
-function createColoredGeometry(cloud: ProjectedPixelCloud): THREE.BufferGeometry {
+function createColoredGeometry(positions: Float32Array, colors: Uint8Array): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(cloud.positions, 3));
-  geometry.setAttribute("color", new THREE.Uint8BufferAttribute(cloud.colors, 3, true));
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Uint8BufferAttribute(colors, 3, true));
   return geometry;
+}
+
+function remapMeshIndicesForFilter(
+  cloud: ProjectedPixelCloud,
+  filtered: FilteredPixelCloud,
+  includeStretchedTriangles: boolean
+): Uint32Array {
+  if (!cloud.mesh) {
+    return new Uint32Array();
+  }
+
+  const sourceIndices = includeStretchedTriangles
+    ? concatUint32Arrays(cloud.mesh.indices, cloud.mesh.stretchedIndices)
+    : cloud.mesh.indices;
+  return remapFilteredTriangleIndices(sourceIndices, filtered);
+}
+
+function concatUint32Arrays(first: Uint32Array, second: Uint32Array): Uint32Array {
+  if (second.length === 0) {
+    return first;
+  }
+  const output = new Uint32Array(first.length + second.length);
+  output.set(first, 0);
+  output.set(second, first.length);
+  return output;
+}
+
+function formatGeometryRenderMode(mode: GeometryRenderMode): string {
+  return mode === "mesh-rgb" ? "Mesh RGB" : "Point Cloud";
+}
+
+function syncRiskToggle(
+  button: HTMLButtonElement,
+  active: boolean,
+  activeLabel: string,
+  inactiveLabel: string,
+  disabled: boolean
+): void {
+  button.textContent = active ? activeLabel : inactiveLabel;
+  button.setAttribute("aria-pressed", active ? "true" : "false");
+  button.disabled = disabled;
+}
+
+function getRiskShow(options: PixelProjectionFilterOptions, risk: string): boolean {
+  switch (risk) {
+    case "clipped":
+      return options.showClippedDepth;
+    case "outliers":
+      return options.showIsolatedOutliers;
+    case "edges":
+      return options.showDepthEdges;
+    case "color":
+      return options.showColorMappingRisk;
+    default:
+      return false;
+  }
+}
+
+function setRiskShow(
+  options: PixelProjectionFilterOptions,
+  risk: string,
+  value: boolean
+): PixelProjectionFilterOptions {
+  switch (risk) {
+    case "clipped":
+      return { ...options, showClippedDepth: value, highlightClippedDepth: value ? options.highlightClippedDepth : false };
+    case "outliers":
+      return {
+        ...options,
+        showIsolatedOutliers: value,
+        highlightIsolatedOutliers: value ? options.highlightIsolatedOutliers : false
+      };
+    case "edges":
+      return { ...options, showDepthEdges: value, highlightDepthEdges: value ? options.highlightDepthEdges : false };
+    case "color":
+      return {
+        ...options,
+        showColorMappingRisk: value,
+        highlightColorMappingRisk: value ? options.highlightColorMappingRisk : false
+      };
+    default:
+      return options;
+  }
+}
+
+function getRiskHighlight(options: PixelProjectionFilterOptions, risk: string): boolean {
+  switch (risk) {
+    case "clipped":
+      return options.showClippedDepth && options.highlightClippedDepth;
+    case "outliers":
+      return options.showIsolatedOutliers && options.highlightIsolatedOutliers;
+    case "edges":
+      return options.showDepthEdges && options.highlightDepthEdges;
+    case "color":
+      return options.showColorMappingRisk && options.highlightColorMappingRisk;
+    default:
+      return false;
+  }
+}
+
+function setRiskHighlight(
+  options: PixelProjectionFilterOptions,
+  risk: string,
+  value: boolean
+): PixelProjectionFilterOptions {
+  switch (risk) {
+    case "clipped":
+      return options.showClippedDepth ? { ...options, highlightClippedDepth: value } : options;
+    case "outliers":
+      return options.showIsolatedOutliers ? { ...options, highlightIsolatedOutliers: value } : options;
+    case "edges":
+      return options.showDepthEdges ? { ...options, highlightDepthEdges: value } : options;
+    case "color":
+      return options.showColorMappingRisk ? { ...options, highlightColorMappingRisk: value } : options;
+    default:
+      return options;
+  }
+}
+
+function syncFilterPanelToggle(
+  filterPanel: HTMLElement | null | undefined,
+  filterToggle: HTMLButtonElement | null | undefined,
+  filterPanelCollapsed: boolean
+): void {
+  if (!filterPanel || !filterToggle) {
+    return;
+  }
+  filterPanel.classList.toggle("is-collapsed", filterPanelCollapsed);
+  filterToggle.setAttribute("aria-expanded", filterPanelCollapsed ? "false" : "true");
+  filterToggle.setAttribute(
+    "aria-label",
+    filterPanelCollapsed ? "Expand point filters" : "Collapse point filters"
+  );
+}
+
+function formatFilterSummary(options: PixelProjectionFilterOptions): string {
+  const sensitivity = formatSensitivity(options.sensitivity);
+  const shownRiskCount = shownRiskTypeCount(options);
+  if (shownRiskCount === 0) {
+    return `Clean · ${sensitivity}`;
+  }
+  if (allRiskTypesShown(options)) {
+    return anyRiskTypeHighlighted(options) ? `Raw · highlighted risk · ${sensitivity}` : `Raw · ${sensitivity}`;
+  }
+  const riskTypeLabel = shownRiskCount === 1 ? "risk type" : "risk types";
+  return anyRiskTypeHighlighted(options)
+    ? `Clean + ${shownRiskCount} ${riskTypeLabel} · highlighted · ${sensitivity}`
+    : `Clean + ${shownRiskCount} ${riskTypeLabel} · ${sensitivity}`;
+}
+
+function shownRiskTypeCount(options: PixelProjectionFilterOptions): number {
+  return [
+    options.showClippedDepth,
+    options.showIsolatedOutliers,
+    options.showDepthEdges,
+    options.showColorMappingRisk
+  ].filter(Boolean).length;
+}
+
+function allRiskTypesShown(options: PixelProjectionFilterOptions): boolean {
+  return (
+    options.showClippedDepth &&
+    options.showIsolatedOutliers &&
+    options.showDepthEdges &&
+    options.showColorMappingRisk
+  );
+}
+
+function anyRiskTypeHighlighted(options: PixelProjectionFilterOptions): boolean {
+  return (
+    (options.showClippedDepth && options.highlightClippedDepth) ||
+    (options.showIsolatedOutliers && options.highlightIsolatedOutliers) ||
+    (options.showDepthEdges && options.highlightDepthEdges) ||
+    (options.showColorMappingRisk && options.highlightColorMappingRisk)
+  );
 }
 
 function pointSizeForCloud(cloud: ProjectedPixelCloud): number {
@@ -248,8 +600,4 @@ function targetDepthForBounds(bounds: THREE.Box3): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-function formatGeometryRenderMode(mode: GeometryRenderMode): string {
-  return mode === "mesh-rgb" ? "Mesh RGB" : "Point Cloud";
 }

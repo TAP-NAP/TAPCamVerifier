@@ -1,5 +1,5 @@
 import "./styles.css";
-import { decodeHeifAuxiliaryDepthPlane } from "./depth/heifDepthDecoder";
+import { decodeEmbeddedDepthPlane } from "./depth/heifDepthDecoder";
 import type { DecodedDepthPlane, DepthPanelState, DisplayOrientationReference } from "./depth/types";
 import { mountGeometryViewer, type GeometryViewerCleanup } from "./geometry/geometryViewer";
 import { decodeRgbForPixelProjection, projectSignedDepthPixels } from "./geometry/pixelProjection";
@@ -21,6 +21,7 @@ import {
 } from "./ui/rendering";
 import { verifyCaptureLocally, visualizeDepthPlane } from "./wasm/tapcamVerifier";
 import { verifyCaptureSignature } from "./verifier/serverVerify";
+import { buildServerBoundaryDiagnostic } from "./verifier/serverBoundaryDiagnostic";
 import type {
   CaptureSignatureVerifyResponse,
   CombinedVerificationResult,
@@ -263,15 +264,15 @@ async function visualizeSelectedDepth(
   displayReference?: DisplayOrientationReference
 ): Promise<void> {
   try {
-    const depthPlane = await decodeHeifAuxiliaryDepthPlane(fileBytes);
+    const depthPlane = await decodeEmbeddedDepthPlane(fileBytes);
     if (runId !== activeRunId) {
       return;
     }
     if (!depthPlane) {
       const state: DepthPanelState = {
         status: "unavailable",
-        message: "No embedded HEIF auxiliary depth or disparity plane was found.",
-        warnings: ["No embedded HEIF auxiliary depth or disparity plane was found."]
+        message: "No embedded auxiliary depth or disparity plane was found.",
+        warnings: ["No embedded auxiliary depth or disparity plane was found."]
       };
       updateDepthPanel(state);
       updateGeometryPanel({
@@ -468,6 +469,11 @@ async function verifyFileBytes(file: File, fileBytes: Uint8Array): Promise<Combi
       local,
       server: null,
       serverError: localFailure ? "not run: local verification failed" : "not run: missing server request",
+      serverBoundary: buildServerBoundaryDiagnostic(
+        local,
+        null,
+        localFailure ? "local verification failed" : "missing server request"
+      ),
       finalStatus: "invalid"
     };
   }
@@ -487,6 +493,7 @@ async function verifyFileBytes(file: File, fileBytes: Uint8Array): Promise<Combi
     local,
     server,
     serverError,
+    serverBoundary: buildServerBoundaryDiagnostic(local, server, serverError),
     finalStatus: finalStatus(local, server)
   };
 }

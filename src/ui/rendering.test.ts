@@ -17,9 +17,15 @@ const result: CombinedVerificationResult = {
   finalStatus: "valid",
   server: {
     status: "valid",
-    signingBindingSHA256: "server-binding"
+    signingBindingSHA256: "binding"
   },
   serverError: null,
+  serverBoundary: {
+    status: "matched",
+    summary: "Server boundary echo matched the browser/WASM hash of the submitted signingBinding.",
+    localSigningBindingSHA256: "binding",
+    serverSigningBindingSHA256: "binding"
+  },
   local: {
     status: "valid",
     summary: "All local content binding checks passed.",
@@ -49,10 +55,68 @@ describe("renderVerificationResult", () => {
     const html = renderVerificationResult(result);
 
     expect(html).toContain("All local content binding checks passed.");
+    expect(html).toContain("Server boundary echo matched");
+    expect(html).toContain("Server Echo SHA-256");
+    expect(html).toContain("Server Boundary");
     expect(html).toContain('<details class="checks-disclosure">');
     expect(html).not.toContain('<details class="checks-disclosure" open>');
     expect(html).toContain("Local content binding checks");
     expect(html).toContain("Recompute asset hash excluding proof slot");
+  });
+
+  it("renders a mismatch as server integration drift", () => {
+    const html = renderVerificationResult({
+      ...result,
+      server: {
+        status: "valid",
+        signingBindingSHA256: "server-binding"
+      },
+      serverBoundary: {
+        status: "mismatch",
+        summary:
+          "Server boundary integration drift: echoed signingBindingSHA256 does not match the browser/WASM hash of the submitted signingBinding.",
+        localSigningBindingSHA256: "binding",
+        serverSigningBindingSHA256: "server-binding"
+      }
+    });
+
+    expect(html).toContain("integration drift");
+    expect(html).toContain("server-binding");
+    expect(html).toContain("submitted signingBinding");
+  });
+
+  it("renders a missing server echo without calling it a content failure", () => {
+    const html = renderVerificationResult({
+      ...result,
+      server: {
+        status: "valid"
+      },
+      serverBoundary: {
+        status: "not-echoed",
+        summary: "Server response did not echo signingBindingSHA256; boundary comparison was skipped.",
+        localSigningBindingSHA256: "binding"
+      }
+    });
+
+    expect(html).toContain("not echoed");
+    expect(html).toContain("boundary comparison was skipped");
+  });
+
+  it("renders absent server verification as not run", () => {
+    const html = renderVerificationResult({
+      ...result,
+      server: null,
+      serverError: "Failed to fetch",
+      serverBoundary: {
+        status: "not-run",
+        summary: "Server boundary comparison did not run: Failed to fetch.",
+        localSigningBindingSHA256: "binding"
+      },
+      finalStatus: "invalid"
+    });
+
+    expect(html).toContain("not run");
+    expect(html).toContain("Failed to fetch");
   });
 });
 
@@ -190,16 +254,41 @@ describe("renderPixelProjectionPanel", () => {
         rawMin: 0,
         rawMax: 255
       },
+      quality: {
+        globalRisk: "notice",
+        metrics: {
+          clippedLowRatio: 0.01,
+          clippedHighRatio: 0.02,
+          robustRange: 180,
+          discontinuityRatio: 0.05,
+          outlierRatio: 0.01,
+          alignmentRisk: "ok"
+        },
+        warnings: [
+          {
+            id: "isolated-depth-outliers",
+            severity: "notice",
+            filterable: true,
+            affectedPointCount: 82,
+            message: "Isolated depth samples differ sharply from their local neighborhood."
+          }
+        ]
+      },
       positions: new Float32Array(8192 * 3),
       colors: new Uint8Array(8192 * 3),
+      riskFlags: new Uint16Array(8192),
+      outlierScores: new Uint8Array(8192),
+      discontinuityScores: new Uint8Array(8192),
       mesh: {
         gridWidth: 192,
         gridHeight: 256,
         triangleCount: 88420,
         skippedTriangleCount: 120,
+        stretchedTriangleCount: 120,
         discontinuityThreshold: 0.35,
         colorMode: "vertex-rgb",
-        indices: new Uint32Array(88420 * 3)
+        indices: new Uint32Array(88420 * 3),
+        stretchedIndices: new Uint32Array(120 * 3)
       },
       warnings: ["relative geometry"]
     };
@@ -207,10 +296,6 @@ describe("renderPixelProjectionPanel", () => {
     const html = renderPixelProjectionPanel(state);
 
     expect(html).toContain('id="geometryViewer"');
-    expect(html).toContain('data-geometry-mode="point-cloud" aria-pressed="true"');
-    expect(html).toContain('data-geometry-mode="mesh-rgb" aria-pressed="false"');
-    expect(html).toContain("Point Cloud");
-    expect(html).toContain("Mesh RGB");
     expect(html).toContain("signed-depth-pixel-point-cloud");
     expect(html).toContain("capture camera");
     expect(html).toContain("metadata-pinhole");
@@ -224,10 +309,41 @@ describe("renderPixelProjectionPanel", () => {
     expect(html).toContain("cgImagePropertyOrientation:6");
     expect(html).toContain("relative");
     expect(html).toContain("3.9180 – 12.3047 disparity");
-    expect(html).toContain("192 × 256");
+    expect(html).toContain("Visible Points");
+    expect(html).toContain("Point Cloud");
+    expect(html).toContain("Mesh RGB");
+    expect(html).toContain('data-geometry-mode="point-cloud" aria-pressed="true"');
+    expect(html).toContain('data-geometry-mode="mesh-rgb" aria-pressed="false"');
+    expect(html).toContain("Stretched faces");
+    expect(html).toContain("Hidden by default");
+    expect(html).toContain("Mesh Triangles");
     expect(html).toContain("88420");
-    expect(html).toContain("120");
+    expect(html).toContain("88540");
+    expect(html).toContain("Hidden Stretch");
     expect(html).toContain("vertex RGB");
     expect(html).toContain("0.3500");
+    expect(html).toContain("Raw · Medium");
+    expect(html).toContain("Sensitivity");
+    expect(html).not.toContain("Strength");
+    expect(html).toContain("data-geometry-filter-toggle");
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).not.toContain("geometry-risk-header");
+    expect(html).toContain("Risk markers");
+    expect(html).toContain("Show");
+    expect(html).toContain("Unhighlight");
+    expect(html).toContain("Clipped depth");
+    expect(html).toContain("Isolated outliers");
+    expect(html).toContain("Depth edges");
+    expect(html).toContain("Color mapping risk");
+    expect(html).toContain("unstable");
+    expect(html.match(/class="geometry-info"/g)?.length).toBe(5);
+    expect(html).toContain('data-geometry-risk-show="clipped" type="button" aria-pressed="true"');
+    expect(html).toContain('data-geometry-risk-show="color" type="button" aria-pressed="true"');
+    expect(html).toContain('data-geometry-risk-highlight="color" type="button" aria-pressed="false"');
+    expect(html).toContain('data-geometry-risk-highlight="clipped" type="button" aria-pressed="false"');
+    expect(html).toContain("notice");
+    expect(html).toContain("3.0%");
+    expect(html).toContain("Isolated depth samples");
+    expect(html).toContain("82 pts");
   });
 });

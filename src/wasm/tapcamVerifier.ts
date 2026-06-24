@@ -183,19 +183,33 @@ export async function projectDepthPixels(
 type EncodedPixelProjectionReport = PixelProjectionReport & {
   positionsBase64?: string;
   colorsBase64?: string;
-  mesh?: (Partial<PixelProjectionMesh> & { indicesBase64?: string });
+  riskFlagsBase64?: string;
+  outlierScoresBase64?: string;
+  discontinuityScoresBase64?: string;
+  mesh?: Partial<PixelProjectionMesh> & {
+    indicesBase64?: string;
+    stretchedIndicesBase64?: string;
+  };
 };
 
 export function decodePixelProjectionReport(result: EncodedPixelProjectionReport): PixelProjectionReport {
   if (result.status === "available") {
     result.positions = decodeBase64Float32(result.positionsBase64 ?? "");
     result.colors = decodeBase64Bytes(result.colorsBase64 ?? "");
+    result.riskFlags = decodeBase64Uint16(result.riskFlagsBase64 ?? "");
+    result.outlierScores = decodeBase64Bytes(result.outlierScoresBase64 ?? "");
+    result.discontinuityScores = decodeBase64Bytes(result.discontinuityScoresBase64 ?? "");
     if (result.mesh) {
       result.mesh.indices = decodeBase64Uint32(result.mesh.indicesBase64 ?? "");
+      result.mesh.stretchedIndices = decodeBase64Uint32(result.mesh.stretchedIndicesBase64 ?? "");
       delete result.mesh.indicesBase64;
+      delete result.mesh.stretchedIndicesBase64;
     }
     delete result.positionsBase64;
     delete result.colorsBase64;
+    delete result.riskFlagsBase64;
+    delete result.outlierScoresBase64;
+    delete result.discontinuityScoresBase64;
   }
   return result;
 }
@@ -241,6 +255,11 @@ function decodeBase64Bytes(value: string): Uint8Array {
 function decodeBase64Float32(value: string): Float32Array {
   const bytes = decodeBase64Bytes(value);
   return new Float32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 4));
+}
+
+export function decodeBase64Uint16(value: string): Uint16Array {
+  const bytes = decodeBase64Bytes(value);
+  return new Uint16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
 }
 
 function decodeBase64Uint32(value: string): Uint32Array {
