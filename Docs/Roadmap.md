@@ -68,7 +68,6 @@ discontinuities, and attach RGB as vertex color or UV texture.
 
 ## Verification And QA TODO
 
-- Add browser drag/drop automation against `test/tap-depth-photo.HEIC`.
 - Add screenshot or canvas-pixel checks for the 3D point-cloud pane so blank or
   badly framed renders fail in CI.
 - Add signed JPEG fixture coverage for the fixed proof-slot parser and full
@@ -81,6 +80,15 @@ discontinuities, and attach RGB as vertex color or UV texture.
   `signingBinding` validation remain browser/WASM responsibilities.
 - Keep visualization failures non-fatal for `LocalVerificationReport.status` and
   final `valid` / `invalid` semantics.
+
+## Frozen QA TODO
+
+- Browser drag/drop automation against `test/tap-depth-photo.HEIC` is frozen.
+  The current drag/drop flow has been manually verified, and this repo should
+  not add Playwright, Puppeteer, or another browser automation dependency for
+  this item unless the TODO is explicitly reopened. While frozen, preserve the
+  existing `src/main.ts` dropzone workflow unless there is a direct product need
+  to change it.
 
 ## Research TODO: RGB Reconstruction Comparison
 

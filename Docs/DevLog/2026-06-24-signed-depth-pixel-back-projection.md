@@ -41,8 +41,10 @@ experience.
 - Add discontinuity/outlier warnings without generating a triangle surface.
 - Add RGB/depth alignment warnings when dimensions, orientation, or aspect ratio
   suggest unreliable color overlay.
-- Add browser drag/drop automation and canvas/screenshot checks for the 3D
-  point-cloud pane.
+- Browser drag/drop automation is frozen after manual verification. Do not add
+  Playwright, Puppeteer, or another browser automation dependency unless this
+  item is explicitly reopened.
+- Add canvas/screenshot checks for the 3D point-cloud pane.
 - Defer mesh and texture work until a cleaner inspection surface is justified.
 - Research 3D Gaussian Splatting data requirements before implementation. The
   likely missing data includes multi-view images or burst/video, camera poses,
