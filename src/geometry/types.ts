@@ -11,6 +11,14 @@ export interface PixelProjectionDepthRange {
 export interface ProjectedPixelCloud {
   status: "available";
   geometryKind: "signed-depth-pixel-point-cloud";
+  viewMode: "capture-camera" | string;
+  cameraModel: "virtual-pinhole" | "metadata-pinhole" | string;
+  imageWidth: number;
+  imageHeight: number;
+  fx: number;
+  fy: number;
+  cx: number;
+  cy: number;
   sourceKind: string;
   valueUnit: string;
   relativeGeometry: boolean;

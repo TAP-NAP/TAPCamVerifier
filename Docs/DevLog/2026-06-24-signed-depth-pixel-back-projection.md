@@ -19,8 +19,10 @@ inspection model, not an independent reconstruction or a new verification input.
 - Added a Rust/WASM `tapcam_project_depth_pixels` path that generates a sampled
   relative point cloud from decoded RGB plus decoded depth/disparity.
 - Kept Three.js responsible only for browser rendering and interaction.
-- Marked the model as relative geometry because current fixture metadata does
-  not include camera intrinsics, focal length, or baseline.
+- Marked the model as relative geometry. Manifest camera calibration can provide
+  single-photo pinhole intrinsics, but the verifier still does not claim stable
+  world coordinates, multi-frame reconstruction, hidden-surface geometry, or
+  distortion-corrected projection.
 - Uses a Three.js-compatible view-space depth convention: projected Z is the
   negative relative depth, so nearer samples sit closer to the default +Z camera
   and farther samples sit farther away.
@@ -56,3 +58,14 @@ experience.
 - Added point-cloud metadata for sample step, projected/source depth dimensions,
   RGB dimensions, rotation, depth orientation, photo orientation, depth range,
   and relative scale.
+
+## 2026-06-24 Capture Camera Reprojection Pass
+
+- Added a `capture-camera` view mode for point-cloud rendering.
+- Read `payload.depth.cameraCalibration` from the manifest and scale the 3x3
+  intrinsic matrix into projected depth dimensions as `metadata-pinhole`.
+- Fall back to `virtual-pinhole` only when manifest calibration is missing or
+  invalid.
+- Changed point back-projection to pinhole camera coordinates:
+  `X = (u - cx) / fx * Z`, `Y = (v - cy) / fy * Z`, with view-space `Z` kept
+  negative for Three.js.

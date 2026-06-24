@@ -53,8 +53,10 @@ Remaining point-cloud inspection TODO:
   generating a triangle surface;
 - add RGB/depth alignment warnings when source dimensions, orientation, or
   aspect ratio suggest the color overlay may be unreliable;
-- keep explicit `relative geometry` labeling until camera intrinsics, focal
-  length, or baseline are available.
+- keep explicit `relative geometry` labeling: manifest camera calibration can
+  provide single-photo pinhole intrinsics, but the verifier still has no stable
+  world coordinates, multi-frame poses, hidden-surface geometry, or serialized
+  distortion lookup table.
 
 ## Deferred Geometry TODO: Mesh And Texture
 

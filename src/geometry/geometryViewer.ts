@@ -7,12 +7,15 @@ export type GeometryViewerCleanup = () => void;
 export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelCloud): GeometryViewerCleanup {
   host.textContent = "";
 
+  const backgroundColor = new THREE.Color(0x111820);
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x111820);
+  scene.background = backgroundColor;
 
   const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 100);
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setClearColor(backgroundColor);
+  renderer.autoClear = false;
   renderer.domElement.className = "geometry-canvas";
   renderer.domElement.dataset.projectionCanvas = "true";
   host.append(renderer.domElement);
@@ -26,9 +29,6 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     new THREE.Vector3(-1, -1, -1),
     new THREE.Vector3(1, 1, 1)
   );
-  const center = bounds.getCenter(new THREE.Vector3());
-  const size = bounds.getSize(new THREE.Vector3());
-  geometry.translate(-center.x, -center.y, -center.z);
 
   const model = new THREE.Points(
     geometry,
@@ -38,30 +38,26 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
       vertexColors: true
     })
   );
-  const maxSize = Math.max(size.x, size.y, size.z, 0.0001);
-  const modelScale = 2 / maxSize;
-  model.scale.setScalar(modelScale);
   scene.add(model);
-
-  const framedSize = size.clone().multiplyScalar(modelScale);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.enablePan = true;
   controls.screenSpacePanning = true;
-  controls.minDistance = 0.5;
+  controls.minDistance = 0.05;
   controls.maxDistance = 10;
+  const targetDepth = targetDepthForBounds(bounds);
 
   let userMovedCamera = false;
+  let renderViewport = { x: 0, y: 0, width: 1, height: 1 };
 
   const resetView = (): void => {
-    const distance = cameraDistanceForSize(camera, framedSize);
-    camera.position.set(0, 0, distance);
+    camera.position.set(0, 0, 0);
     camera.up.set(0, 1, 0);
-    controls.target.set(0, 0, 0);
-    controls.minDistance = Math.max(0.25, distance * 0.25);
-    controls.maxDistance = Math.max(distance * 4, 4);
+    controls.target.set(0, 0, -targetDepth);
+    controls.minDistance = Math.max(0.01, targetDepth * 0.05);
+    controls.maxDistance = Math.max(4, targetDepth * 6);
     controls.update();
   };
   const markCameraMoved = (): void => {
@@ -81,8 +77,8 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     const width = Math.max(1, Math.floor(rect.width));
     const height = Math.max(1, Math.floor(rect.height));
     renderer.setSize(width, height, false);
-    camera.aspect = width / height;
-    camera.updateProjectionMatrix();
+    renderViewport = fitImageViewport(width, height, cloud.imageWidth, cloud.imageHeight);
+    updateCaptureCameraProjection(camera, cloud);
     if (!userMovedCamera) {
       resetView();
     }
@@ -94,6 +90,11 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   let animationFrame = 0;
   const render = (): void => {
     controls.update();
+    renderer.setScissorTest(false);
+    renderer.clear(true, true, true);
+    renderer.setViewport(renderViewport.x, renderViewport.y, renderViewport.width, renderViewport.height);
+    renderer.setScissor(renderViewport.x, renderViewport.y, renderViewport.width, renderViewport.height);
+    renderer.setScissorTest(true);
     renderer.render(scene, camera);
     animationFrame = window.requestAnimationFrame(render);
   };
@@ -118,13 +119,65 @@ function pointSizeForCloud(cloud: ProjectedPixelCloud): number {
   return clamp(projectedSpacing * 2.4, 0.015, 0.034);
 }
 
-function cameraDistanceForSize(camera: THREE.PerspectiveCamera, size: THREE.Vector3): number {
-  const verticalFov = THREE.MathUtils.degToRad(camera.fov);
-  const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
-  const widthDistance = size.x / 2 / Math.tan(horizontalFov / 2);
-  const heightDistance = size.y / 2 / Math.tan(verticalFov / 2);
-  const depthPadding = size.z * 0.55;
-  return Math.max(widthDistance, heightDistance, 1) * 1.2 + depthPadding;
+function updateCaptureCameraProjection(camera: THREE.PerspectiveCamera, cloud: ProjectedPixelCloud): void {
+  const near = 0.01;
+  const far = 100;
+  camera.near = near;
+  camera.far = far;
+  camera.projectionMatrix.set(
+    2 * cloud.fx / cloud.imageWidth,
+    0,
+    1 - 2 * cloud.cx / cloud.imageWidth,
+    0,
+    0,
+    2 * cloud.fy / cloud.imageHeight,
+    2 * cloud.cy / cloud.imageHeight - 1,
+    0,
+    0,
+    0,
+    -(far + near) / (far - near),
+    -2 * far * near / (far - near),
+    0,
+    0,
+    -1,
+    0
+  );
+  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+}
+
+function fitImageViewport(
+  canvasWidth: number,
+  canvasHeight: number,
+  imageWidth: number,
+  imageHeight: number
+): { x: number; y: number; width: number; height: number } {
+  const imageAspect = imageWidth > 0 && imageHeight > 0 ? imageWidth / imageHeight : 1;
+  const canvasAspect = canvasWidth / canvasHeight;
+  if (canvasAspect > imageAspect) {
+    const width = Math.max(1, Math.floor(canvasHeight * imageAspect));
+    return {
+      x: Math.floor((canvasWidth - width) / 2),
+      y: 0,
+      width,
+      height: canvasHeight
+    };
+  }
+
+  const height = Math.max(1, Math.floor(canvasWidth / imageAspect));
+  return {
+    x: 0,
+    y: Math.floor((canvasHeight - height) / 2),
+    width: canvasWidth,
+    height
+  };
+}
+
+function targetDepthForBounds(bounds: THREE.Box3): number {
+  if (bounds.isEmpty()) {
+    return 1;
+  }
+  const center = bounds.getCenter(new THREE.Vector3());
+  return Math.max(0.25, -center.z);
 }
 
 function clamp(value: number, min: number, max: number): number {

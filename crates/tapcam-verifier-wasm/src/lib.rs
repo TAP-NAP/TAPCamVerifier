@@ -852,6 +852,8 @@ fn project_depth_pixels_inner(
     };
     let value_unit = infer_depth_value_unit(source_kind, pixel_format, metric_unit, value_range_kind);
     let relative_geometry = true;
+    let camera = pinhole_camera_from_manifest(depth, output_width, output_height)
+        .unwrap_or_else(|| virtual_pinhole_camera(output_width, output_height));
     let sample_step = output_width
         .max(output_height)
         .div_ceil(PIXEL_PROJECTION_TARGET_MAX_EDGE)
@@ -876,9 +878,12 @@ fn project_depth_pixels_inner(
             let display_value = depth_display_value(normalized, min_value, max_value);
             let relative_depth =
                 relative_depth_from_value(display_value, min_value, max_value, value_unit);
-            let x_unit = normalized_pixel_axis(x, output_width) * relative_depth;
-            let y_unit = -normalized_pixel_axis(y, output_height) * relative_depth;
-            let view_z = -relative_depth;
+            let (x_unit, y_unit, view_z) = back_project_pixel_to_view_space(
+                x as f64,
+                y as f64,
+                relative_depth,
+                camera,
+            );
             push_f32_le(&mut positions, x_unit as f32);
             push_f32_le(&mut positions, y_unit as f32);
             push_f32_le(&mut positions, view_z as f32);
@@ -893,10 +898,17 @@ fn project_depth_pixels_inner(
     }
 
     let mut warnings = Vec::new();
-    warnings.push(
-        "relative geometry: camera intrinsics, focal length, and baseline are not available"
-            .to_string(),
-    );
+    if camera.model == "metadata-pinhole" {
+        warnings.push(
+            "relative geometry: using manifest camera calibration intrinsics without a stable world coordinate system"
+                .to_string(),
+        );
+    } else {
+        warnings.push(
+            "relative geometry: camera calibration intrinsics are unavailable; using a virtual pinhole camera"
+                .to_string(),
+        );
+    }
     if value_unit == "disparity" {
         warnings.push("disparity was converted to relative depth for inspection only".to_string());
     }
@@ -929,6 +941,14 @@ fn project_depth_pixels_inner(
     Ok(json!({
         "status": "available",
         "geometryKind": "signed-depth-pixel-point-cloud",
+        "viewMode": "capture-camera",
+        "cameraModel": camera.model,
+        "imageWidth": camera.image_width,
+        "imageHeight": camera.image_height,
+        "fx": camera.fx,
+        "fy": camera.fy,
+        "cx": camera.cx,
+        "cy": camera.cy,
         "sourceKind": source_kind,
         "valueUnit": value_unit,
         "relativeGeometry": relative_geometry,
@@ -1581,13 +1601,6 @@ fn sample_bilinear_rgba(
     }
 }
 
-fn normalized_pixel_axis(pixel: u32, extent: u32) -> f64 {
-    if extent <= 1 {
-        return 0.0;
-    }
-    ((pixel as f64 / (extent - 1) as f64) - 0.5) * 2.0
-}
-
 fn scaled_coordinate(pixel: u32, source_extent: u32, target_extent: u32) -> usize {
     if target_extent <= 1 || source_extent <= 1 {
         return 0;
@@ -1625,6 +1638,128 @@ fn relative_depth_from_value(value: f64, min_value: f64, max_value: f64, value_u
     };
 
     0.25 + normalized * 1.75
+}
+
+#[derive(Clone, Copy)]
+struct PinholeCamera {
+    model: &'static str,
+    image_width: u32,
+    image_height: u32,
+    fx: f64,
+    fy: f64,
+    cx: f64,
+    cy: f64,
+}
+
+fn virtual_pinhole_camera(width: u32, height: u32) -> PinholeCamera {
+    let focal = 0.9 * width.max(height) as f64;
+    PinholeCamera {
+        model: "virtual-pinhole",
+        image_width: width,
+        image_height: height,
+        fx: focal,
+        fy: focal,
+        cx: width as f64 / 2.0,
+        cy: height as f64 / 2.0,
+    }
+}
+
+fn pinhole_camera_from_manifest(depth: &Value, width: u32, height: u32) -> Option<PinholeCamera> {
+    let calibration = depth.get("cameraCalibration")?;
+    let pixel_size = calibration.get("pixelSizeMillimeters")?.as_f64()?;
+    let lens_center_x = calibration.get("lensDistortionCenterX")?.as_f64()?;
+    let lens_center_y = calibration.get("lensDistortionCenterY")?.as_f64()?;
+    if !pixel_size.is_finite() || !lens_center_x.is_finite() || !lens_center_y.is_finite() {
+        return None;
+    }
+
+    let extrinsic = calibration.get("extrinsicMatrix")?.as_array()?;
+    if extrinsic.len() != 12
+        || !extrinsic
+            .iter()
+            .all(|value| value.as_f64().is_some_and(f64::is_finite))
+    {
+        return None;
+    }
+
+    let reference_width = calibration
+        .get("intrinsicMatrixReferenceWidth")?
+        .as_f64()?;
+    let reference_height = calibration
+        .get("intrinsicMatrixReferenceHeight")?
+        .as_f64()?;
+    if !reference_width.is_finite()
+        || !reference_height.is_finite()
+        || reference_width <= 0.0
+        || reference_height <= 0.0
+    {
+        return None;
+    }
+
+    let intrinsic = calibration.get("intrinsicMatrix")?.as_array()?;
+    if intrinsic.len() != 9 {
+        return None;
+    }
+    let matrix: Vec<f64> = intrinsic
+        .iter()
+        .map(Value::as_f64)
+        .collect::<Option<Vec<_>>>()?;
+    if !matrix.iter().all(|value| value.is_finite()) {
+        return None;
+    }
+
+    let fx = matrix[0] * width as f64 / reference_width;
+    let fy = matrix[4] * height as f64 / reference_height;
+    let cx = matrix[6] * width as f64 / reference_width;
+    let cy = matrix[7] * height as f64 / reference_height;
+    if !fx.is_finite()
+        || !fy.is_finite()
+        || !cx.is_finite()
+        || !cy.is_finite()
+        || fx.abs() <= 0.000_001
+        || fy.abs() <= 0.000_001
+    {
+        return None;
+    }
+
+    Some(PinholeCamera {
+        model: "metadata-pinhole",
+        image_width: width,
+        image_height: height,
+        fx,
+        fy,
+        cx,
+        cy,
+    })
+}
+
+fn back_project_pixel_to_view_space(
+    pixel_x: f64,
+    pixel_y: f64,
+    relative_depth: f64,
+    camera: PinholeCamera,
+) -> (f64, f64, f64) {
+    let depth = relative_depth.max(0.000_001);
+    let x = (pixel_x - camera.cx) / camera.fx * depth;
+    let y = -(pixel_y - camera.cy) / camera.fy * depth;
+    (x, y, -depth)
+}
+
+#[cfg(test)]
+fn reproject_view_space_to_pixel(
+    x: f64,
+    y: f64,
+    z: f64,
+    camera: PinholeCamera,
+) -> Option<(f64, f64)> {
+    let depth = -z;
+    if depth <= 0.0 {
+        return None;
+    }
+    Some((
+        camera.fx * x / depth + camera.cx,
+        camera.cy - camera.fy * y / depth,
+    ))
 }
 
 fn aspect_ratio_delta(width: u32, height: u32, other_width: u32, other_height: u32) -> f64 {
@@ -1984,6 +2119,10 @@ mod tests {
         assert_eq!(report["sampleStep"], 1);
         assert_eq!(report["valueUnit"], "disparity");
         assert_eq!(report["relativeGeometry"], true);
+        assert_eq!(report["viewMode"], "capture-camera");
+        assert_eq!(report["cameraModel"], "virtual-pinhole");
+        assert_eq!(report["imageWidth"], 4);
+        assert_eq!(report["imageHeight"], 2);
         let positions = STANDARD
             .decode(report["positionsBase64"].as_str().unwrap())
             .unwrap();
@@ -1993,6 +2132,59 @@ mod tests {
         assert_eq!(positions.len(), 8 * 3 * 4);
         assert_eq!(colors.len(), 8 * 3);
         assert_eq!(&colors[0..3], &[10, 20, 30]);
+    }
+
+    #[test]
+    fn pixel_projection_uses_manifest_camera_calibration_intrinsics() {
+        let calibration = r#""cameraCalibration":{
+            "intrinsicMatrixReferenceWidth": 8,
+            "intrinsicMatrixReferenceHeight": 4,
+            "pixelSizeMillimeters": 0.001,
+            "lensDistortionLookupTablePresent": true,
+            "inverseLensDistortionLookupTablePresent": true,
+            "lensDistortionCenterX": 2,
+            "lensDistortionCenterY": 1,
+            "intrinsicMatrix": [80,0,0,0,40,0,4,2,1],
+            "extrinsicMatrix": [1,0,0,0,1,0,0,0,1,0,0,0]
+        }"#;
+        let bytes = depth_manifest_fixture(4, 2, "cgImagePropertyOrientation:1", "").replace(
+            r#""width":4}"#,
+            &format!(r#""width":4,{calibration}}}"#),
+        );
+        let rgba = vec![128u8; 4 * 2 * 4];
+        let depth = [4, 8, 12, 16, 20, 24, 28, 32];
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 4, 2, &depth, 4, 2, 4, 2);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["cameraModel"], "metadata-pinhole");
+        assert_eq!(report["fx"], 40.0);
+        assert_eq!(report["fy"], 20.0);
+        assert_eq!(report["cx"], 2.0);
+        assert_eq!(report["cy"], 1.0);
+    }
+
+    #[test]
+    fn pixel_projection_reprojects_with_pinhole_intrinsics_to_source_pixel() {
+        let camera = PinholeCamera {
+            model: "metadata-pinhole",
+            image_width: 4,
+            image_height: 2,
+            fx: 40.0,
+            fy: 20.0,
+            cx: 2.0,
+            cy: 1.0,
+        };
+        let pixel_x = 3.0;
+        let pixel_y = 1.0;
+        let depth = 1.25;
+
+        let (x, y, z) = back_project_pixel_to_view_space(pixel_x, pixel_y, depth, camera);
+        let (projected_x, projected_y) =
+            reproject_view_space_to_pixel(x, y, z, camera).expect("point should reproject");
+
+        assert!((projected_x - pixel_x).abs() < 0.000_001);
+        assert!((projected_y - pixel_y).abs() < 0.000_001);
     }
 
     #[test]

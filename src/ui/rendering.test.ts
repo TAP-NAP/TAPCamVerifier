@@ -161,6 +161,14 @@ describe("renderPixelProjectionPanel", () => {
     const state: ProjectedPixelCloud = {
       status: "available",
       geometryKind: "signed-depth-pixel-point-cloud",
+      viewMode: "capture-camera",
+      cameraModel: "metadata-pinhole",
+      imageWidth: 576,
+      imageHeight: 768,
+      fx: 721.25,
+      fy: 719.5,
+      cx: 288,
+      cy: 384,
       sourceKind: "disparity",
       valueUnit: "disparity",
       relativeGeometry: true,
@@ -191,10 +199,14 @@ describe("renderPixelProjectionPanel", () => {
 
     expect(html).toContain('id="geometryViewer"');
     expect(html).toContain("signed-depth-pixel-point-cloud");
+    expect(html).toContain("capture camera");
+    expect(html).toContain("metadata-pinhole");
     expect(html).toContain("8192");
     expect(html).toContain("every 3 px");
     expect(html).toContain("576 × 768");
     expect(html).toContain("3024 × 4032");
+    expect(html).toContain("721.2500 × 719.5000");
+    expect(html).toContain("288 × 384");
     expect(html).toContain("appleAuxiliaryDepthNative");
     expect(html).toContain("cgImagePropertyOrientation:6");
     expect(html).toContain("relative");

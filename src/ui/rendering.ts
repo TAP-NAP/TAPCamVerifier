@@ -133,6 +133,14 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
         <dd>${escapeHtml(state.geometryKind)}</dd>
       </div>
       <div>
+        <dt>View</dt>
+        <dd>${escapeHtml(formatProjectionViewMode(state.viewMode))}</dd>
+      </div>
+      <div>
+        <dt>Camera Model</dt>
+        <dd>${escapeHtml(state.cameraModel)}</dd>
+      </div>
+      <div>
         <dt>Points</dt>
         <dd>${state.pointCount}</dd>
       </div>
@@ -151,6 +159,14 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
       <div>
         <dt>RGB</dt>
         <dd>${state.rgbWidth} × ${state.rgbHeight}</dd>
+      </div>
+      <div>
+        <dt>Focal</dt>
+        <dd>${formatNumber(state.fx)} × ${formatNumber(state.fy)}</dd>
+      </div>
+      <div>
+        <dt>Principal Point</dt>
+        <dd>${formatNumber(state.cx)} × ${formatNumber(state.cy)}</dd>
       </div>
       <div>
         <dt>Range</dt>
@@ -274,6 +290,10 @@ function renderProjectionMessage(message: string): string {
 
 function formatSampleStep(sampleStep: number): string {
   return sampleStep <= 1 ? "every pixel" : `every ${sampleStep} px`;
+}
+
+function formatProjectionViewMode(viewMode: string): string {
+  return viewMode === "capture-camera" ? "capture camera" : viewMode;
 }
 
 function renderDepthWarnings(state: DepthVisualizationAvailable): string {
