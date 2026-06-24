@@ -1,6 +1,6 @@
 # Engineering Scorecard
 
-Date: 2026-06-23
+Date: 2026-06-24
 
 Overall: 8.9 / 10
 
@@ -17,10 +17,17 @@ Overall: 8.9 / 10
 
 ## Raise The Score Next
 
-1. Add browser drag/drop automation against `test/tap-depth-photo.HEIC`.
-2. Add JPEG proof-slot fixture coverage when TAPCamDemo exports a signed JPEG
-   sample.
-3. Compare the server's `signingBindingSHA256` with the locally recomputed value
-   in the UI after production CORS and HTTPS are confirmed.
-4. Define a shared WASM module contract before adding depth reconstruction or 3D
-   Gaussian Splatting modules.
+1. Add browser drag/drop automation against `test/tap-depth-photo.HEIC`,
+   including original, depth, and point-cloud render checks.
+2. Add canvas or screenshot assertions for the 3D point-cloud pane so blank or
+   badly framed renders fail in CI.
+3. Add point-cloud inspection warnings for depth coverage, discontinuities,
+   outliers, and RGB/depth alignment risk.
+4. Add signed JPEG fixture coverage for the fixed proof-slot parser and full
+   local content-binding path when TAPCamDemo exports a signed JPEG sample.
+5. Add a server-boundary diagnostic only: if the server echoes
+   `signingBindingSHA256`, compare it with the browser-recomputed hash of the
+   exact submitted `signingBinding` to catch integration drift. Do not describe
+   this as server-side content hash verification.
+6. Define a shared WASM module contract before adding research-only geometry or
+   3D Gaussian Splatting modules.

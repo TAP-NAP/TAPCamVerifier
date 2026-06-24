@@ -35,11 +35,47 @@ App Attest verification. Pixel back-projection reports additional inspection
 signals only; it does not redefine `LocalVerificationReport.status` or final
 `valid` / `invalid`.
 
-## Next Geometry TODO: Mesh And Texture
+## Next Geometry TODO: Point Cloud Inspection
 
-Use the depth grid to build a triangle mesh, skip triangles across large depth
-discontinuities, and attach RGB as vertex color or UV texture. Add inspection
-warnings for depth coverage, surface continuity, and RGB/depth alignment.
+Keep the geometry view point-cloud-only for now. The next practical work should
+improve inspection quality without introducing a mesh:
+
+- tune point size, density, and default camera framing so the shape is easier to
+  read on desktop and mobile;
+- expose clear point-cloud metadata, including sample step, source dimensions,
+  RGB dimensions, orientation, and depth/disparity range;
+- add depth coverage warnings for empty, saturated, or extremely narrow depth
+  ranges;
+- add discontinuity/outlier warnings that flag abrupt depth jumps without
+  generating a triangle surface;
+- add RGB/depth alignment warnings when source dimensions, orientation, or
+  aspect ratio suggest the color overlay may be unreliable;
+- keep explicit `relative geometry` labeling until camera intrinsics, focal
+  length, or baseline are available.
+
+## Deferred Geometry TODO: Mesh And Texture
+
+Mesh rendering is deferred because the current visual result is not acceptable
+for the verifier experience. Revisit only if a later implementation can produce
+a cleaner inspection surface than the point cloud. The old mesh direction was:
+use the depth grid to build a triangle mesh, skip triangles across large depth
+discontinuities, and attach RGB as vertex color or UV texture.
+
+## Verification And QA TODO
+
+- Add browser drag/drop automation against `test/tap-depth-photo.HEIC`.
+- Add screenshot or canvas-pixel checks for the 3D point-cloud pane so blank or
+  badly framed renders fail in CI.
+- Add signed JPEG fixture coverage for the fixed proof-slot parser and full
+  local content-binding path when TAPCamDemo exports a signed JPEG sample.
+- Add a server-boundary diagnostic, not a new content verification step: if the
+  verify endpoint echoes `signingBindingSHA256`, display or assert that it
+  matches the browser-recomputed hash of the exact `signingBinding` sent to the
+  server. A mismatch should be treated as integration drift; native file
+  `assetHash`, manifest `metadataHash`, `bodySHA256`, `contentDigest`, and
+  `signingBinding` validation remain browser/WASM responsibilities.
+- Keep visualization failures non-fatal for `LocalVerificationReport.status` and
+  final `valid` / `invalid` semantics.
 
 ## Research TODO: RGB Reconstruction Comparison
 

@@ -59,7 +59,10 @@ flowchart TD
 - `metadataHash`: SHA-256 over canonical `manifest.payload` JSON.
 - Rebuilt `CaptureContentBinding` equality.
 - Rebuilt `CaptureSigningBinding` equality.
-- `signingBindingSHA256` summary for server response comparison.
+- `signingBindingSHA256` as a browser-recomputed diagnostic hash of the exact
+  `signingBinding` sent to the server. If the server echoes the same field, the
+  UI may compare it to catch integration drift; this is not a server-side native
+  file hash check.
 
 ## Strict Verifier Rule
 

@@ -27,11 +27,25 @@ inspection model, not an independent reconstruction or a new verification input.
 - Kept the local/server verifier status unchanged. Geometry unavailable/error
   states do not affect final `valid` / `invalid`.
 
+## Current Product Decision
+
+Keep the geometry viewer in point-cloud style for now. Mesh rendering is
+deferred because the current mesh effect is visually too rough for the verifier
+experience.
+
 ## Deferred TODO
 
-- Build a depth-grid mesh and skip triangles across large depth discontinuities.
-- Add RGB as vertex color or UV texture on that mesh.
-- Add surface continuity, depth coverage, and RGB/depth alignment warnings.
+- Improve point-cloud readability with tuned point size, sampling density, and
+  default camera framing.
+- Show more point-cloud metadata: sample step, source dimensions, RGB
+  dimensions, orientation, and depth/disparity range.
+- Add depth coverage warnings for empty, saturated, or extremely narrow ranges.
+- Add discontinuity/outlier warnings without generating a triangle surface.
+- Add RGB/depth alignment warnings when dimensions, orientation, or aspect ratio
+  suggest unreliable color overlay.
+- Add browser drag/drop automation and canvas/screenshot checks for the 3D
+  point-cloud pane.
+- Defer mesh and texture work until a cleaner inspection surface is justified.
 - Research 3D Gaussian Splatting data requirements before implementation. The
   likely missing data includes multi-view images or burst/video, camera poses,
   sparse point cloud, or a COLMAP-compatible export package.
