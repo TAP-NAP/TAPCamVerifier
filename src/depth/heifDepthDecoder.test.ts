@@ -1,10 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { decodeHeifAuxiliaryDepthPlane, findHeifAuxiliaryDepthItemId } from "./heifDepthDecoder";
+import {
+  decodeHeifAuxiliaryDepthPlane,
+  findHeifAuxiliaryDepthItemId,
+  findJpegAuxiliaryDepthImage
+} from "./heifDepthDecoder";
 
 const fixturePath = resolve(process.cwd(), "test/tap-depth-photo.HEIC");
 const fixtureIt = existsSync(fixturePath) ? it : it.skip;
+const jpegFixturePath = resolve(process.cwd(), "test/tap-depth-photo.JPG");
+const jpegFixtureIt = existsSync(jpegFixturePath) ? it : it.skip;
 
 describe("findHeifAuxiliaryDepthItemId", () => {
   fixtureIt("finds the current fixture's hidden auxiliary depth item", () => {
@@ -26,5 +32,24 @@ describe("findHeifAuxiliaryDepthItemId", () => {
 
   it("returns null for non-HEIF bytes", () => {
     expect(findHeifAuxiliaryDepthItemId(new TextEncoder().encode("not a heif file"))).toBeNull();
+  });
+});
+
+describe("findJpegAuxiliaryDepthImage", () => {
+  jpegFixtureIt("finds the current fixture's embedded disparity JPEG", () => {
+    const bytes = new Uint8Array(readFileSync(jpegFixturePath));
+    const image = findJpegAuxiliaryDepthImage(bytes);
+
+    expect(image).toEqual({
+      offset: 7755894,
+      length: 43257,
+      width: 768,
+      height: 576,
+      auxiliaryImageType: "disparity"
+    });
+  });
+
+  it("returns null for non-JPEG bytes", () => {
+    expect(findJpegAuxiliaryDepthImage(new TextEncoder().encode("not a jpeg file"))).toBeNull();
   });
 });

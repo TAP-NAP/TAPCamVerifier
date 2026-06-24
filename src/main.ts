@@ -1,5 +1,5 @@
 import "./styles.css";
-import { decodeHeifAuxiliaryDepthPlane } from "./depth/heifDepthDecoder";
+import { decodeEmbeddedDepthPlane } from "./depth/heifDepthDecoder";
 import type { DecodedDepthPlane, DepthPanelState, DisplayOrientationReference } from "./depth/types";
 import { mountGeometryViewer, type GeometryViewerCleanup } from "./geometry/geometryViewer";
 import { decodeRgbForPixelProjection, projectSignedDepthPixels } from "./geometry/pixelProjection";
@@ -264,15 +264,15 @@ async function visualizeSelectedDepth(
   displayReference?: DisplayOrientationReference
 ): Promise<void> {
   try {
-    const depthPlane = await decodeHeifAuxiliaryDepthPlane(fileBytes);
+    const depthPlane = await decodeEmbeddedDepthPlane(fileBytes);
     if (runId !== activeRunId) {
       return;
     }
     if (!depthPlane) {
       const state: DepthPanelState = {
         status: "unavailable",
-        message: "No embedded HEIF auxiliary depth or disparity plane was found.",
-        warnings: ["No embedded HEIF auxiliary depth or disparity plane was found."]
+        message: "No embedded auxiliary depth or disparity plane was found.",
+        warnings: ["No embedded auxiliary depth or disparity plane was found."]
       };
       updateDepthPanel(state);
       updateGeometryPanel({

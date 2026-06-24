@@ -74,10 +74,14 @@ discontinuities, and attach RGB as vertex color or UV texture.
 
 - Add screenshot or canvas-pixel checks for the 3D point-cloud pane so blank or
   badly framed renders fail in CI.
-- Add signed JPEG fixture coverage for the fixed proof-slot parser and full
-  local content-binding path when TAPCamDemo exports a signed JPEG sample.
 - Keep visualization failures non-fatal for `LocalVerificationReport.status` and
   final `valid` / `invalid` semantics.
+
+Completed verification coverage:
+
+- Signed JPEG fixture coverage now exercises ImageIO RDF-attribute XMP manifest
+  extraction, the fixed APP11 proof-slot parser, and the full local
+  content-binding path against `test/tap-depth-photo.JPG`.
 
 ## Frozen QA TODO
 

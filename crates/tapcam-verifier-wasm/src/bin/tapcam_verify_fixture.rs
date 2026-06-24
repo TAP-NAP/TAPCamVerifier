@@ -3,7 +3,7 @@ use std::fs;
 
 fn main() {
     let Some(path) = env::args().nth(1) else {
-        eprintln!("usage: tapcam-verify-fixture <heic-path>");
+        eprintln!("usage: tapcam-verify-fixture <photo-path>");
         std::process::exit(2);
     };
 
@@ -15,5 +15,8 @@ fn main() {
         }
     };
     let report = tapcam_verifier_wasm::verify_heic_bytes(&bytes);
-    println!("{}", serde_json::to_string_pretty(&report).expect("report JSON"));
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).expect("report JSON")
+    );
 }

@@ -208,7 +208,9 @@ pub fn verify_capture_bytes(bytes: &[u8]) -> Value {
 }
 
 pub fn visualize_depth_u8(file_bytes: &[u8], luma: &[u8], width: u32, height: u32) -> Value {
-    depth_visualization_result(visualize_depth_u8_inner(file_bytes, luma, width, height, None))
+    depth_visualization_result(visualize_depth_u8_inner(
+        file_bytes, luma, width, height, None,
+    ))
 }
 
 pub fn visualize_depth_u8_for_display(
@@ -623,7 +625,8 @@ fn visualize_depth_u8_inner(
         (Some(min), Some(max)) if max > min => (min, max, "apdi-float-range"),
         _ => (raw_min as f64, raw_max as f64, "decoded-luma-range"),
     };
-    let value_unit = infer_depth_value_unit(source_kind, pixel_format, metric_unit, value_range_kind);
+    let value_unit =
+        infer_depth_value_unit(source_kind, pixel_format, metric_unit, value_range_kind);
 
     let mut rgba = vec![0u8; output_width as usize * output_height as usize * 4];
     for y in 0..output_height as usize {
@@ -850,7 +853,8 @@ fn project_depth_pixels_inner(
         (Some(min), Some(max)) if max > min => (min, max, "apdi-float-range"),
         _ => (raw_min as f64, raw_max as f64, "decoded-luma-range"),
     };
-    let value_unit = infer_depth_value_unit(source_kind, pixel_format, metric_unit, value_range_kind);
+    let value_unit =
+        infer_depth_value_unit(source_kind, pixel_format, metric_unit, value_range_kind);
     let relative_geometry = true;
     let camera = pinhole_camera_from_manifest(depth, output_width, output_height)
         .unwrap_or_else(|| virtual_pinhole_camera(output_width, output_height));
@@ -878,12 +882,8 @@ fn project_depth_pixels_inner(
             let display_value = depth_display_value(normalized, min_value, max_value);
             let relative_depth =
                 relative_depth_from_value(display_value, min_value, max_value, value_unit);
-            let (x_unit, y_unit, view_z) = back_project_pixel_to_view_space(
-                x as f64,
-                y as f64,
-                relative_depth,
-                camera,
-            );
+            let (x_unit, y_unit, view_z) =
+                back_project_pixel_to_view_space(x as f64, y as f64, relative_depth, camera);
             push_f32_le(&mut positions, x_unit as f32);
             push_f32_le(&mut positions, y_unit as f32);
             push_f32_le(&mut positions, view_z as f32);
@@ -1270,26 +1270,136 @@ fn sha256_base64url_excluding(
 
 fn extract_tap_manifest_json(bytes: &[u8]) -> Result<String, String> {
     let text = String::from_utf8_lossy(bytes);
+    let mut matches = Vec::new();
+
+    matches.extend(extract_tap_manifest_element_values(&text)?);
+    matches.extend(extract_tap_manifest_attribute_values(&text)?);
+
+    match matches.len() {
+        0 => Err("XMP tapdepth:Manifest tag was not found".to_string()),
+        1 => Ok(matches.remove(0)),
+        _ => Err("expected exactly one XMP tapdepth:Manifest tag; found multiple".to_string()),
+    }
+}
+
+fn extract_tap_manifest_element_values(text: &str) -> Result<Vec<String>, String> {
     let open_marker = "<tapdepth:Manifest";
     let close_marker = "</tapdepth:Manifest>";
-    let open_start = text
-        .find(open_marker)
-        .ok_or("XMP tapdepth:Manifest tag was not found")?;
-    if text[open_start + open_marker.len()..].contains(open_marker) {
-        return Err("expected exactly one XMP tapdepth:Manifest tag; found multiple".to_string());
+    let mut values = Vec::new();
+    let mut search_start = 0;
+
+    while let Some(relative_open_start) = text[search_start..].find(open_marker) {
+        let open_start = search_start + relative_open_start;
+        let content_start = text[open_start..]
+            .find('>')
+            .map(|offset| open_start + offset + 1)
+            .ok_or("XMP tapdepth:Manifest opening tag is incomplete")?;
+        let close_start = text[content_start..]
+            .find(close_marker)
+            .map(|offset| content_start + offset)
+            .ok_or("XMP tapdepth:Manifest closing tag was not found")?;
+        values.push(xml_unescape(text[content_start..close_start].trim()));
+        search_start = close_start + close_marker.len();
     }
-    let content_start = text[open_start..]
-        .find('>')
-        .map(|offset| open_start + offset + 1)
-        .ok_or("XMP tapdepth:Manifest opening tag is incomplete")?;
-    let close_start = text[content_start..]
-        .find(close_marker)
-        .map(|offset| content_start + offset)
-        .ok_or("XMP tapdepth:Manifest closing tag was not found")?;
-    if text[close_start + close_marker.len()..].contains(close_marker) {
-        return Err("expected exactly one XMP tapdepth:Manifest tag; found multiple".to_string());
+
+    Ok(values)
+}
+
+fn extract_tap_manifest_attribute_values(text: &str) -> Result<Vec<String>, String> {
+    let mut values = Vec::new();
+    let mut search_start = 0;
+
+    while let Some(relative_name_start) = text[search_start..].find(MANIFEST_XMP_PATH) {
+        let name_start = search_start + relative_name_start;
+        let Some(tag_start) = text[..name_start].rfind('<') else {
+            search_start = name_start + MANIFEST_XMP_PATH.len();
+            continue;
+        };
+        if text[..name_start]
+            .rfind('>')
+            .is_some_and(|close| close > tag_start)
+        {
+            search_start = name_start + MANIFEST_XMP_PATH.len();
+            continue;
+        }
+        let Some(tag_end) = text[name_start..]
+            .find('>')
+            .map(|offset| name_start + offset)
+        else {
+            break;
+        };
+        let tag = &text[tag_start + 1..tag_end];
+        values.extend(extract_tap_manifest_attributes_from_tag(tag)?);
+        search_start = tag_end + 1;
     }
-    Ok(xml_unescape(text[content_start..close_start].trim()))
+
+    Ok(values)
+}
+
+fn extract_tap_manifest_attributes_from_tag(tag: &str) -> Result<Vec<String>, String> {
+    let bytes = tag.as_bytes();
+    let mut values = Vec::new();
+    let mut index = 0;
+
+    while index < bytes.len() && !bytes[index].is_ascii_whitespace() {
+        index += 1;
+    }
+
+    while index < bytes.len() {
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if index >= bytes.len() || bytes[index] == b'/' {
+            break;
+        }
+
+        let name_start = index;
+        while index < bytes.len()
+            && !bytes[index].is_ascii_whitespace()
+            && bytes[index] != b'='
+            && bytes[index] != b'/'
+        {
+            index += 1;
+        }
+        let name = &tag[name_start..index];
+
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if index >= bytes.len() || bytes[index] != b'=' {
+            continue;
+        }
+        index += 1;
+
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if index >= bytes.len() || (bytes[index] != b'"' && bytes[index] != b'\'') {
+            if name == MANIFEST_XMP_PATH {
+                return Err("XMP tapdepth:Manifest attribute is incomplete".to_string());
+            }
+            continue;
+        }
+
+        let quote = bytes[index];
+        index += 1;
+        let value_start = index;
+        while index < bytes.len() && bytes[index] != quote {
+            index += 1;
+        }
+        if index >= bytes.len() {
+            if name == MANIFEST_XMP_PATH {
+                return Err("XMP tapdepth:Manifest attribute is incomplete".to_string());
+            }
+            break;
+        }
+        if name == MANIFEST_XMP_PATH {
+            values.push(xml_unescape(tag[value_start..index].trim()));
+        }
+        index += 1;
+    }
+
+    Ok(values)
 }
 
 fn extract_xml_number(bytes: &[u8], tag_name: &str) -> Option<f64> {
@@ -1682,9 +1792,7 @@ fn pinhole_camera_from_manifest(depth: &Value, width: u32, height: u32) -> Optio
         return None;
     }
 
-    let reference_width = calibration
-        .get("intrinsicMatrixReferenceWidth")?
-        .as_f64()?;
+    let reference_width = calibration.get("intrinsicMatrixReferenceWidth")?.as_f64()?;
     let reference_height = calibration
         .get("intrinsicMatrixReferenceHeight")?
         .as_f64()?;
@@ -1975,6 +2083,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_imageio_rdf_manifest_attribute() {
+        let bytes = br#"<x:xmpmeta><rdf:RDF><rdf:Description xmlns:tapdepth="urn:tapnap:tapcam:depth:1.0" tapdepth:Manifest="{&quot;payload&quot;:{&quot;id&quot;:&quot;jpeg&quot;},&quot;proofs&quot;:[],&quot;schema&quot;:{&quot;xmpManifestPath&quot;:&quot;tapdepth:Manifest&quot;}}"></rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        assert_eq!(
+            extract_tap_manifest_json(bytes).unwrap(),
+            r#"{"payload":{"id":"jpeg"},"proofs":[],"schema":{"xmpManifestPath":"tapdepth:Manifest"}}"#
+        );
+    }
+
+    #[test]
     fn rejects_multiple_embedded_manifests() {
         let bytes = br#"<tapdepth:Manifest>{}</tapdepth:Manifest><tapdepth:Manifest>{}</tapdepth:Manifest>"#;
         assert!(extract_tap_manifest_json(bytes)
@@ -2147,10 +2264,8 @@ mod tests {
             "intrinsicMatrix": [80,0,0,0,40,0,4,2,1],
             "extrinsicMatrix": [1,0,0,0,1,0,0,0,1,0,0,0]
         }"#;
-        let bytes = depth_manifest_fixture(4, 2, "cgImagePropertyOrientation:1", "").replace(
-            r#""width":4}"#,
-            &format!(r#""width":4,{calibration}}}"#),
-        );
+        let bytes = depth_manifest_fixture(4, 2, "cgImagePropertyOrientation:1", "")
+            .replace(r#""width":4}"#, &format!(r#""width":4,{calibration}}}"#));
         let rgba = vec![128u8; 4 * 2 * 4];
         let depth = [4, 8, 12, 16, 20, 24, 28, 32];
 
@@ -2194,10 +2309,7 @@ mod tests {
                 "<x:xmpmeta>",
                 "<x:xmpmeta><apdi:FloatMinValue>4</apdi:FloatMinValue><apdi:FloatMaxValue>16</apdi:FloatMaxValue>",
             );
-        let rgba = [
-            10, 20, 30, 255,
-            80, 90, 100, 255,
-        ];
+        let rgba = [10, 20, 30, 255, 80, 90, 100, 255];
         let depth = [4, 16];
 
         let report = project_depth_pixels(bytes.as_bytes(), &rgba, 2, 1, &depth, 2, 1, 2, 1);
@@ -2258,6 +2370,26 @@ mod tests {
     }
 
     #[test]
+    fn locates_and_reads_jpeg_app11_proof_slot() {
+        let payload = proof_slot_payload(br#"{"ok":true}"#);
+        let mut bytes = vec![0xff, 0xd8, 0xff, 0xeb];
+        bytes.extend(((payload.len() + 2) as u16).to_be_bytes());
+        bytes.extend(payload);
+        bytes.extend([0xff, 0xd9]);
+
+        let slot = locate_proof_slot(&bytes, Container::Jpeg).unwrap();
+        assert_eq!(slot.kind, "jpeg-app11-proof-slot");
+        assert_eq!(slot.container_offset, 2);
+        assert_eq!(slot.container_length, PROOF_PAYLOAD_BYTE_COUNT + 4);
+        assert_eq!(slot.payload_offset, 6);
+        assert_eq!(slot.payload_length, PROOF_PAYLOAD_BYTE_COUNT);
+        assert_eq!(
+            read_proof_envelope(&bytes, &slot).unwrap(),
+            br#"{"ok":true}"#
+        );
+    }
+
+    #[test]
     fn synthetic_content_binding_verifies() {
         let bytes = synthetic_signed_heic();
         let report = verify_heic_bytes(&bytes);
@@ -2275,7 +2407,7 @@ mod tests {
     }
 
     #[test]
-    fn local_fixture_verifies_when_available() {
+    fn local_heic_fixture_verifies_when_available() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("test/tap-depth-photo.HEIC");
@@ -2299,6 +2431,37 @@ mod tests {
         assert_eq!(
             report["recomputed"]["bodySHA256"],
             "6ZIqezCAIVp2RtZyOAA_lW3vWTn5iuHLVrLGEw1jiv0"
+        );
+    }
+
+    #[test]
+    fn local_jpeg_fixture_verifies_when_available() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("test/tap-depth-photo.JPG");
+
+        if !fixture.exists() {
+            return;
+        }
+
+        let bytes = std::fs::read(fixture).unwrap();
+        let report = verify_capture_bytes(&bytes);
+        assert_eq!(report["captureId"], "A2138B25-4872-480A-9979-F6473AC568B1");
+        assert_eq!(report["status"], "valid");
+        assert_eq!(report["manifest"]["containerFormat"], "jpeg");
+        assert_eq!(report["proofSlot"]["kind"], "jpeg-app11-proof-slot");
+        assert_eq!(report["proofSlot"]["offset"], 2);
+        assert_eq!(
+            report["recomputed"]["assetSHA256"],
+            "j4lzDl_Fcm-FUWnaq_Rii17wj_9acpFqxVdjITjSoXw"
+        );
+        assert_eq!(
+            report["recomputed"]["metadataSHA256"],
+            "zMmSu2lpJNhS7sfxrqoS7_Puh8qYc8hJ6NGf0mywjWI"
+        );
+        assert_eq!(
+            report["recomputed"]["bodySHA256"],
+            "oNMDNVvLGW9q9olKhJp3l9XdtdPXJkRHJ2qrc1QXTC0"
         );
     }
 

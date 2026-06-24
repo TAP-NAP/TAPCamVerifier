@@ -1,5 +1,5 @@
 import { visualizeDepthPlane } from "../wasm/tapcamVerifier";
-import { decodeHeifAuxiliaryDepthPlane } from "./heifDepthDecoder";
+import { decodeEmbeddedDepthPlane } from "./heifDepthDecoder";
 import type { DepthVisualizationResult, DisplayOrientationReference } from "./types";
 
 export async function visualizeCaptureDepth(
@@ -7,12 +7,12 @@ export async function visualizeCaptureDepth(
   displayReference?: DisplayOrientationReference
 ): Promise<DepthVisualizationResult> {
   try {
-    const depthPlane = await decodeHeifAuxiliaryDepthPlane(fileBytes);
+    const depthPlane = await decodeEmbeddedDepthPlane(fileBytes);
     if (!depthPlane) {
       return {
         status: "unavailable",
-        message: "No embedded HEIF auxiliary depth or disparity plane was found.",
-        warnings: ["No embedded HEIF auxiliary depth or disparity plane was found."]
+        message: "No embedded auxiliary depth or disparity plane was found.",
+        warnings: ["No embedded auxiliary depth or disparity plane was found."]
       };
     }
 

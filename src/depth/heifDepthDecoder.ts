@@ -49,7 +49,24 @@ interface ItemReference {
   to: number[];
 }
 
+export interface JpegAuxiliaryDepthImage {
+  offset: number;
+  length: number;
+  width: number;
+  height: number;
+  auxiliaryImageType: string;
+}
+
 let libheifPromise: Promise<LibHeifModule> | null = null;
+
+export async function decodeEmbeddedDepthPlane(fileBytes: Uint8Array): Promise<DecodedDepthPlane | null> {
+  const heifPlane = await decodeHeifAuxiliaryDepthPlane(fileBytes);
+  if (heifPlane) {
+    return heifPlane;
+  }
+
+  return decodeJpegAuxiliaryDepthPlane(fileBytes);
+}
 
 export async function decodeHeifAuxiliaryDepthPlane(fileBytes: Uint8Array): Promise<DecodedDepthPlane | null> {
   const auxiliaryItemId = findHeifAuxiliaryDepthItemId(fileBytes);
@@ -99,6 +116,42 @@ export function findHeifAuxiliaryDepthItemId(fileBytes: Uint8Array): number | nu
       );
 
   return chooseAuxiliaryItem(primaryCandidates) ?? chooseAuxiliaryItem(candidates) ?? null;
+}
+
+export async function decodeJpegAuxiliaryDepthPlane(fileBytes: Uint8Array): Promise<DecodedDepthPlane | null> {
+  const auxiliaryImage = findJpegAuxiliaryDepthImage(fileBytes);
+  if (!auxiliaryImage) {
+    return null;
+  }
+
+  return decodeJpegImageRangeAsLuma(fileBytes, auxiliaryImage);
+}
+
+export function findJpegAuxiliaryDepthImage(fileBytes: Uint8Array): JpegAuxiliaryDepthImage | null {
+  if (!isJpegContainer(fileBytes)) {
+    return null;
+  }
+
+  let offset = 0;
+  while (offset + 1 < fileBytes.length) {
+    const soiOffset = findMarker(fileBytes, 0xd8, offset);
+    if (soiOffset === -1) {
+      return null;
+    }
+    const image = readJpegImage(fileBytes, soiOffset);
+    if (image && isDepthAuxiliaryImageType(image.auxiliaryImageType)) {
+      return {
+        offset: soiOffset,
+        length: image.end - soiOffset,
+        width: image.width,
+        height: image.height,
+        auxiliaryImageType: image.auxiliaryImageType
+      };
+    }
+    offset = Math.max(soiOffset + 2, image?.end ?? soiOffset + 2);
+  }
+
+  return null;
 }
 
 export async function loadLibheif(): Promise<LibHeifModule> {
@@ -220,6 +273,186 @@ function readCString(heap: Uint8Array, ptr: number): string {
 
 function chooseAuxiliaryItem(candidates: ItemInfo[]): number | null {
   return candidates.find((item) => item.itemType === "hvc1")?.id ?? candidates[0]?.id ?? null;
+}
+
+async function decodeJpegImageRangeAsLuma(
+  fileBytes: Uint8Array,
+  auxiliaryImage: JpegAuxiliaryDepthImage
+): Promise<DecodedDepthPlane> {
+  const imageBytes = copyArrayBuffer(fileBytes, auxiliaryImage.offset, auxiliaryImage.length);
+  const bitmap = await createImageBitmap(new Blob([imageBytes], { type: "image/jpeg" }));
+
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      throw new Error("JPEG auxiliary depth canvas 2D context is unavailable.");
+    }
+
+    context.drawImage(bitmap, 0, 0);
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const luma = new Uint8Array(canvas.width * canvas.height);
+    for (let index = 0; index < luma.length; index += 1) {
+      luma[index] = imageData.data[index * 4];
+    }
+
+    return {
+      itemId: auxiliaryImage.offset,
+      width: canvas.width,
+      height: canvas.height,
+      luma
+    };
+  } finally {
+    bitmap.close();
+  }
+}
+
+function isJpegContainer(fileBytes: Uint8Array): boolean {
+  return fileBytes.length >= 2 && fileBytes[0] === 0xff && fileBytes[1] === 0xd8;
+}
+
+interface JpegImageMetadata {
+  end: number;
+  width: number;
+  height: number;
+  auxiliaryImageType: string;
+}
+
+function readJpegImage(fileBytes: Uint8Array, start: number): JpegImageMetadata | null {
+  if (start + 4 > fileBytes.length || fileBytes[start] !== 0xff || fileBytes[start + 1] !== 0xd8) {
+    return null;
+  }
+
+  let offset = start + 2;
+  let width = 0;
+  let height = 0;
+  let auxiliaryImageType = "";
+
+  while (offset + 4 <= fileBytes.length && fileBytes[offset] === 0xff) {
+    let markerOffset = offset;
+    while (markerOffset < fileBytes.length && fileBytes[markerOffset] === 0xff) {
+      markerOffset += 1;
+    }
+    if (markerOffset >= fileBytes.length) {
+      return null;
+    }
+
+    const marker = fileBytes[markerOffset];
+    offset = markerOffset + 1;
+    if (marker === 0xd9) {
+      return width > 0 && height > 0 ? { end: offset, width, height, auxiliaryImageType } : null;
+    }
+    if (marker === 0xda) {
+      const end = findMarker(fileBytes, 0xd9, offset);
+      return end !== -1 && width > 0 && height > 0
+        ? { end: end + 2, width, height, auxiliaryImageType }
+        : null;
+    }
+    if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+      continue;
+    }
+    if (offset + 2 > fileBytes.length) {
+      return null;
+    }
+
+    const segmentLength = readU16(fileBytes, offset);
+    const payloadOffset = offset + 2;
+    const segmentEnd = offset + segmentLength;
+    if (segmentLength < 2 || segmentEnd > fileBytes.length) {
+      return null;
+    }
+
+    if (marker === 0xe1) {
+      auxiliaryImageType ||= readAuxiliaryImageType(fileBytes.subarray(payloadOffset, segmentEnd));
+    }
+    if (isStartOfFrameMarker(marker) && payloadOffset + 5 < segmentEnd) {
+      height = readU16(fileBytes, payloadOffset + 1);
+      width = readU16(fileBytes, payloadOffset + 3);
+    }
+
+    offset = segmentEnd;
+  }
+
+  return null;
+}
+
+function readAuxiliaryImageType(payload: Uint8Array): string {
+  const text = new TextDecoder().decode(payload);
+  return xmlUnescape(
+    readXmlElement(text, "apdi:AuxiliaryImageType") ??
+    readXmlAttribute(text, "apdi:AuxiliaryImageType") ??
+    ""
+  ).trim();
+}
+
+function readXmlElement(text: string, tagName: string): string | null {
+  const openMarker = `<${tagName}>`;
+  const closeMarker = `</${tagName}>`;
+  const start = text.indexOf(openMarker);
+  if (start === -1) {
+    return null;
+  }
+  const contentStart = start + openMarker.length;
+  const end = text.indexOf(closeMarker, contentStart);
+  return end === -1 ? null : text.slice(contentStart, end);
+}
+
+function readXmlAttribute(text: string, attributeName: string): string | null {
+  const marker = `${attributeName}=`;
+  const start = text.indexOf(marker);
+  if (start === -1) {
+    return null;
+  }
+  const quoteOffset = start + marker.length;
+  const quote = text[quoteOffset];
+  if (quote !== "\"" && quote !== "'") {
+    return null;
+  }
+  const valueStart = quoteOffset + 1;
+  const end = text.indexOf(quote, valueStart);
+  return end === -1 ? null : text.slice(valueStart, end);
+}
+
+function isDepthAuxiliaryImageType(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "disparity" ||
+    normalized === "depth" ||
+    normalized.endsWith(":aux:disparity") ||
+    normalized.endsWith(":aux:depth");
+}
+
+function isStartOfFrameMarker(marker: number): boolean {
+  return (marker >= 0xc0 && marker <= 0xcf) && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+}
+
+function findMarker(fileBytes: Uint8Array, marker: number, start: number): number {
+  for (let index = start; index + 1 < fileBytes.length; index += 1) {
+    if (fileBytes[index] === 0xff && fileBytes[index + 1] === marker) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function readU16(fileBytes: Uint8Array, offset: number): number {
+  return (fileBytes[offset] << 8) | fileBytes[offset + 1];
+}
+
+function copyArrayBuffer(bytes: Uint8Array, offset: number, length: number): ArrayBuffer {
+  const copy = new Uint8Array(length);
+  copy.set(bytes.subarray(offset, offset + length));
+  return copy.buffer;
+}
+
+function xmlUnescape(input: string): string {
+  return input
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
 }
 
 function parsePrimaryItemId(view: DataView, pitm: BoxRange): number | null {

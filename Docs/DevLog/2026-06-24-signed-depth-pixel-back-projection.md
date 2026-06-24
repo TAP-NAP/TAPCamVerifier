@@ -80,3 +80,19 @@ experience.
 - Rendered the server echo and boundary status in the result summary.
 - Treat mismatch copy as server integration drift, not as a new server-side
   native file hash or content verification step.
+
+## 2026-06-24 JPEG XMP Parser Pass
+
+- Fixed Rust/WASM manifest extraction for JPEG files where ImageIO writes
+  `tapdepth:Manifest` as an escaped RDF attribute on `rdf:Description` instead
+  of a nested `<tapdepth:Manifest>` element.
+- Added APP11 proof-slot parser coverage and full local content-binding fixture
+  coverage for `test/tap-depth-photo.JPG`.
+
+## 2026-06-24 JPEG Auxiliary Depth Pass
+
+- Added browser-side JPEG/MPF auxiliary image discovery for ImageIO-exported JPG
+  captures.
+- The verifier now skips HDR gain-map auxiliary JPEGs and decodes the embedded
+  `apdi:AuxiliaryImageType=disparity` JPEG as the depth luma plane for the
+  existing depth preview and point-cloud path.

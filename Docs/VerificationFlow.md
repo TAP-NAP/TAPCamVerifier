@@ -44,7 +44,8 @@ flowchart TD
   zero-filled padding.
 - Proof envelope JSON parse.
 - `proof.value` base64url decode and JSON parse.
-- XMP `tapdepth:Manifest` extraction.
+- XMP `tapdepth:Manifest` extraction, including element-style XMP and
+  ImageIO/RDF attribute-style XMP.
 - Exact TAP depth manifest schema check.
 - Empty `manifest.proofs`; proof bodies must live in the fixed proof slot.
 - Release capture profile policy:
