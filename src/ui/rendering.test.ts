@@ -17,9 +17,15 @@ const result: CombinedVerificationResult = {
   finalStatus: "valid",
   server: {
     status: "valid",
-    signingBindingSHA256: "server-binding"
+    signingBindingSHA256: "binding"
   },
   serverError: null,
+  serverBoundary: {
+    status: "matched",
+    summary: "Server boundary echo matched the browser/WASM hash of the submitted signingBinding.",
+    localSigningBindingSHA256: "binding",
+    serverSigningBindingSHA256: "binding"
+  },
   local: {
     status: "valid",
     summary: "All local content binding checks passed.",
@@ -49,10 +55,68 @@ describe("renderVerificationResult", () => {
     const html = renderVerificationResult(result);
 
     expect(html).toContain("All local content binding checks passed.");
+    expect(html).toContain("Server boundary echo matched");
+    expect(html).toContain("Server Echo SHA-256");
+    expect(html).toContain("Server Boundary");
     expect(html).toContain('<details class="checks-disclosure">');
     expect(html).not.toContain('<details class="checks-disclosure" open>');
     expect(html).toContain("Local content binding checks");
     expect(html).toContain("Recompute asset hash excluding proof slot");
+  });
+
+  it("renders a mismatch as server integration drift", () => {
+    const html = renderVerificationResult({
+      ...result,
+      server: {
+        status: "valid",
+        signingBindingSHA256: "server-binding"
+      },
+      serverBoundary: {
+        status: "mismatch",
+        summary:
+          "Server boundary integration drift: echoed signingBindingSHA256 does not match the browser/WASM hash of the submitted signingBinding.",
+        localSigningBindingSHA256: "binding",
+        serverSigningBindingSHA256: "server-binding"
+      }
+    });
+
+    expect(html).toContain("integration drift");
+    expect(html).toContain("server-binding");
+    expect(html).toContain("submitted signingBinding");
+  });
+
+  it("renders a missing server echo without calling it a content failure", () => {
+    const html = renderVerificationResult({
+      ...result,
+      server: {
+        status: "valid"
+      },
+      serverBoundary: {
+        status: "not-echoed",
+        summary: "Server response did not echo signingBindingSHA256; boundary comparison was skipped.",
+        localSigningBindingSHA256: "binding"
+      }
+    });
+
+    expect(html).toContain("not echoed");
+    expect(html).toContain("boundary comparison was skipped");
+  });
+
+  it("renders absent server verification as not run", () => {
+    const html = renderVerificationResult({
+      ...result,
+      server: null,
+      serverError: "Failed to fetch",
+      serverBoundary: {
+        status: "not-run",
+        summary: "Server boundary comparison did not run: Failed to fetch.",
+        localSigningBindingSHA256: "binding"
+      },
+      finalStatus: "invalid"
+    });
+
+    expect(html).toContain("not run");
+    expect(html).toContain("Failed to fetch");
   });
 });
 

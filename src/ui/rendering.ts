@@ -1,7 +1,11 @@
 import type { DepthPanelState, DepthVisualizationAvailable } from "../depth/types";
 import type { PixelProjectionState, ProjectedPixelCloud } from "../geometry/types";
 import type { OriginalPreviewAvailable, OriginalPreviewResult } from "../original/types";
-import type { CombinedVerificationResult, VerificationCheck } from "../verifier/types";
+import type {
+  CombinedVerificationResult,
+  ServerBoundaryDiagnostic,
+  VerificationCheck
+} from "../verifier/types";
 
 export function renderVerificationBusy(fileName: string, fileSize: number): string {
   return `
@@ -57,14 +61,51 @@ export function renderVerificationResult(result: CombinedVerificationResult): st
         <dt>Signing Binding SHA-256</dt>
         <dd>${escapeHtml(result.local.recomputed?.signingBindingSHA256 ?? "missing")}</dd>
       </div>
+      <div>
+        <dt>Server Echo SHA-256</dt>
+        <dd>${escapeHtml(formatServerEcho(result.serverBoundary))}</dd>
+      </div>
+      <div>
+        <dt>Server Boundary</dt>
+        <dd>${escapeHtml(formatServerBoundaryStatus(result.serverBoundary))}</dd>
+      </div>
     </dl>
     <p class="summary">${escapeHtml(result.local.summary)}</p>
+    ${renderServerBoundaryDiagnostic(result.serverBoundary)}
     <details class="checks-disclosure">
       <summary>Local content binding checks</summary>
       <div class="checks">
         ${result.local.checks.map(renderCheck).join("")}
       </div>
     </details>
+  `;
+}
+
+function formatServerBoundaryStatus(diagnostic: ServerBoundaryDiagnostic): string {
+  if (diagnostic.status === "matched") {
+    return "matched";
+  }
+  if (diagnostic.status === "mismatch") {
+    return "integration drift";
+  }
+  if (diagnostic.status === "not-echoed") {
+    return "not echoed";
+  }
+  return "not run";
+}
+
+function formatServerEcho(diagnostic: ServerBoundaryDiagnostic): string {
+  if (diagnostic.serverSigningBindingSHA256) {
+    return diagnostic.serverSigningBindingSHA256;
+  }
+  return diagnostic.status === "not-run" ? "not run" : "not echoed";
+}
+
+function renderServerBoundaryDiagnostic(diagnostic: ServerBoundaryDiagnostic): string {
+  return `
+    <p class="summary server-boundary server-boundary--${diagnostic.status}">
+      ${escapeHtml(diagnostic.summary)}
+    </p>
   `;
 }
 

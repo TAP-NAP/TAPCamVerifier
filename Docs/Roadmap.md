@@ -10,6 +10,10 @@
   both available.
 - Keep final detection below the visual panes.
 - Keep detailed local content-binding checks collapsed by default.
+- Show a server-boundary diagnostic when the verify endpoint echoes
+  `signingBindingSHA256`; compare it with the browser/WASM-recomputed hash of the
+  exact submitted `signingBinding` to catch integration drift without redefining
+  local content verification.
 - Keep original/depth visualization separate from base verification.
   Visualization can fail or be unavailable without changing local
   content-binding semantics.
@@ -72,12 +76,6 @@ discontinuities, and attach RGB as vertex color or UV texture.
   badly framed renders fail in CI.
 - Add signed JPEG fixture coverage for the fixed proof-slot parser and full
   local content-binding path when TAPCamDemo exports a signed JPEG sample.
-- Add a server-boundary diagnostic, not a new content verification step: if the
-  verify endpoint echoes `signingBindingSHA256`, display or assert that it
-  matches the browser-recomputed hash of the exact `signingBinding` sent to the
-  server. A mismatch should be treated as integration drift; native file
-  `assetHash`, manifest `metadataHash`, `bodySHA256`, `contentDigest`, and
-  `signingBinding` validation remain browser/WASM responsibilities.
 - Keep visualization failures non-fatal for `LocalVerificationReport.status` and
   final `valid` / `invalid` semantics.
 

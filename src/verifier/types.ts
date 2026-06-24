@@ -29,6 +29,19 @@ export interface CaptureSignatureVerifyResponse {
   reason?: string;
 }
 
+export type ServerBoundaryDiagnosticStatus =
+  | "matched"
+  | "mismatch"
+  | "not-echoed"
+  | "not-run";
+
+export interface ServerBoundaryDiagnostic {
+  status: ServerBoundaryDiagnosticStatus;
+  summary: string;
+  localSigningBindingSHA256?: string;
+  serverSigningBindingSHA256?: string;
+}
+
 export interface LocalVerificationReport {
   status: "invalid" | "valid" | string;
   summary: string;
@@ -75,5 +88,6 @@ export interface CombinedVerificationResult {
   local: LocalVerificationReport;
   server: CaptureSignatureVerifyResponse | null;
   serverError: string | null;
+  serverBoundary: ServerBoundaryDiagnostic;
   finalStatus: "valid" | "invalid";
 }

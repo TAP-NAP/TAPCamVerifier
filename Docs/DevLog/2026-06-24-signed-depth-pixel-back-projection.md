@@ -71,3 +71,12 @@ experience.
 - Changed point back-projection to pinhole camera coordinates:
   `X = (u - cx) / fx * Z`, `Y = (v - cy) / fy * Z`, with view-space `Z` kept
   negative for Three.js.
+
+## 2026-06-24 Server Boundary Diagnostic Pass
+
+- Added a TypeScript diagnostic that compares the browser/WASM-recomputed
+  `signingBindingSHA256` with the server-echoed `signingBindingSHA256` when the
+  verify endpoint returns it.
+- Rendered the server echo and boundary status in the result summary.
+- Treat mismatch copy as server integration drift, not as a new server-side
+  native file hash or content verification step.

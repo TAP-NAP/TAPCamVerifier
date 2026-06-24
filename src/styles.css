@@ -333,6 +333,32 @@ input {
   line-height: 1.5;
 }
 
+.server-boundary {
+  padding: 10px 12px;
+  border-left: 4px solid #96a0aa;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.server-boundary--matched {
+  border-left-color: #26a269;
+  background: #eef8f2;
+  color: #126334;
+}
+
+.server-boundary--mismatch {
+  border-left-color: #c03a2b;
+  background: #fff0ed;
+  color: #8c251c;
+}
+
+.server-boundary--not-echoed,
+.server-boundary--not-run {
+  border-left-color: #aa7a22;
+  background: #fff8e8;
+  color: #6a4a1c;
+}
+
 .checks {
   display: grid;
   gap: 8px;

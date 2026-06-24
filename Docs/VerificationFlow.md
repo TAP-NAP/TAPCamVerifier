@@ -61,7 +61,7 @@ flowchart TD
 - Rebuilt `CaptureSigningBinding` equality.
 - `signingBindingSHA256` as a browser-recomputed diagnostic hash of the exact
   `signingBinding` sent to the server. If the server echoes the same field, the
-  UI may compare it to catch integration drift; this is not a server-side native
+  UI compares it to catch integration drift; this is not a server-side native
   file hash check.
 
 ## Strict Verifier Rule

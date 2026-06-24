@@ -21,6 +21,7 @@ import {
 } from "./ui/rendering";
 import { verifyCaptureLocally, visualizeDepthPlane } from "./wasm/tapcamVerifier";
 import { verifyCaptureSignature } from "./verifier/serverVerify";
+import { buildServerBoundaryDiagnostic } from "./verifier/serverBoundaryDiagnostic";
 import type {
   CaptureSignatureVerifyResponse,
   CombinedVerificationResult,
@@ -468,6 +469,11 @@ async function verifyFileBytes(file: File, fileBytes: Uint8Array): Promise<Combi
       local,
       server: null,
       serverError: localFailure ? "not run: local verification failed" : "not run: missing server request",
+      serverBoundary: buildServerBoundaryDiagnostic(
+        local,
+        null,
+        localFailure ? "local verification failed" : "missing server request"
+      ),
       finalStatus: "invalid"
     };
   }
@@ -487,6 +493,7 @@ async function verifyFileBytes(file: File, fileBytes: Uint8Array): Promise<Combi
     local,
     server,
     serverError,
+    serverBoundary: buildServerBoundaryDiagnostic(local, server, serverError),
     finalStatus: finalStatus(local, server)
   };
 }
