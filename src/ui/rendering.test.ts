@@ -299,7 +299,7 @@ describe("renderPixelProjectionPanel", () => {
     expect(html).toContain("relative");
     expect(html).toContain("3.9180 – 12.3047 disparity");
     expect(html).toContain("Visible Points");
-    expect(html).toContain("Clean + 1 risk type · Medium");
+    expect(html).toContain("Raw · Medium");
     expect(html).toContain("Sensitivity");
     expect(html).not.toContain("Strength");
     expect(html).toContain("data-geometry-filter-toggle");
@@ -307,16 +307,16 @@ describe("renderPixelProjectionPanel", () => {
     expect(html).not.toContain("geometry-risk-header");
     expect(html).toContain("Risk types");
     expect(html).toContain("Show");
-    expect(html).toContain("Hide");
     expect(html).toContain("Unhighlight");
     expect(html).toContain("Clipped depth");
     expect(html).toContain("Isolated outliers");
     expect(html).toContain("Depth edges");
     expect(html).toContain("Color mapping risk");
     expect(html).toContain("unstable");
+    expect(html).toContain('data-geometry-risk-show="clipped" type="button" aria-pressed="true"');
     expect(html).toContain('data-geometry-risk-show="color" type="button" aria-pressed="true"');
     expect(html).toContain('data-geometry-risk-highlight="color" type="button" aria-pressed="false"');
-    expect(html).toContain('data-geometry-risk-highlight="clipped" type="button" aria-pressed="false" disabled');
+    expect(html).toContain('data-geometry-risk-highlight="clipped" type="button" aria-pressed="false"');
     expect(html).toContain("The signed depth point remains available");
     expect(html).toContain("notice");
     expect(html).toContain("3.0%");

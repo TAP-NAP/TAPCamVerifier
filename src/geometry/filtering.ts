@@ -44,11 +44,11 @@ const DISCONTINUITY_THRESHOLD: Record<PixelProjectionFilterSensitivity, number> 
 export function defaultFilterOptions(): PixelProjectionFilterOptions {
   return {
     sensitivity: "medium",
-    showClippedDepth: false,
+    showClippedDepth: true,
     highlightClippedDepth: false,
-    showIsolatedOutliers: false,
+    showIsolatedOutliers: true,
     highlightIsolatedOutliers: false,
-    showDepthEdges: false,
+    showDepthEdges: true,
     highlightDepthEdges: false,
     showColorMappingRisk: true,
     highlightColorMappingRisk: false

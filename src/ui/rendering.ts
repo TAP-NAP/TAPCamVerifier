@@ -195,7 +195,7 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
       </div>
       <div>
         <dt>Filter</dt>
-        <dd data-geometry-active-filter>Clean + 1 risk type · Medium</dd>
+        <dd data-geometry-active-filter>Raw · Medium</dd>
       </div>
       <div>
         <dt>Global Risk</dt>
@@ -385,21 +385,21 @@ function renderGeometryFilterControls(): string {
             "clipped",
             "Clipped depth",
             "Depth samples clipped near the decoded low or high range. These points can collapse or stretch the relative geometry.",
-            false,
+            true,
             false
           )}
           ${renderRiskTypeControl(
             "outliers",
             "Isolated outliers",
             "Single depth samples that differ sharply from nearby pixels. These are treated as local noise candidates.",
-            false,
+            true,
             false
           )}
           ${renderRiskTypeControl(
             "edges",
             "Depth edges",
             "Abrupt depth jumps. They may be real object boundaries, so they are off by default.",
-            false,
+            true,
             false
           )}
           ${renderRiskTypeControl(

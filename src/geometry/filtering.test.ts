@@ -10,14 +10,14 @@ import {
 } from "./filtering";
 
 describe("filterProjectedPixelCloud", () => {
-  it("shows clean and color mapping risk points by default without highlight", () => {
+  it("shows all signed points by default without highlight", () => {
     const cloud = fixtureCloud();
 
     const filtered = filterProjectedPixelCloud(cloud, defaultFilterOptions());
 
-    expect(filtered.visiblePointCount).toBe(2);
-    expect(Array.from(filtered.positions)).toEqual([0, 0, 3, 0, 0, 4]);
-    expect(Array.from(filtered.colors)).toEqual([100, 110, 120, 130, 140, 150]);
+    expect(filtered.visiblePointCount).toBe(5);
+    expect(filtered.positions).toBe(cloud.positions);
+    expect(filtered.colors).toBe(cloud.colors);
   });
 
   it("shows selected risk point types in addition to clean points", () => {
@@ -27,6 +27,7 @@ describe("filterProjectedPixelCloud", () => {
       ...defaultFilterOptions(),
       showClippedDepth: true,
       showIsolatedOutliers: true,
+      showDepthEdges: false,
       showColorMappingRisk: false,
       highlightClippedDepth: true,
       highlightIsolatedOutliers: true
@@ -42,6 +43,8 @@ describe("filterProjectedPixelCloud", () => {
 
     const filtered = filterProjectedPixelCloud(cloud, {
       ...defaultFilterOptions(),
+      showClippedDepth: false,
+      showIsolatedOutliers: false,
       showDepthEdges: true,
       showColorMappingRisk: true
     });
@@ -57,6 +60,7 @@ describe("filterProjectedPixelCloud", () => {
       ...defaultFilterOptions(),
       showClippedDepth: true,
       showIsolatedOutliers: true,
+      showDepthEdges: false,
       showColorMappingRisk: false,
       highlightClippedDepth: false,
       highlightIsolatedOutliers: false
