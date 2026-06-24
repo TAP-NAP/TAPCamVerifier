@@ -1,4 +1,5 @@
 import type { DepthPanelState, DepthVisualizationAvailable } from "../depth/types";
+import { defaultFilterOptions, filterProjectedPixelCloud } from "../geometry/filtering";
 import type { PixelProjectionState, ProjectedPixelCloud } from "../geometry/types";
 import type { OriginalPreviewAvailable, OriginalPreviewResult } from "../original/types";
 import type {
@@ -163,9 +164,12 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
     return renderProjectionMessage(state.message);
   }
 
+  const defaultFilter = defaultFilterOptions();
+  const defaultFiltered = filterProjectedPixelCloud(state, defaultFilter);
   return `
     <div class="geometry-viewer-shell">
       <div id="geometryViewer" class="geometry-viewer" aria-label="Relative 3D pixel projection"></div>
+      ${renderGeometryFilterControls()}
       <button class="geometry-reset" type="button" data-geometry-reset>Reset view</button>
     </div>
     <dl class="depth-meta geometry-meta">
@@ -184,6 +188,18 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
       <div>
         <dt>Points</dt>
         <dd>${state.pointCount}</dd>
+      </div>
+      <div>
+        <dt>Visible Points</dt>
+        <dd><span data-geometry-visible-points>${defaultFiltered.visiblePointCount}</span> / ${defaultFiltered.totalPointCount}</dd>
+      </div>
+      <div>
+        <dt>Filter</dt>
+        <dd data-geometry-active-filter>Clean + 1 risk type · Medium</dd>
+      </div>
+      <div>
+        <dt>Global Risk</dt>
+        <dd>${escapeHtml(state.quality.globalRisk)}</dd>
       </div>
       <div>
         <dt>Sample</dt>
@@ -228,6 +244,18 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
       <div>
         <dt>Scale</dt>
         <dd>${state.relativeGeometry ? "relative" : "metric"}</dd>
+      </div>
+      <div>
+        <dt>Clipped</dt>
+        <dd>${formatRatio(state.quality.metrics.clippedLowRatio + state.quality.metrics.clippedHighRatio)}</dd>
+      </div>
+      <div>
+        <dt>Outliers</dt>
+        <dd>${formatRatio(state.quality.metrics.outlierRatio)}</dd>
+      </div>
+      <div>
+        <dt>Discontinuities</dt>
+        <dd>${formatRatio(state.quality.metrics.discontinuityRatio)}</dd>
       </div>
     </dl>
     ${renderProjectionWarnings(state)}
@@ -333,8 +361,86 @@ function formatSampleStep(sampleStep: number): string {
   return sampleStep <= 1 ? "every pixel" : `every ${sampleStep} px`;
 }
 
+function formatRatio(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
 function formatProjectionViewMode(viewMode: string): string {
   return viewMode === "capture-camera" ? "capture camera" : viewMode;
+}
+
+function renderGeometryFilterControls(): string {
+  return `
+      <div class="geometry-filter-panel" data-geometry-filter-panel>
+      <button class="geometry-filter-collapse" data-geometry-filter-toggle type="button" aria-expanded="true" aria-label="Collapse point filters">-</button>
+      <div class="geometry-filter-body" data-geometry-filter-body>
+        <label class="geometry-sensitivity-control">
+          <span>Sensitivity</span>
+          <input data-geometry-filter-sensitivity type="range" min="0" max="2" step="1" value="1" />
+          <b data-geometry-filter-sensitivity-label>Medium</b>
+        </label>
+        <div class="geometry-filter-group geometry-risk-types">
+          <div class="geometry-risk-title">Risk types</div>
+          ${renderRiskTypeControl(
+            "clipped",
+            "Clipped depth",
+            "Depth samples clipped near the decoded low or high range. These points can collapse or stretch the relative geometry.",
+            false,
+            false
+          )}
+          ${renderRiskTypeControl(
+            "outliers",
+            "Isolated outliers",
+            "Single depth samples that differ sharply from nearby pixels. These are treated as local noise candidates.",
+            false,
+            false
+          )}
+          ${renderRiskTypeControl(
+            "edges",
+            "Depth edges",
+            "Abrupt depth jumps. They may be real object boundaries, so they are off by default.",
+            false,
+            false
+          )}
+          ${renderRiskTypeControl(
+            "color",
+            "Color mapping risk",
+            "The signed depth point remains available, but the RGB color attached to it may be less reliable near mapping or distortion-risk areas.",
+            true,
+            false,
+            "unstable"
+          )}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderRiskTypeControl(
+  id: string,
+  label: string,
+  description: string,
+  showChecked: boolean,
+  highlightChecked: boolean,
+  badge?: string
+): string {
+  const highlightDisabled = !showChecked;
+  return `
+    <div class="geometry-risk-row geometry-risk-row--${id}">
+      <span class="geometry-risk-name">
+        <span>${escapeHtml(label)}</span>
+        ${badge ? `<span class="geometry-risk-badge">${escapeHtml(badge)}</span>` : ""}
+        <span class="geometry-risk-swatch geometry-risk-swatch--${id}" aria-hidden="true"></span>
+      </span>
+      <button class="geometry-risk-toggle geometry-risk-toggle--show" data-geometry-risk-show="${id}" type="button" aria-pressed="${showChecked ? "true" : "false"}">
+        ${showChecked ? "Show" : "Hide"}
+      </button>
+      <button class="geometry-risk-toggle geometry-risk-toggle--highlight" data-geometry-risk-highlight="${id}" type="button" aria-pressed="${highlightChecked ? "true" : "false"}"${highlightDisabled ? " disabled" : ""}>
+        ${highlightChecked ? "Highlight" : "Unhighlight"}
+      </button>
+      <span class="geometry-info" tabindex="0" aria-label="${escapeHtml(description)}" data-tooltip="${escapeHtml(description)}">i</span>
+    </div>
+  `;
 }
 
 function renderDepthWarnings(state: DepthVisualizationAvailable): string {
@@ -362,13 +468,23 @@ function renderOriginalWarnings(state: OriginalPreviewAvailable): string {
 }
 
 function renderProjectionWarnings(state: ProjectedPixelCloud): string {
-  if (state.warnings.length === 0) {
+  const qualityWarnings = state.quality.warnings;
+  if (state.warnings.length === 0 && qualityWarnings.length === 0) {
     return "";
   }
 
   return `
-    <ul class="depth-warnings">
+    <ul class="depth-warnings projection-warnings">
       ${state.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}
+      ${qualityWarnings
+        .map((warning) => `
+          <li class="projection-warning projection-warning--${escapeHtml(warning.severity)}">
+            <strong>${escapeHtml(warning.severity)}</strong>
+            ${escapeHtml(warning.message)}
+            ${typeof warning.affectedPointCount === "number" ? `<span>${warning.affectedPointCount} pts</span>` : ""}
+          </li>
+        `)
+        .join("")}
     </ul>
   `;
 }

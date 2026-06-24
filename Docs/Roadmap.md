@@ -48,32 +48,22 @@ inspection improvements:
   easier to read on desktop and mobile;
 - exposed clear point-cloud metadata, including sample step, source dimensions,
   RGB dimensions, orientation, and depth/disparity range;
+- added structured point-cloud quality analysis for clipped/narrow depth ranges,
+  isolated outliers, discontinuity edges, RGB/depth alignment risk, and
+  uncorrected distortion-edge risk;
+- added frontend point filtering with always-visible clean points, per-risk-type
+  Show/Highlight controls, distinct highlight colors, and a Low/Medium/High
+  strength slider.
 
-Remaining point-cloud inspection TODO:
+Current point-cloud inspection constraints:
 
-- add depth coverage warnings for empty, saturated, or extremely narrow depth
-  ranges;
-- add discontinuity/outlier warnings that flag abrupt depth jumps without
-  generating a triangle surface;
-- add RGB/depth alignment warnings when source dimensions, orientation, or
-  aspect ratio suggest the color overlay may be unreliable;
 - keep explicit `relative geometry` labeling: manifest camera calibration can
   provide single-photo pinhole intrinsics, but the verifier still has no stable
   world coordinates, multi-frame poses, hidden-surface geometry, or serialized
   distortion lookup table.
 
-## Deferred Geometry TODO: Mesh And Texture
+## Verification And QA Notes
 
-Mesh rendering is deferred because the current visual result is not acceptable
-for the verifier experience. Revisit only if a later implementation can produce
-a cleaner inspection surface than the point cloud. The old mesh direction was:
-use the depth grid to build a triangle mesh, skip triangles across large depth
-discontinuities, and attach RGB as vertex color or UV texture.
-
-## Verification And QA TODO
-
-- Add screenshot or canvas-pixel checks for the 3D point-cloud pane so blank or
-  badly framed renders fail in CI.
 - Keep visualization failures non-fatal for `LocalVerificationReport.status` and
   final `valid` / `invalid` semantics.
 
@@ -83,14 +73,22 @@ Completed verification coverage:
   extraction, the fixed APP11 proof-slot parser, and the full local
   content-binding path against `test/tap-depth-photo.JPG`.
 
-## Frozen QA TODO
+## Deferred TODO
 
-- Browser drag/drop automation against `test/tap-depth-photo.HEIC` is frozen.
-  The current drag/drop flow has been manually verified, and this repo should
-  not add Playwright, Puppeteer, or another browser automation dependency for
-  this item unless the TODO is explicitly reopened. While frozen, preserve the
-  existing `src/main.ts` dropzone workflow unless there is a direct product need
-  to change it.
+- 3D point-cloud screenshot or canvas-pixel CI checks are deferred. Do not treat
+  blank-render or framing automation as a current CI gate unless this item is
+  explicitly reopened.
+- Mesh and texture rendering are deferred because the current visual result is
+  not acceptable for the verifier experience. Revisit only if a later
+  implementation can produce a cleaner inspection surface than the point cloud.
+  The old mesh direction was: use the depth grid to build a triangle mesh, skip
+  triangles across large depth discontinuities, and attach RGB as vertex color
+  or UV texture.
+- Browser drag/drop automation against `test/tap-depth-photo.HEIC` is deferred
+  after manual verification. This repo should not add Playwright, Puppeteer, or
+  another browser automation dependency for this item unless the TODO is
+  explicitly reopened. While deferred, preserve the existing `src/main.ts`
+  dropzone workflow unless there is a direct product need to change it.
 
 ## Research TODO: RGB Reconstruction Comparison
 

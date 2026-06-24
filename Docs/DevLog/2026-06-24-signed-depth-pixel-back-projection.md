@@ -37,15 +37,12 @@ experience.
 
 ## Deferred TODO
 
-- Add depth coverage warnings for empty, saturated, or extremely narrow ranges.
-- Add discontinuity/outlier warnings without generating a triangle surface.
-- Add RGB/depth alignment warnings when dimensions, orientation, or aspect ratio
-  suggest unreliable color overlay.
-- Browser drag/drop automation is frozen after manual verification. Do not add
+- 3D point-cloud screenshot or canvas-pixel CI checks are deferred.
+- Browser drag/drop automation is deferred after manual verification. Do not add
   Playwright, Puppeteer, or another browser automation dependency unless this
   item is explicitly reopened.
-- Add canvas/screenshot checks for the 3D point-cloud pane.
-- Defer mesh and texture work until a cleaner inspection surface is justified.
+- Mesh and texture work is deferred until a cleaner inspection surface is
+  justified.
 - Research 3D Gaussian Splatting data requirements before implementation. The
   likely missing data includes multi-view images or burst/video, camera poses,
   sparse point cloud, or a COLMAP-compatible export package.
@@ -96,3 +93,19 @@ experience.
 - The verifier now skips HDR gain-map auxiliary JPEGs and decodes the embedded
   `apdi:AuxiliaryImageType=disparity` JPEG as the depth luma plane for the
   existing depth preview and point-cloud path.
+
+## 2026-06-25 Point Cloud Quality Filter Pass
+
+- Added structured quality analysis to the Rust/WASM point-cloud projection
+  report, including global risk, metrics, filterable warnings, sampled
+  `Uint16Array` risk flags, and sampled outlier/discontinuity scores.
+- Quality analysis now runs on the display-oriented depth grid before point
+  sampling, so local clipped ranges, isolated outliers, discontinuity edges, and
+  RGB/depth alignment risks can be carried into the sampled point cloud.
+- Added frontend filtering controls over the 3D pane: clean points are always
+  shown, and each risk type has independent Show and Highlight controls with a
+  distinct highlight color. Showing every risk type without highlighting is
+  equivalent to raw display.
+- Filtering changes only the inspection view. It does not affect the local
+  content-binding checks, server verification, or final `valid` / `invalid`
+  result.

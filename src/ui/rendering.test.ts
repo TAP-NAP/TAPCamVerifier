@@ -254,8 +254,31 @@ describe("renderPixelProjectionPanel", () => {
         rawMin: 0,
         rawMax: 255
       },
+      quality: {
+        globalRisk: "notice",
+        metrics: {
+          clippedLowRatio: 0.01,
+          clippedHighRatio: 0.02,
+          robustRange: 180,
+          discontinuityRatio: 0.05,
+          outlierRatio: 0.01,
+          alignmentRisk: "ok"
+        },
+        warnings: [
+          {
+            id: "isolated-depth-outliers",
+            severity: "notice",
+            filterable: true,
+            affectedPointCount: 82,
+            message: "Isolated depth samples differ sharply from their local neighborhood."
+          }
+        ]
+      },
       positions: new Float32Array(8192 * 3),
       colors: new Uint8Array(8192 * 3),
+      riskFlags: new Uint16Array(8192),
+      outlierScores: new Uint8Array(8192),
+      discontinuityScores: new Uint8Array(8192),
       warnings: ["relative geometry"]
     };
 
@@ -275,5 +298,29 @@ describe("renderPixelProjectionPanel", () => {
     expect(html).toContain("cgImagePropertyOrientation:6");
     expect(html).toContain("relative");
     expect(html).toContain("3.9180 – 12.3047 disparity");
+    expect(html).toContain("Visible Points");
+    expect(html).toContain("Clean + 1 risk type · Medium");
+    expect(html).toContain("Sensitivity");
+    expect(html).not.toContain("Strength");
+    expect(html).toContain("data-geometry-filter-toggle");
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).not.toContain("geometry-risk-header");
+    expect(html).toContain("Risk types");
+    expect(html).toContain("Show");
+    expect(html).toContain("Hide");
+    expect(html).toContain("Unhighlight");
+    expect(html).toContain("Clipped depth");
+    expect(html).toContain("Isolated outliers");
+    expect(html).toContain("Depth edges");
+    expect(html).toContain("Color mapping risk");
+    expect(html).toContain("unstable");
+    expect(html).toContain('data-geometry-risk-show="color" type="button" aria-pressed="true"');
+    expect(html).toContain('data-geometry-risk-highlight="color" type="button" aria-pressed="false"');
+    expect(html).toContain('data-geometry-risk-highlight="clipped" type="button" aria-pressed="false" disabled');
+    expect(html).toContain("The signed depth point remains available");
+    expect(html).toContain("notice");
+    expect(html).toContain("3.0%");
+    expect(html).toContain("Isolated depth samples");
+    expect(html).toContain("82 pts");
   });
 });

@@ -23,6 +23,15 @@ const PROOF_HEADER_BYTE_COUNT: usize = 32;
 const PROOF_MAGIC: &[u8] = b"TAPCAM-PROOF-SLOT-V1";
 const BMFF_PROOF_UUID: &[u8] = b"TAPCAMPROOFSLOT1";
 const PIXEL_PROJECTION_TARGET_MAX_EDGE: u32 = 480;
+const RISK_CLIPPED_LOW: u16 = 1 << 0;
+const RISK_CLIPPED_HIGH: u16 = 1 << 1;
+const RISK_NARROW_RANGE: u16 = 1 << 2;
+const RISK_ISOLATED_OUTLIER: u16 = 1 << 3;
+const RISK_DISCONTINUITY_EDGE: u16 = 1 << 4;
+const RISK_ALIGNMENT_EDGE: u16 = 1 << 5;
+const RISK_DISTORTION_UNCORRECTED_EDGE: u16 = 1 << 6;
+const OUTLIER_MEDIUM_THRESHOLD: f64 = 0.20;
+const DISCONTINUITY_MEDIUM_THRESHOLD: f64 = 0.25;
 
 #[no_mangle]
 pub extern "C" fn tapcam_verify_alloc(len: usize) -> *mut u8 {
@@ -862,22 +871,37 @@ fn project_depth_pixels_inner(
         .max(output_height)
         .div_ceil(PIXEL_PROJECTION_TARGET_MAX_EDGE)
         .max(1);
-    let depth_width_usize = depth_width as usize;
+    let display_depth = display_oriented_depth_grid(
+        depth_luma,
+        depth_width,
+        depth_height,
+        output_width,
+        output_height,
+        transform,
+    );
+    let quality = analyze_depth_quality(
+        &display_depth,
+        output_width,
+        output_height,
+        raw_min,
+        raw_max,
+        manifest_width,
+        manifest_height,
+        rgb_width,
+        rgb_height,
+        depth,
+        camera,
+    );
     let mut positions = Vec::new();
     let mut colors = Vec::new();
+    let mut risk_flags = Vec::new();
+    let mut outlier_scores = Vec::new();
+    let mut discontinuity_scores = Vec::new();
 
     for y in (0..output_height).step_by(sample_step as usize) {
         for x in (0..output_width).step_by(sample_step as usize) {
-            let (source_x, source_y) = inverse_orientation_transform(
-                x as f64,
-                y as f64,
-                depth_width,
-                depth_height,
-                transform,
-            );
-            let source_x = source_x.round().clamp(0.0, (depth_width - 1) as f64) as usize;
-            let source_y = source_y.round().clamp(0.0, (depth_height - 1) as f64) as usize;
-            let raw_value = depth_luma[source_y * depth_width_usize + source_x];
+            let display_index = (y as usize) * (output_width as usize) + x as usize;
+            let raw_value = display_depth[display_index];
             let normalized = normalize_u8(raw_value, raw_min, raw_max) as f64;
             let display_value = depth_display_value(normalized, min_value, max_value);
             let relative_depth =
@@ -894,6 +918,9 @@ fn project_depth_pixels_inner(
             colors.push(rgba[rgb_offset]);
             colors.push(rgba[rgb_offset + 1]);
             colors.push(rgba[rgb_offset + 2]);
+            push_u16_le(&mut risk_flags, quality.flags[display_index]);
+            outlier_scores.push(quality.outlier_scores[display_index]);
+            discontinuity_scores.push(quality.discontinuity_scores[display_index]);
         }
     }
 
@@ -970,10 +997,451 @@ fn project_depth_pixels_inner(
             "rawMin": raw_min,
             "rawMax": raw_max
         },
+        "quality": quality.report,
         "positionsBase64": STANDARD.encode(positions),
         "colorsBase64": STANDARD.encode(colors),
+        "riskFlagsBase64": STANDARD.encode(risk_flags),
+        "outlierScoresBase64": STANDARD.encode(outlier_scores),
+        "discontinuityScoresBase64": STANDARD.encode(discontinuity_scores),
         "warnings": warnings
     }))
+}
+
+struct DepthQualityAnalysis {
+    report: Value,
+    flags: Vec<u16>,
+    outlier_scores: Vec<u8>,
+    discontinuity_scores: Vec<u8>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn analyze_depth_quality(
+    display_depth: &[u8],
+    width: u32,
+    height: u32,
+    raw_min: u8,
+    raw_max: u8,
+    manifest_width: Option<u32>,
+    manifest_height: Option<u32>,
+    rgb_width: u32,
+    rgb_height: u32,
+    depth_metadata: &Value,
+    camera: PinholeCamera,
+) -> DepthQualityAnalysis {
+    let point_count = display_depth.len();
+    let mut flags = vec![0u16; point_count];
+    let mut warnings = Vec::<Value>::new();
+
+    let clipped_low_count = mark_matching_flags(
+        display_depth,
+        &mut flags,
+        |value| value <= 1,
+        RISK_CLIPPED_LOW,
+    );
+    let clipped_high_count = mark_matching_flags(
+        display_depth,
+        &mut flags,
+        |value| value >= 254,
+        RISK_CLIPPED_HIGH,
+    );
+    let clipped_low_ratio = ratio(clipped_low_count, point_count);
+    let clipped_high_ratio = ratio(clipped_high_count, point_count);
+
+    let raw_range = raw_max.saturating_sub(raw_min) as f64;
+    let (p01, p99) = depth_percentiles(display_depth);
+    let robust_range = p99.saturating_sub(p01) as f64;
+    let range_empty = raw_max == raw_min;
+    let narrow_range =
+        range_empty || robust_range < 8.0 || (raw_range > 0.0 && robust_range < raw_range * 0.03);
+    if narrow_range {
+        for flag in &mut flags {
+            *flag |= RISK_NARROW_RANGE;
+        }
+    }
+
+    if range_empty {
+        warnings.push(quality_warning(
+            "depth-range-empty",
+            "high",
+            true,
+            Some(point_count),
+            "Decoded depth has a constant value; relative geometry is not reliable.",
+        ));
+    } else if narrow_range {
+        warnings.push(quality_warning(
+            "depth-range-narrow",
+            "warning",
+            true,
+            Some(point_count),
+            "Decoded depth has an extremely narrow useful range; the point cloud may collapse visually.",
+        ));
+    }
+
+    if clipped_low_ratio > 0.05 {
+        warnings.push(quality_warning(
+            "clipped-low-depth",
+            if clipped_low_ratio > 0.20 {
+                "high"
+            } else {
+                "warning"
+            },
+            true,
+            Some(clipped_low_count),
+            "Some depth samples are clipped near the low end of the decoded range.",
+        ));
+    }
+    if clipped_high_ratio > 0.05 {
+        warnings.push(quality_warning(
+            "clipped-high-depth",
+            if clipped_high_ratio > 0.20 {
+                "high"
+            } else {
+                "warning"
+            },
+            true,
+            Some(clipped_high_count),
+            "Some depth samples are clipped near the high end of the decoded range.",
+        ));
+    }
+
+    let mut outlier_scores = vec![0u8; point_count];
+    let mut discontinuity_scores = vec![0u8; point_count];
+    let denominator = robust_range.max(raw_range).max(1.0);
+    let outlier_count = mark_isolated_outliers(
+        display_depth,
+        width,
+        height,
+        denominator,
+        &mut flags,
+        &mut outlier_scores,
+    );
+    let discontinuity_count = mark_discontinuities(
+        display_depth,
+        width,
+        height,
+        denominator,
+        &mut flags,
+        &mut discontinuity_scores,
+    );
+    let outlier_ratio = ratio(outlier_count, point_count);
+    let discontinuity_ratio = ratio(discontinuity_count, point_count);
+
+    if outlier_count > 0 {
+        warnings.push(quality_warning(
+            "isolated-depth-outliers",
+            if outlier_ratio > 0.05 {
+                "warning"
+            } else {
+                "notice"
+            },
+            true,
+            Some(outlier_count),
+            "Isolated depth samples differ sharply from their local neighborhood.",
+        ));
+    }
+    if discontinuity_ratio > 0.05 {
+        warnings.push(quality_warning(
+            "depth-discontinuity-edges",
+            if discontinuity_ratio > 0.20 { "warning" } else { "notice" },
+            true,
+            Some(discontinuity_count),
+            "Abrupt depth jumps were found; these may be real object edges or unreliable depth boundaries.",
+        ));
+    }
+
+    let manifest_mismatch = manifest_width != Some(width) || manifest_height != Some(height);
+    if manifest_mismatch {
+        warnings.push(quality_warning(
+            "manifest-depth-size-mismatch",
+            "warning",
+            true,
+            Some(point_count),
+            "Projected depth dimensions differ from the signed manifest dimensions.",
+        ));
+        for flag in &mut flags {
+            *flag |= RISK_ALIGNMENT_EDGE;
+        }
+    }
+
+    let aspect_delta = aspect_ratio_delta(width, height, rgb_width, rgb_height);
+    let alignment_risk = if manifest_mismatch || aspect_delta > 0.05 {
+        "warning"
+    } else if aspect_delta > 0.01 {
+        "notice"
+    } else {
+        "ok"
+    };
+    if aspect_delta > 0.01 {
+        warnings.push(quality_warning(
+            "rgb-depth-aspect-mismatch",
+            alignment_risk,
+            true,
+            if aspect_delta > 0.05 { Some(point_count) } else { None },
+            "RGB and projected depth aspect ratios differ; color overlay alignment may be unreliable.",
+        ));
+        if aspect_delta > 0.05 {
+            for flag in &mut flags {
+                *flag |= RISK_ALIGNMENT_EDGE;
+            }
+        }
+    }
+
+    if camera.model == "metadata-pinhole" && has_distortion_lookup_metadata(depth_metadata) {
+        let mut affected = 0usize;
+        for y in 0..height {
+            for x in 0..width {
+                if is_projection_edge_pixel(x, y, width, height) {
+                    flags[y as usize * width as usize + x as usize] |=
+                        RISK_DISTORTION_UNCORRECTED_EDGE;
+                    affected += 1;
+                }
+            }
+        }
+        warnings.push(quality_warning(
+            "distortion-uncorrected-edge",
+            "notice",
+            true,
+            Some(affected),
+            "Manifest camera calibration indicates lens distortion data, but this relative point cloud uses pinhole intrinsics only.",
+        ));
+    }
+
+    let global_risk = global_risk_from_warnings(&warnings, range_empty);
+    DepthQualityAnalysis {
+        report: json!({
+            "globalRisk": global_risk,
+            "metrics": {
+                "clippedLowRatio": clipped_low_ratio,
+                "clippedHighRatio": clipped_high_ratio,
+                "robustRange": robust_range,
+                "discontinuityRatio": discontinuity_ratio,
+                "outlierRatio": outlier_ratio,
+                "alignmentRisk": alignment_risk
+            },
+            "warnings": warnings
+        }),
+        flags,
+        outlier_scores,
+        discontinuity_scores,
+    }
+}
+
+fn display_oriented_depth_grid(
+    depth_luma: &[u8],
+    depth_width: u32,
+    depth_height: u32,
+    output_width: u32,
+    output_height: u32,
+    transform: OrientationTransform,
+) -> Vec<u8> {
+    let mut output = Vec::with_capacity(output_width as usize * output_height as usize);
+    let depth_width_usize = depth_width as usize;
+    for y in 0..output_height {
+        for x in 0..output_width {
+            let (source_x, source_y) = inverse_orientation_transform(
+                x as f64,
+                y as f64,
+                depth_width,
+                depth_height,
+                transform,
+            );
+            let source_x = source_x.round().clamp(0.0, (depth_width - 1) as f64) as usize;
+            let source_y = source_y.round().clamp(0.0, (depth_height - 1) as f64) as usize;
+            output.push(depth_luma[source_y * depth_width_usize + source_x]);
+        }
+    }
+    output
+}
+
+fn mark_matching_flags(
+    values: &[u8],
+    flags: &mut [u16],
+    predicate: impl Fn(u8) -> bool,
+    flag: u16,
+) -> usize {
+    let mut count = 0usize;
+    for (index, value) in values.iter().copied().enumerate() {
+        if predicate(value) {
+            flags[index] |= flag;
+            count += 1;
+        }
+    }
+    count
+}
+
+fn mark_isolated_outliers(
+    values: &[u8],
+    width: u32,
+    height: u32,
+    denominator: f64,
+    flags: &mut [u16],
+    scores: &mut [u8],
+) -> usize {
+    let mut count = 0usize;
+    for y in 0..height {
+        for x in 0..width {
+            let index = y as usize * width as usize + x as usize;
+            let neighbors = neighbor_values(values, width, height, x, y, true);
+            if neighbors.len() < 5 {
+                continue;
+            }
+            let median = median_u8(neighbors.clone()) as f64;
+            let score = ((values[index] as f64 - median).abs() / denominator).clamp(0.0, 2.55);
+            scores[index] = (score * 100.0).round().clamp(0.0, 255.0) as u8;
+            let consistent_neighbors = neighbors
+                .iter()
+                .filter(|value| ((**value as f64) - median).abs() <= denominator * 0.10)
+                .count();
+            let required_neighbors = ((neighbors.len() * 2) + 2) / 3;
+            if score >= OUTLIER_MEDIUM_THRESHOLD && consistent_neighbors >= required_neighbors {
+                flags[index] |= RISK_ISOLATED_OUTLIER;
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn mark_discontinuities(
+    values: &[u8],
+    width: u32,
+    height: u32,
+    denominator: f64,
+    flags: &mut [u16],
+    scores: &mut [u8],
+) -> usize {
+    let mut count = 0usize;
+    for y in 0..height {
+        for x in 0..width {
+            let index = y as usize * width as usize + x as usize;
+            let center = values[index] as f64;
+            let max_delta = neighbor_values(values, width, height, x, y, false)
+                .into_iter()
+                .map(|value| (center - value as f64).abs())
+                .fold(0.0, f64::max);
+            let score = (max_delta / denominator).clamp(0.0, 2.55);
+            scores[index] = (score * 100.0).round().clamp(0.0, 255.0) as u8;
+            if score >= DISCONTINUITY_MEDIUM_THRESHOLD {
+                flags[index] |= RISK_DISCONTINUITY_EDGE;
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn neighbor_values(
+    values: &[u8],
+    width: u32,
+    height: u32,
+    x: u32,
+    y: u32,
+    diagonal: bool,
+) -> Vec<u8> {
+    let mut neighbors = Vec::with_capacity(if diagonal { 8 } else { 4 });
+    for dy in -1i32..=1 {
+        for dx in -1i32..=1 {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            if !diagonal && dx.abs() + dy.abs() != 1 {
+                continue;
+            }
+            let nx = x as i32 + dx;
+            let ny = y as i32 + dy;
+            if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                continue;
+            }
+            neighbors.push(values[ny as usize * width as usize + nx as usize]);
+        }
+    }
+    neighbors
+}
+
+fn median_u8(mut values: Vec<u8>) -> u8 {
+    values.sort_unstable();
+    values[values.len() / 2]
+}
+
+fn depth_percentiles(values: &[u8]) -> (u8, u8) {
+    if values.is_empty() {
+        return (0, 0);
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    let last = sorted.len() - 1;
+    let p01 = sorted[((last as f64) * 0.01).floor() as usize];
+    let p99 = sorted[((last as f64) * 0.99).ceil().min(last as f64) as usize];
+    (p01, p99)
+}
+
+fn has_distortion_lookup_metadata(depth_metadata: &Value) -> bool {
+    depth_metadata
+        .get("cameraCalibration")
+        .is_some_and(|calibration| {
+            calibration
+                .get("lensDistortionLookupTablePresent")
+                .and_then(Value::as_bool)
+                == Some(true)
+                || calibration
+                    .get("inverseLensDistortionLookupTablePresent")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+        })
+}
+
+fn is_projection_edge_pixel(x: u32, y: u32, width: u32, height: u32) -> bool {
+    let edge = ((width.min(height) as f64) * 0.10).ceil().max(1.0) as u32;
+    x < edge || y < edge || x + edge >= width || y + edge >= height
+}
+
+fn quality_warning(
+    id: &str,
+    severity: &str,
+    filterable: bool,
+    affected_point_count: Option<usize>,
+    message: &str,
+) -> Value {
+    json!({
+        "id": id,
+        "severity": severity,
+        "filterable": filterable,
+        "affectedPointCount": affected_point_count,
+        "message": message
+    })
+}
+
+fn global_risk_from_warnings(warnings: &[Value], range_empty: bool) -> &'static str {
+    if range_empty {
+        return "poor";
+    }
+    if warnings
+        .iter()
+        .any(|warning| warning.get("severity").and_then(Value::as_str) == Some("high"))
+    {
+        return "warning";
+    }
+    if warnings
+        .iter()
+        .any(|warning| warning.get("severity").and_then(Value::as_str) == Some("warning"))
+    {
+        return "warning";
+    }
+    if warnings
+        .iter()
+        .any(|warning| warning.get("severity").and_then(Value::as_str) == Some("notice"))
+    {
+        return "notice";
+    }
+    "ok"
+}
+
+fn ratio(count: usize, total: usize) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        count as f64 / total as f64
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1883,6 +2351,10 @@ fn push_f32_le(output: &mut Vec<u8>, value: f32) {
     output.extend_from_slice(&value.to_le_bytes());
 }
 
+fn push_u16_le(output: &mut Vec<u8>, value: u16) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+
 fn normalize_u8(value: u8, min: u8, max: u8) -> f32 {
     if max <= min {
         return 0.0;
@@ -2252,6 +2724,99 @@ mod tests {
     }
 
     #[test]
+    fn pixel_projection_reports_poor_quality_for_constant_depth() {
+        let bytes = depth_manifest_fixture(3, 3, "cgImagePropertyOrientation:1", "");
+        let rgba = vec![128u8; 3 * 3 * 4];
+        let depth = vec![64u8; 3 * 3];
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 3, 3, &depth, 3, 3, 3, 3);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["quality"]["globalRisk"], "poor");
+        assert!(quality_has_warning(&report, "depth-range-empty"));
+        assert!(risk_flags(&report)
+            .iter()
+            .all(|flag| flag & RISK_NARROW_RANGE != 0));
+    }
+
+    #[test]
+    fn pixel_projection_flags_clipped_low_and_high_depth() {
+        let bytes = depth_manifest_fixture(4, 1, "cgImagePropertyOrientation:1", "");
+        let rgba = vec![128u8; 4 * 4];
+        let depth = [0, 0, 255, 255];
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 4, 1, &depth, 4, 1, 4, 1);
+        let flags = risk_flags(&report);
+
+        assert_eq!(report["quality"]["metrics"]["clippedLowRatio"], 0.5);
+        assert_eq!(report["quality"]["metrics"]["clippedHighRatio"], 0.5);
+        assert!(flags[0] & RISK_CLIPPED_LOW != 0);
+        assert!(flags[3] & RISK_CLIPPED_HIGH != 0);
+        assert!(quality_has_warning(&report, "clipped-low-depth"));
+        assert!(quality_has_warning(&report, "clipped-high-depth"));
+    }
+
+    #[test]
+    fn pixel_projection_flags_isolated_outlier() {
+        let bytes = depth_manifest_fixture(5, 5, "cgImagePropertyOrientation:1", "");
+        let rgba = vec![128u8; 5 * 5 * 4];
+        let mut depth = vec![20u8; 5 * 5];
+        depth[12] = 220;
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 5, 5, &depth, 5, 5, 5, 5);
+        let flags = risk_flags(&report);
+
+        assert!(flags[12] & RISK_ISOLATED_OUTLIER != 0);
+        assert!(quality_has_warning(&report, "isolated-depth-outliers"));
+    }
+
+    #[test]
+    fn pixel_projection_flags_depth_discontinuity_edges() {
+        let bytes = depth_manifest_fixture(4, 4, "cgImagePropertyOrientation:1", "");
+        let rgba = vec![128u8; 4 * 4 * 4];
+        let mut depth = Vec::new();
+        for _ in 0..4 {
+            depth.extend([20, 20, 220, 220]);
+        }
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 4, 4, &depth, 4, 4, 4, 4);
+        let flags = risk_flags(&report);
+
+        assert!(flags.iter().any(|flag| flag & RISK_DISCONTINUITY_EDGE != 0));
+        assert!(quality_has_warning(&report, "depth-discontinuity-edges"));
+    }
+
+    #[test]
+    fn pixel_projection_reports_alignment_and_distortion_risk() {
+        let calibration = r#""cameraCalibration":{
+            "intrinsicMatrixReferenceWidth": 8,
+            "intrinsicMatrixReferenceHeight": 2,
+            "pixelSizeMillimeters": 0.001,
+            "lensDistortionLookupTablePresent": true,
+            "inverseLensDistortionLookupTablePresent": true,
+            "lensDistortionCenterX": 4,
+            "lensDistortionCenterY": 1,
+            "intrinsicMatrix": [80,0,0,0,40,0,4,1,1],
+            "extrinsicMatrix": [1,0,0,0,1,0,0,0,1,0,0,0]
+        }"#;
+        let bytes = depth_manifest_fixture(8, 2, "cgImagePropertyOrientation:1", "")
+            .replace(r#""width":8}"#, &format!(r#""width":8,{calibration}}}"#));
+        let rgba = vec![128u8; 4 * 4 * 4];
+        let depth = vec![20u8; 8 * 2];
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 4, 4, &depth, 8, 2, 8, 2);
+        let flags = risk_flags(&report);
+
+        assert_eq!(report["quality"]["metrics"]["alignmentRisk"], "warning");
+        assert!(quality_has_warning(&report, "rgb-depth-aspect-mismatch"));
+        assert!(quality_has_warning(&report, "distortion-uncorrected-edge"));
+        assert!(flags.iter().all(|flag| flag & RISK_ALIGNMENT_EDGE != 0));
+        assert!(flags
+            .iter()
+            .any(|flag| flag & RISK_DISTORTION_UNCORRECTED_EDGE != 0));
+    }
+
+    #[test]
     fn pixel_projection_uses_manifest_camera_calibration_intrinsics() {
         let calibration = r#""cameraCalibration":{
             "intrinsicMatrixReferenceWidth": 8,
@@ -2352,6 +2917,18 @@ mod tests {
         assert_eq!(report["status"], "available");
         assert!(report["sampleStep"].as_u64().unwrap() > 1);
         assert!(report["pointCount"].as_u64().unwrap() <= PIXEL_PROJECTION_TARGET_MAX_EDGE as u64);
+        assert_eq!(
+            risk_flags(&report).len(),
+            report["pointCount"].as_u64().unwrap() as usize
+        );
+        assert_eq!(
+            risk_scores(&report, "outlierScoresBase64").len(),
+            report["pointCount"].as_u64().unwrap() as usize
+        );
+        assert_eq!(
+            risk_scores(&report, "discontinuityScoresBase64").len(),
+            report["pointCount"].as_u64().unwrap() as usize
+        );
     }
 
     #[test]
@@ -2605,6 +3182,28 @@ mod tests {
     fn read_f32_le(bytes: &[u8], index: usize) -> f32 {
         let offset = index * 4;
         f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    fn risk_flags(report: &Value) -> Vec<u16> {
+        let bytes = STANDARD
+            .decode(report["riskFlagsBase64"].as_str().unwrap())
+            .unwrap();
+        bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
+            .collect()
+    }
+
+    fn risk_scores(report: &Value, field: &str) -> Vec<u8> {
+        STANDARD.decode(report[field].as_str().unwrap()).unwrap()
+    }
+
+    fn quality_has_warning(report: &Value, id: &str) -> bool {
+        report["quality"]["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning["id"] == id)
     }
 
     fn proof_slot_payload(envelope: &[u8]) -> Vec<u8> {
