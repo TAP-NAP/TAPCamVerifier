@@ -129,17 +129,19 @@ The production page origin is `https://verifier.tapnap.net`. Local development
 origins such as `http://127.0.0.1:4174` are expected to fail server verification
 unless the server CORS allowlist includes them.
 
-## UI Analysis Gate
+## Parallel Analysis And Verification
 
-The browser gates downstream visualization behind the signature verdict:
+The browser resolves the selected input into primary photo bytes once, then runs
+visual analysis and signature verification as independent async paths:
 
-- `valid`: show the confirmation dialog `照片验签通过 / 该照片由 TAPCam 拍摄`,
-  then start original/depth/geometry analysis after about 1.5 seconds. A click
-  anywhere on the page skips the remaining delay and starts analysis
-  immediately.
-- `invalid`: show the banner `这张照片不是由 TAPCam 拍摄`, ask `还要继续进行分析吗？`,
-  and provide `是` / `否` actions. The verifier does not automatically build
-  the visual panes for invalid input.
+- Verification reads the proof slot, manifest, content binding, and server App
+  Attest result, then updates the verification result panel.
+- Analysis reads the same primary photo bytes for original preview, embedded
+  depth/disparity decoding, and relative 3D point-cloud inspection.
+- Missing `paired-video.mov` does not block verification. The verifier checks the
+  remaining Live Photo primary-photo scope and continues to server verification
+  when that scope passes.
+- A failed signature result does not cancel already-running visual analysis.
 
 The original preview, depth panel, and 3D point-cloud panel remain downstream
 inspection tools. They are not inputs to the base signature verdict.

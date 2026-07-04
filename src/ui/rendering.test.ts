@@ -8,8 +8,6 @@ import {
   renderOriginalPreviewLoading,
   renderOriginalPreviewResult,
   renderPixelProjectionPanel,
-  renderVerificationAnalysisPrompt,
-  renderVerificationSuccessGate,
   renderVerificationResult
 } from "./rendering";
 
@@ -53,44 +51,6 @@ const result: CombinedVerificationResult = {
 };
 
 describe("renderVerificationResult", () => {
-  it("renders the valid gate copy before analysis starts", () => {
-    const html = renderVerificationSuccessGate(result);
-
-    expect(html).toContain("照片验签通过");
-    expect(html).toContain("该照片由 TAPCam 拍摄");
-    expect(html).toContain("点击页面任意位置可立即继续");
-    expect(html).toContain("verification-modal");
-  });
-
-  it("renders the invalid analysis prompt with yes and no actions", () => {
-    const html = renderVerificationAnalysisPrompt({
-      ...result,
-      finalStatus: "invalid"
-    });
-
-    expect(html).toContain("这张照片不是由 TAPCam 拍摄");
-    expect(html).toContain("还要继续进行分析吗？");
-    expect(html).toContain("data-analysis-continue");
-    expect(html).toContain("data-analysis-stop");
-    expect(html).toContain(">是</button>");
-    expect(html).toContain(">否</button>");
-    expect(html).toContain("验签细节");
-  });
-
-  it("renders the invalid analysis prompt decision state", () => {
-    const html = renderVerificationAnalysisPrompt(
-      {
-        ...result,
-        finalStatus: "invalid"
-      },
-      "stop"
-    );
-
-    expect(html).toContain("已停止分析。");
-    expect(html).toContain("data-analysis-continue disabled");
-    expect(html).toContain("data-analysis-stop disabled");
-  });
-
   it("keeps the local summary visible and collapses detailed checks", () => {
     const html = renderVerificationResult(result);
 

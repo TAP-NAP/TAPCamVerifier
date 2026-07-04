@@ -37,8 +37,10 @@ paired video can verify by itself.
 ## UI Requirements
 
 The UI may show `valid` when either full Live Photo verification or primary-only
-Live Photo verification passes server App Attest verification. It must also show
-which scope was verified:
+Live Photo verification passes server App Attest verification. Analysis and
+verification run as independent async paths: visual panes may start from the
+primary photo bytes while local/server verification is still in flight. It must
+also show which scope was verified:
 
 - full Live Photo: paired video matched and was verified.
 - primary-only: paired video was not supplied, so video/motion bytes were not
@@ -63,3 +65,10 @@ For primary-only Live Photo verification, the verifier can still:
    server.
 
 The missing MOV is a scope warning, not a local hard-binding failure.
+
+## Deferred TODO
+
+Real worker-thread separation is not implemented in this slice. Verification and
+visual analysis are independent async paths, but WASM calls still run on the
+browser main thread. Move verification and/or analysis into Web Workers only if
+main-thread contention becomes a measured problem.

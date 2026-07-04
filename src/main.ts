@@ -15,12 +15,10 @@ import {
   renderDepthPanel,
   renderOriginalPreviewLoading,
   renderOriginalPreviewResult,
-  renderVerificationAnalysisPrompt,
   renderPixelProjectionPanel,
   renderVerificationBusy,
   renderVerificationError,
-  renderVerificationResult,
-  renderVerificationSuccessGate
+  renderVerificationResult
 } from "./ui/rendering";
 import { verifyCapturePackageLocally, visualizeDepthPlane } from "./wasm/tapcamVerifier";
 import { verifyCaptureSignature } from "./verifier/serverVerify";
@@ -62,7 +60,6 @@ if (!dropzone || !fileInput || !visualizationPanel || !resultPanel) {
 
 const resultEl = resultPanel;
 const visualizationEl = visualizationPanel;
-const VERIFIED_ANALYSIS_DELAY_MS = 1500;
 let activeRunId = 0;
 let activeObjectUrl: string | null = null;
 let activeFileBytes: Uint8Array | null = null;
@@ -144,29 +141,11 @@ function handleDroppedFile(event: DragEvent): void {
 
 async function verifyFile(file: File): Promise<void> {
   const runId = beginSelectedFile(file);
+  let captureInput: CaptureInput;
 
   try {
     const fileBytes = new Uint8Array(await file.arrayBuffer());
-    const captureInput = resolveCaptureInput(file, fileBytes);
-    const result = await verifyFileBytes(captureInput);
-
-    if (runId !== activeRunId) {
-      return;
-    }
-
-    if (result.finalStatus === "valid") {
-      resultEl.innerHTML = renderVerificationSuccessGate(result);
-      await waitForAnalysisGate(runId);
-      if (runId !== activeRunId) {
-        return;
-      }
-      resultEl.innerHTML = renderVerificationResult(result);
-      startAnalysis(runId, captureInput);
-      return;
-    }
-
-    resultEl.innerHTML = renderVerificationAnalysisPrompt(result);
-    bindAnalysisPromptActions(runId, captureInput, result);
+    captureInput = resolveCaptureInput(file, fileBytes);
   } catch (error) {
     if (runId === activeRunId) {
       resultEl.innerHTML = renderVerificationError(error);
@@ -180,6 +159,22 @@ async function verifyFile(file: File): Promise<void> {
         message: error instanceof Error ? error.message : String(error),
         warnings: [error instanceof Error ? error.message : String(error)]
       });
+    }
+    return;
+  }
+
+  startAnalysis(runId, captureInput);
+
+  try {
+    const result = await verifyFileBytes(captureInput);
+    if (runId !== activeRunId) {
+      return;
+    }
+
+    resultEl.innerHTML = renderVerificationResult(result);
+  } catch (error) {
+    if (runId === activeRunId) {
+      resultEl.innerHTML = renderVerificationError(error);
     }
   }
 }
@@ -223,61 +218,6 @@ function startAnalysis(runId: number, captureInput: CaptureInput): void {
   requestOriginalFallback(runId, captureInput.photoFile.name);
   requestDepthVisualization(runId);
   requestRgbAnalysis(runId, captureInput.photoFile);
-}
-
-function bindAnalysisPromptActions(
-  runId: number,
-  captureInput: CaptureInput,
-  result: CombinedVerificationResult
-): void {
-  const continueButton = resultEl.querySelector<HTMLButtonElement>("[data-analysis-continue]");
-  const stopButton = resultEl.querySelector<HTMLButtonElement>("[data-analysis-stop]");
-
-  continueButton?.addEventListener("click", () => {
-    if (runId !== activeRunId) {
-      return;
-    }
-
-    resultEl.innerHTML = renderVerificationAnalysisPrompt(result, "continue");
-    startAnalysis(runId, captureInput);
-  });
-
-  stopButton?.addEventListener("click", () => {
-    if (runId !== activeRunId) {
-      return;
-    }
-
-    resultEl.innerHTML = renderVerificationAnalysisPrompt(result, "stop");
-  });
-}
-
-function waitForAnalysisGate(runId: number): Promise<void> {
-  return new Promise((resolve) => {
-    let isResolved = false;
-    const timeoutId = window.setTimeout(finish, VERIFIED_ANALYSIS_DELAY_MS);
-
-    function finish(): void {
-      if (isResolved) {
-        return;
-      }
-
-      isResolved = true;
-      window.clearTimeout(timeoutId);
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-      resolve();
-    }
-
-    function handlePointerDown(): void {
-      finish();
-    }
-
-    if (runId !== activeRunId) {
-      finish();
-      return;
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown, true);
-  });
 }
 
 function resolveOriginalDisplay(runId: number, reference: DisplayOrientationReference | null): void {

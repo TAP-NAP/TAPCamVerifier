@@ -37,15 +37,14 @@ the base signature. Rust/WASM verifies:
 - `signingBinding.bodySHA256` and full signing binding equality.
 
 The page also includes a downstream visual inspection path. After selection, the
-page verifies the capture first. A valid result shows a short confirmation
-dialog before analysis starts; the dialog advances automatically after about
-1.5 seconds, and any page click advances immediately. An invalid result does
-not start analysis automatically; the page asks whether to continue before
-showing original/depth/geometry panes. Once analysis starts, the left pane first
-tries the browser's native image decoder for the original file. If that decoder
-cannot render HEIC, the browser falls back to `libheif-js` WASM to decode the
-primary HEIF image and sends the RGBA plane to Rust/WASM for TAP orientation
-handling and preview downscaling. The right pane decodes embedded auxiliary
+browser resolves the primary photo bytes once, then starts visual analysis and
+signature verification as independent async paths. Verification results update
+the result panel when local/server checks finish; original/depth/geometry panes
+do not wait for App Attest server verification. The left pane first tries the
+browser's native image decoder for the original file. If that decoder cannot
+render HEIC, the browser falls back to `libheif-js` WASM to decode the primary
+HEIF image and sends the RGBA plane to Rust/WASM for TAP orientation handling
+and preview downscaling. The right pane decodes embedded auxiliary
 depth/disparity pixels in the browser: HEIC uses HEIF auxiliary items, and JPEG
 uses the ImageIO/MPF embedded auxiliary disparity JPEG. The luma plane is sent
 to Rust/WASM for TAP metadata interpretation, orientation, normalization, and

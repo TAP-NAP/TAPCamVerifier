@@ -27,57 +27,6 @@ export function renderVerificationError(error: unknown): string {
   `;
 }
 
-export function renderVerificationSuccessGate(result: CombinedVerificationResult): string {
-  return `
-    <div class="verification-modal" role="status" aria-live="polite">
-      <div class="verification-modal-panel">
-        <div class="verification-banner verification-banner--valid">
-          <span class="status-pill status-pill--valid">valid</span>
-          <div>
-            <strong>照片验签通过</strong>
-            <span>该照片由 TAPCam 拍摄</span>
-          </div>
-        </div>
-        <p class="summary verification-gate-note">${escapeHtml(result.fileName)} · ${formatBytes(result.fileSize)} · 正在准备解析深度数据。点击页面任意位置可立即继续。</p>
-      </div>
-    </div>
-  `;
-}
-
-export function renderVerificationAnalysisPrompt(
-  result: CombinedVerificationResult,
-  decision: "pending" | "continue" | "stop" = "pending"
-): string {
-  const disabledAttribute = decision === "pending" ? "" : " disabled";
-  const decisionMessage =
-    decision === "continue"
-      ? "已继续进行深度数据和 3D 点云分析。"
-      : decision === "stop"
-        ? "已停止分析。"
-        : "";
-
-  return `
-    <div class="verification-banner verification-banner--invalid" role="alert">
-      <span class="status-pill status-pill--invalid">invalid</span>
-      <div>
-        <strong>这张照片不是由 TAPCam 拍摄</strong>
-        <span>还要继续进行分析吗？</span>
-      </div>
-    </div>
-    <div class="verification-actions" role="group" aria-label="Continue analysis">
-      <button class="verification-action verification-action--primary" type="button" data-analysis-continue${disabledAttribute}>是</button>
-      <button class="verification-action" type="button" data-analysis-stop${disabledAttribute}>否</button>
-    </div>
-    ${decisionMessage ? `<p class="summary verification-decision">${escapeHtml(decisionMessage)}</p>` : ""}
-    <details class="checks-disclosure verification-details-disclosure">
-      <summary>验签细节</summary>
-      <div class="verification-result-details">
-        ${renderVerificationResult(result)}
-      </div>
-    </details>
-  `;
-}
-
 export function renderVerificationResult(result: CombinedVerificationResult): string {
   const serverStatus = result.server
     ? `${result.server.status}${result.server.reason ? ` · ${result.server.reason}` : ""}`

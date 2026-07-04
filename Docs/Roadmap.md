@@ -89,6 +89,11 @@ Completed verification coverage:
   another browser automation dependency for this item unless the TODO is
   explicitly reopened. While deferred, preserve the existing `src/main.ts`
   dropzone workflow unless there is a direct product need to change it.
+- Real worker-thread separation for verification and analysis is deferred. The
+  current UI starts visual analysis and local/server verification as independent
+  async paths, but they still share the browser main thread for WASM calls. Reopen
+  this only if main-thread contention becomes visible with large Live Photo ZIPs
+  or slower devices.
 
 ## Research Direction: RGB-Predicted Depth Consistency
 
