@@ -51,6 +51,14 @@ export function renderVerificationResult(result: CombinedVerificationResult): st
         <dd>${escapeHtml(result.local.manifest?.containerFormat ?? "unknown")}</dd>
       </div>
       <div>
+        <dt>Media</dt>
+        <dd>${escapeHtml(formatMediaKind(result.local.mediaKind))}</dd>
+      </div>
+      <div>
+        <dt>Live Photo Video</dt>
+        <dd>${escapeHtml(formatLivePhotoVideoStatus(result.local))}</dd>
+      </div>
+      <div>
         <dt>Server</dt>
         <dd>${escapeHtml(serverStatus)}</dd>
       </div>
@@ -80,6 +88,36 @@ export function renderVerificationResult(result: CombinedVerificationResult): st
       </div>
     </details>
   `;
+}
+
+function formatMediaKind(mediaKind: string | undefined): string {
+  if (mediaKind === "livePhoto") {
+    return "Live Photo";
+  }
+  if (mediaKind === "stillPhoto") {
+    return "Still photo";
+  }
+  return mediaKind ?? "unknown";
+}
+
+function formatLivePhotoVideoStatus(local: CombinedVerificationResult["local"]): string {
+  if (local.mediaKind !== "livePhoto") {
+    return "not required";
+  }
+
+  const pairedVideo = local.livePhoto?.pairedVideo;
+  const status = pairedVideo?.status ?? "unknown";
+  const filename = local.livePhoto?.pairedVideoFilename ?? "paired-video.mov";
+  if (status === "matched") {
+    return `${filename} matched`;
+  }
+  if (status === "missing") {
+    return `${filename} missing`;
+  }
+  if (status === "mismatch") {
+    return `${filename} mismatch`;
+  }
+  return `${filename} ${status}`;
 }
 
 function formatServerBoundaryStatus(diagnostic: ServerBoundaryDiagnostic): string {

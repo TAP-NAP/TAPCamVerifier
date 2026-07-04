@@ -1,9 +1,18 @@
 # Local TAPCam Fixtures
 
-Put real TAPCam-exported HEIC/JPG files in this directory for local validation.
+Put real TAPCam-exported HEIC/JPG files and Live Photo verification ZIPs in this
+directory for local validation.
 
 The repository ignores image files here by default because they are real device
 captures. The current local fixture paths are:
 
 - `test/tap-depth-photo.HEIC`
 - `test/tap-depth-photo.JPG`
+- `test/tap-livephoto-airdrop-raw.HEIC`
+- `test/tapcam-live-photo-verification 2.zip`
+
+`tap-livephoto-airdrop-raw.HEIC` is the Live Photo primary photo by itself. It
+should pass primary photo resource checks but fail the Live Photo paired MOV
+resource as missing. `tapcam-live-photo-verification 2.zip` is the full
+byte-preserving verification package with `primary-photo.heic`,
+`paired-video.mov`, and unsigned `tapcam-export.json`.

@@ -8,6 +8,12 @@ interface TapcamVerifierExports extends WebAssembly.Exports {
   tapcam_verify_alloc(len: number): number;
   tapcam_verify_dealloc(ptr: number, len: number): void;
   tapcam_verify_file(ptr: number, len: number): number;
+  tapcam_verify_file_with_paired_video(
+    filePtr: number,
+    fileLen: number,
+    videoPtr: number,
+    videoLen: number
+  ): number;
   tapcam_visualize_depth_u8(
     filePtr: number,
     fileLen: number,
@@ -50,12 +56,30 @@ const ORIGINAL_PREVIEW_MAX_EDGE = 1200;
 let exportsPromise: Promise<TapcamVerifierExports> | null = null;
 
 export async function verifyCaptureLocally(fileBytes: Uint8Array): Promise<LocalVerificationReport> {
+  return verifyCapturePackageLocally(fileBytes);
+}
+
+export async function verifyCapturePackageLocally(
+  fileBytes: Uint8Array,
+  pairedVideoBytes?: Uint8Array
+): Promise<LocalVerificationReport> {
   const wasm = await loadVerifierWasm();
   const inputPtr = wasm.tapcam_verify_alloc(fileBytes.length);
+  const videoPtr = pairedVideoBytes ? wasm.tapcam_verify_alloc(pairedVideoBytes.length) : 0;
 
   try {
     new Uint8Array(wasm.memory.buffer, inputPtr, fileBytes.length).set(fileBytes);
-    const resultPtr = wasm.tapcam_verify_file(inputPtr, fileBytes.length);
+    if (pairedVideoBytes) {
+      new Uint8Array(wasm.memory.buffer, videoPtr, pairedVideoBytes.length).set(pairedVideoBytes);
+    }
+    const resultPtr = pairedVideoBytes
+      ? wasm.tapcam_verify_file_with_paired_video(
+          inputPtr,
+          fileBytes.length,
+          videoPtr,
+          pairedVideoBytes.length
+        )
+      : wasm.tapcam_verify_file(inputPtr, fileBytes.length);
 
     const resultLen = wasm.tapcam_verify_result_len();
     const resultBytes = new Uint8Array(wasm.memory.buffer, resultPtr, resultLen);
@@ -63,6 +87,9 @@ export async function verifyCaptureLocally(fileBytes: Uint8Array): Promise<Local
     return JSON.parse(resultJson) as LocalVerificationReport;
   } finally {
     wasm.tapcam_verify_dealloc(inputPtr, fileBytes.length);
+    if (pairedVideoBytes) {
+      wasm.tapcam_verify_dealloc(videoPtr, pairedVideoBytes.length);
+    }
     wasm.tapcam_verify_clear_result();
   }
 }

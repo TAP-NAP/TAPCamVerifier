@@ -1,15 +1,20 @@
 # Verification Flow
 
-The verifier follows TAPCamDemo `content-binding:v2`. The signed base content is
-the native HEIC/JPG file bytes excluding the fixed proof slot, plus canonical TAP
-manifest payload JSON. The browser does not decode RGB pixels and does not
-convert auxiliary depth to metric Float32 for the base signature.
+The verifier follows TAPCamDemo still-photo `content-binding:v2` and Live Photo
+`content-binding:v3`. Still photos bind the native HEIC/JPG file bytes excluding
+the fixed proof slot plus canonical TAP manifest payload JSON. Live Photos keep
+that primary-photo binding and add the complete `paired-video.mov` bytes as a
+signed resource. The browser does not decode RGB pixels, video frames, or metric
+depth Float32 values for the base signature.
 
 ## Hash Flow
 
 ```mermaid
 flowchart TD
-    A["Upload signed HEIC/JPG"] --> B["Rust/WASM reads uploaded bytes"]
+    A["Upload signed HEIC/JPG or Live Photo ZIP"] --> B["Rust/WASM reads primary photo bytes"]
+    A --> Z["ZIP reader preserves primary-photo.* and paired-video.mov bytes"]
+    Z --> B
+    Z --> Y["Hash paired-video.mov full file for Live Photo v3"]
     B --> C["Detect HEIC/BMFF or JPEG container"]
     B --> D["Locate exactly one TAP proof slot"]
     D --> E["Validate slot magic, version, envelope length, zero padding"]
@@ -24,6 +29,7 @@ flowchart TD
     D --> N["Rebuild proofSlot object"]
     K --> O["Rebuild CaptureContentBinding"]
     M --> O
+    Y --> O
     N --> O
     O --> P["Compare with proofValue.contentDigest"]
     O --> Q["Canonical contentDigest JSON"]
@@ -59,6 +65,10 @@ flowchart TD
   range.
 - `metadataHash`: SHA-256 over canonical `manifest.payload` JSON.
 - Rebuilt `CaptureContentBinding` equality.
+- Live Photo `signedResources` checks for:
+  - `primaryPhoto`;
+  - `tapDepthManifestPayload`;
+  - `pairedLivePhotoVideo`.
 - Rebuilt `CaptureSigningBinding` equality.
 - `signingBindingSHA256` as a browser-recomputed diagnostic hash of the exact
   `signingBinding` sent to the server. If the server echoes the same field, the
@@ -69,8 +79,11 @@ flowchart TD
 
 The verifier does not degrade. Unsupported containers, missing slots, malformed
 padding, non-empty manifest proofs, profile drift, or any hash mismatch produce
-`invalid`. There is no `blocked` state for RGB/depth decoding in the v2 base
-signature path because decoded pixels are not signature inputs.
+`invalid`. For Live Photo v2/v3 captures, a single HEIC/JPG without
+`paired-video.mov` is reported as a Live Photo with a missing video resource,
+not as a complete still-photo proof. There is no `blocked` state for RGB/depth
+decoding in the base signature path because decoded pixels are not signature
+inputs.
 
 ## Server Boundary
 

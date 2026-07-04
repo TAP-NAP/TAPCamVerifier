@@ -4,6 +4,7 @@ import type { DecodedDepthPlane, DepthPanelState, DisplayOrientationReference } 
 import { mountGeometryViewer, type GeometryViewerCleanup } from "./geometry/geometryViewer";
 import { decodeRgbForPixelProjection, projectSignedDepthPixels } from "./geometry/pixelProjection";
 import type { DecodedRgbImage, PixelProjectionState } from "./geometry/types";
+import { resolveCaptureInput, type CaptureInput } from "./input/captureInput";
 import { visualizeOriginalHeicFallback } from "./original/originalVisualization";
 import type { OriginalPreviewResult } from "./original/types";
 import {
@@ -19,7 +20,7 @@ import {
   renderVerificationError,
   renderVerificationResult
 } from "./ui/rendering";
-import { verifyCaptureLocally, visualizeDepthPlane } from "./wasm/tapcamVerifier";
+import { verifyCapturePackageLocally, visualizeDepthPlane } from "./wasm/tapcamVerifier";
 import { verifyCaptureSignature } from "./verifier/serverVerify";
 import { buildServerBoundaryDiagnostic } from "./verifier/serverBoundaryDiagnostic";
 import type {
@@ -37,10 +38,10 @@ if (!app) {
 app.innerHTML = `
   <section class="workspace">
     <div class="dropzone" id="dropzone">
-      <input id="fileInput" class="file-input" type="file" accept=".heic,.heif,.jpg,.jpeg,image/heic,image/heif,image/jpeg" />
+      <input id="fileInput" class="file-input" type="file" accept=".heic,.heif,.jpg,.jpeg,.zip,image/heic,image/heif,image/jpeg,application/zip" />
       <div class="dropzone-copy">
         <h1>TAPCam Verifier</h1>
-        <p>Drop a signed HEIC or JPG here.</p>
+        <p>Drop a signed HEIC, JPG, or Live Photo ZIP here.</p>
       </div>
     </div>
     <section class="visualization" id="visualization" hidden></section>
@@ -143,13 +144,16 @@ async function verifyFile(file: File): Promise<void> {
 
   try {
     const fileBytes = new Uint8Array(await file.arrayBuffer());
+    const captureInput = resolveCaptureInput(file, fileBytes);
     if (runId === activeRunId) {
-      activeFileBytes = fileBytes;
-      requestOriginalFallback(runId, file.name);
+      activeFileBytes = captureInput.photoBytes;
+      activeObjectUrl = URL.createObjectURL(captureInput.photoFile);
+      renderVisualizationScaffold(captureInput.photoFile, activeObjectUrl);
+      requestOriginalFallback(runId, captureInput.photoFile.name);
       requestDepthVisualization(runId);
-      requestRgbAnalysis(runId, file);
+      requestRgbAnalysis(runId, captureInput.photoFile);
     }
-    const result = await verifyFileBytes(file, fileBytes);
+    const result = await verifyFileBytes(captureInput);
     if (runId === activeRunId) {
       resultEl.innerHTML = renderVerificationResult(result);
     }
@@ -188,9 +192,10 @@ function beginSelectedFile(file: File): number {
   if (activeObjectUrl) {
     URL.revokeObjectURL(activeObjectUrl);
   }
-  activeObjectUrl = URL.createObjectURL(file);
+  activeObjectUrl = null;
 
-  renderVisualizationScaffold(file, activeObjectUrl);
+  visualizationEl.hidden = true;
+  visualizationEl.innerHTML = "";
   updateDepthPanel({ status: "loading" });
   updateGeometryPanel({ status: "loading" });
   resultEl.innerHTML = renderVerificationBusy(file.name, file.size);
@@ -498,14 +503,17 @@ function cleanupGeometryViewer(): void {
   activeGeometryViewerCleanup = null;
 }
 
-async function verifyFileBytes(file: File, fileBytes: Uint8Array): Promise<CombinedVerificationResult> {
-  const local = await verifyCaptureLocally(fileBytes);
+async function verifyFileBytes(captureInput: CaptureInput): Promise<CombinedVerificationResult> {
+  const local = await verifyCapturePackageLocally(
+    captureInput.photoBytes,
+    captureInput.pairedVideoBytes
+  );
   const localFailure = hasLocalFailure(local);
 
   if (localFailure || !local.serverRequest) {
     return {
-      fileName: file.name,
-      fileSize: file.size,
+      fileName: captureInput.fileName,
+      fileSize: captureInput.fileSize,
       local,
       server: null,
       serverError: localFailure ? "not run: local verification failed" : "not run: missing server request",
@@ -528,8 +536,8 @@ async function verifyFileBytes(file: File, fileBytes: Uint8Array): Promise<Combi
   }
 
   return {
-    fileName: file.name,
-    fileSize: file.size,
+    fileName: captureInput.fileName,
+    fileSize: captureInput.fileSize,
     local,
     server,
     serverError,

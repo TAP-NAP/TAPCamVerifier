@@ -45,6 +45,7 @@ export interface ServerBoundaryDiagnostic {
 export interface LocalVerificationReport {
   status: "invalid" | "valid" | string;
   summary: string;
+  mediaKind?: "stillPhoto" | "livePhoto" | string;
   captureId: string | null;
   capturedAt: string | null;
   manifest?: {
@@ -52,7 +53,17 @@ export interface LocalVerificationReport {
     schemaId?: string | null;
     proofCount?: number;
     capture?: unknown;
+    livePhoto?: unknown;
   };
+  livePhoto?: {
+    pairedVideoFilename?: string;
+    pairedVideo?: {
+      status?: "matched" | "missing" | "mismatch" | string;
+      byteCount?: number | null;
+      actualSHA256?: string | null;
+      expectedSHA256?: string | null;
+    };
+  } | null;
   proofSlot?: {
     kind?: string;
     offset?: number;
@@ -71,11 +82,13 @@ export interface LocalVerificationReport {
     metadataSHA256?: string;
     bodySHA256?: string;
     signingBindingSHA256?: string;
+    pairedVideoSHA256?: string | null;
   };
   expected?: {
     assetSHA256?: string;
     metadataSHA256?: string;
     bodySHA256?: string;
+    pairedVideoSHA256?: string | null;
     contentDigest?: unknown;
   };
   serverRequest: CaptureSignatureVerifyRequest | null;

@@ -118,6 +118,31 @@ describe("renderVerificationResult", () => {
     expect(html).toContain("not run");
     expect(html).toContain("Failed to fetch");
   });
+
+  it("renders Live Photo paired video status", () => {
+    const html = renderVerificationResult({
+      ...result,
+      local: {
+        ...result.local,
+        mediaKind: "livePhoto",
+        livePhoto: {
+          pairedVideoFilename: "paired-video.mov",
+          pairedVideo: {
+            status: "missing",
+            expectedSHA256: "expected",
+            actualSHA256: null,
+            byteCount: null
+          }
+        }
+      },
+      finalStatus: "invalid"
+    });
+
+    expect(html).toContain("Media");
+    expect(html).toContain("Live Photo");
+    expect(html).toContain("Live Photo Video");
+    expect(html).toContain("paired-video.mov missing");
+  });
 });
 
 describe("renderDepthPanel", () => {

@@ -1,6 +1,6 @@
 # Engineering Scorecard
 
-Date: 2026-06-24
+Date: 2026-07-04
 
 Overall: 8.9 / 10
 
@@ -8,11 +8,11 @@ Overall: 8.9 / 10
 
 | Area | Score | Notes |
 | --- | ---: | --- |
-| Verification correctness | 9.1 | Content-binding v2 local verification passes the real `test/tap-depth-photo.HEIC` and `test/tap-depth-photo.JPG` fixtures. Asset hash, metadata hash, proof slot, content digest, and signing binding are recomputed in Rust/WASM. |
-| Rust/WASM boundary | 8.8 | Proof-slot parsing, canonical JSON hashing, asset hashing, and final hard-binding checks live in Rust. TypeScript now handles only UI and WASM loading. |
+| Verification correctness | 9.2 | Content-binding v2 still-photo local verification passes the real `test/tap-depth-photo.HEIC` and `test/tap-depth-photo.JPG` fixtures. Content-binding v3 Live Photo verification recomputes primary-photo, manifest-payload, and paired-MOV resources; the real AirDrop primary-photo fixture reports missing MOV, and the full verification ZIP reports matched MOV locally. Asset hash, metadata hash, proof slot, content digest, and signing binding are recomputed in Rust/WASM. |
+| Rust/WASM boundary | 8.9 | Proof-slot parsing, canonical JSON hashing, asset hashing, paired-MOV hashing, and final hard-binding checks live in Rust. TypeScript handles ZIP input resolution, UI, and WASM loading. |
 | Static deployment fit | 8.8 | Vite uses a relative asset base. WASM is a static asset. Server verify is called through the production TAP-NAP endpoint with production-origin CORS. |
-| Documentation readability | 8.7 | README, Mermaid flow, strict verifier rule, fixture policy, scorecard, and DevLog now describe the v2 hard-binding flow. |
-| Test coverage | 8.4 | Rust unit tests cover BMFF/JPEG slot parsing, synthetic content binding, ImageIO RDF-attribute XMP manifest parsing, real HEIC/JPG fixtures, and point-cloud quality flags. TypeScript tests cover rendering, point-cloud filtering, WASM risk-flag decoding, server calls, and the server-boundary echo diagnostic. TypeScript typecheck, production build, and a manual Chrome upload verification are part of the gate. Browser drag/drop automation is deferred unless explicitly reopened. |
+| Documentation readability | 8.8 | README, Mermaid flow, strict verifier rule, fixture policy, scorecard, and DevLog now describe the v2 still-photo and v3 Live Photo hard-binding flow. |
+| Test coverage | 8.6 | Rust unit tests cover BMFF/JPEG slot parsing, synthetic still-photo and Live Photo content binding, missing/mismatched paired MOV handling, ImageIO RDF-attribute XMP manifest parsing, real HEIC/JPG fixtures, and point-cloud quality flags. TypeScript tests cover ZIP input resolution, rendering, point-cloud filtering, WASM risk-flag decoding, server calls, and the server-boundary echo diagnostic. TypeScript typecheck, production build, and a manual Chrome upload verification are part of the gate. Browser drag/drop automation is deferred unless explicitly reopened. |
 | Extensibility | 8.1 | The base verifier is decoupled from image/depth analysis. Future decoded-depth, geometry, or Gaussian Splatting modules can be added as separate WASM modules after hard-binding verification. |
 
 ## Raise The Score Next

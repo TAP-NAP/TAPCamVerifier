@@ -9,11 +9,21 @@ use std::slice;
 static mut LAST_RESULT: Option<Vec<u8>> = None;
 
 const CONTENT_BINDING_SCHEMA_ID: &str = "urn:tapnap:tapcam:content-binding:v2";
+const LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID: &str = "urn:tapnap:tapcam:content-binding:v3";
 const MANIFEST_SCHEMA_ID: &str = "urn:tapnap:tapcam:depth-manifest:v1";
+const LIVE_PHOTO_MANIFEST_SCHEMA_ID: &str = "urn:tapnap:tapcam:depth-manifest:v2";
 const MANIFEST_MEDIA_TYPE: &str = "application/vnd.tapnap.depth-manifest+json;version=1";
+const LIVE_PHOTO_MANIFEST_MEDIA_TYPE: &str =
+    "application/vnd.tapnap.depth-manifest+json;version=2";
+const MANIFEST_PAYLOAD_MEDIA_TYPE_V1: &str =
+    "application/vnd.tapnap.depth-manifest.payload+json;version=1";
+const MANIFEST_PAYLOAD_MEDIA_TYPE_V2: &str =
+    "application/vnd.tapnap.depth-manifest.payload+json;version=2";
 const MANIFEST_XMP_NAMESPACE_URI: &str = "urn:tapnap:tapcam:depth:1.0";
 const MANIFEST_XMP_PREFIX: &str = "tapdepth";
 const MANIFEST_XMP_PATH: &str = "tapdepth:Manifest";
+const LIVE_PHOTO_PAIRED_VIDEO_FILENAME: &str = "paired-video.mov";
+const QUICKTIME_MOVIE_MEDIA_TYPE: &str = "com.apple.quicktime-movie";
 const PROOF_TYPE: &str = "appAttestAssertion";
 const PROOF_ALGORITHM: &str = "TAPCam.AppAttestCaptureSignature.v1";
 const SIGNING_SCHEMA_ID: &str = "urn:tapnap:tapcam:app-attest-capture-signing:v1";
@@ -52,6 +62,22 @@ pub unsafe extern "C" fn tapcam_verify_dealloc(ptr: *mut u8, len: usize) {
 pub unsafe extern "C" fn tapcam_verify_file(ptr: *const u8, len: usize) -> *const u8 {
     let bytes = slice::from_raw_parts(ptr, len);
     store_result(verify_capture_bytes(bytes))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tapcam_verify_file_with_paired_video(
+    file_ptr: *const u8,
+    file_len: usize,
+    video_ptr: *const u8,
+    video_len: usize,
+) -> *const u8 {
+    let bytes = slice::from_raw_parts(file_ptr, file_len);
+    let paired_video = if video_ptr.is_null() || video_len == 0 {
+        None
+    } else {
+        Some(slice::from_raw_parts(video_ptr, video_len))
+    };
+    store_result(verify_capture_package_bytes(bytes, paired_video))
 }
 
 #[no_mangle]
@@ -196,7 +222,11 @@ pub fn verify_heic_bytes(bytes: &[u8]) -> Value {
 }
 
 pub fn verify_capture_bytes(bytes: &[u8]) -> Value {
-    match verify_capture_bytes_inner(bytes) {
+    verify_capture_package_bytes(bytes, None)
+}
+
+pub fn verify_capture_package_bytes(bytes: &[u8], paired_video: Option<&[u8]>) -> Value {
+    match verify_capture_bytes_inner(bytes, paired_video) {
         Ok(report) => report,
         Err(error) => json!({
             "status": "invalid",
@@ -302,7 +332,7 @@ fn pixel_projection_result(result: Result<Value, String>) -> Value {
     }
 }
 
-fn verify_capture_bytes_inner(bytes: &[u8]) -> Result<Value, String> {
+fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Result<Value, String> {
     let container = detect_container(bytes)?;
     let slot = locate_proof_slot(bytes, container)?;
     let proof_envelope = read_proof_envelope(bytes, &slot)?;
@@ -334,28 +364,18 @@ fn verify_capture_bytes_inner(bytes: &[u8]) -> Result<Value, String> {
     let signing_binding = field(&proof_value, "signingBinding")?;
     let assertion_object = string_field(&proof_value, "assertionObject")?;
     let proof_value_key_id = string_field(&proof_value, "keyId")?;
+    let manifest_schema_id = schema.get("id").and_then(Value::as_str).unwrap_or_default();
+    let content_schema_id = content_digest
+        .get("schemaID")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let is_live_photo = manifest_schema_id == LIVE_PHOTO_MANIFEST_SCHEMA_ID
+        || content_schema_id == LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID;
 
     let asset_hash_actual =
         sha256_base64url_excluding(bytes, slot.container_offset, slot.container_length)?;
     let payload_canonical = canonical_json_bytes(payload)?;
     let metadata_hash_actual = sha256_base64url(&payload_canonical);
-    let recomputed_digest = recompute_content_digest(
-        container,
-        bytes.len(),
-        &slot,
-        manifest_capture_id,
-        manifest_captured_at,
-        &asset_hash_actual,
-        &metadata_hash_actual,
-    );
-    let digest_canonical = canonical_json_bytes(&recomputed_digest)?;
-    let body_sha_actual = sha256_base64url(&digest_canonical);
-    let expected_signing_binding = json!({
-        "bodySHA256": body_sha_actual,
-        "captureID": manifest_capture_id,
-        "operation": SIGNING_OPERATION,
-        "schemaID": SIGNING_SCHEMA_ID
-    });
     let signing_binding_sha256 = sha256_base64url(&canonical_json_bytes(signing_binding)?);
 
     let proof_content_capture_id = content_digest
@@ -384,174 +404,279 @@ fn verify_capture_bytes_inner(bytes: &[u8]) -> Result<Value, String> {
         .get("captureID")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let mut recomputed_digest = None;
+    let mut body_sha_actual = None;
+    let mut expected_signing_binding = None;
+    let mut paired_video_hash_actual = None;
+    let mut live_photo_paired_status = None;
 
-    let checks = vec![
-        check_pass(
-            "proof-slot-present",
-            "Locate TAP proof slot",
-            &format!(
-                "{} at offset {}, length {}.",
-                slot.kind, slot.container_offset, slot.container_length
-            ),
-        ),
-        check_pass(
-            "proof-slot-envelope",
-            "Read proof slot envelope",
-            "Slot magic, version, envelope length, and zero padding are valid.",
-        ),
-        check_pass(
-            "manifest-present",
-            "Read XMP tapdepth:Manifest",
-            "Manifest JSON was found in the uploaded photo.",
-        ),
-        schema_check(schema),
-        manifest_proofs_empty_check(proofs.len()),
-        capture_policy_check(container, payload.get("capture")),
-        equality_check(
-            "proof-type",
-            "Require appAttestAssertion proof",
+    if is_live_photo {
+        let primary_resource = live_photo_primary_resource(
+            container,
+            bytes.len(),
+            &slot,
+            &asset_hash_actual,
+        );
+        let manifest_resource = live_photo_manifest_resource(
+            payload_canonical.len(),
+            &metadata_hash_actual,
+        );
+        if let Some(video_bytes) = paired_video {
+            let video_hash = sha256_base64url(video_bytes);
+            let video_resource = live_photo_paired_video_resource(video_bytes.len(), &video_hash);
+            let digest = recompute_live_photo_content_digest(
+                container,
+                bytes.len(),
+                &slot,
+                manifest_capture_id,
+                manifest_captured_at,
+                &asset_hash_actual,
+                &metadata_hash_actual,
+                payload_canonical.len(),
+                &video_hash,
+                video_bytes.len(),
+            );
+            let body_sha = sha256_base64url(&canonical_json_bytes(&digest)?);
+            expected_signing_binding = Some(json!({
+                "bodySHA256": body_sha,
+                "captureID": manifest_capture_id,
+                "operation": SIGNING_OPERATION,
+                "schemaID": SIGNING_SCHEMA_ID
+            }));
+            body_sha_actual = Some(body_sha);
+            recomputed_digest = Some(digest);
+            paired_video_hash_actual = Some(video_hash.clone());
+
+            let expected_video_hash = signed_resource_by_role(content_digest, "pairedLivePhotoVideo")
+                .and_then(|resource| resource.get("value"))
+                .and_then(Value::as_str);
+            live_photo_paired_status = Some(
+                if expected_video_hash == Some(video_hash.as_str())
+                    && signed_resource_by_role(content_digest, "pairedLivePhotoVideo")
+                        == Some(&video_resource)
+                {
+                    "matched"
+                } else {
+                    "mismatch"
+                },
+            );
+        } else {
+            live_photo_paired_status = Some("missing");
+        }
+
+        let mut live_checks = Vec::new();
+        live_checks.push(live_photo_payload_check(payload.get("livePhoto")));
+        live_checks.push(optional_json_equality_check(
+            "live-photo-primary-resource",
+            "Recompute Live Photo primary photo resource",
+            &primary_resource,
+            signed_resource_by_role(content_digest, "primaryPhoto"),
+        ));
+        live_checks.push(optional_json_equality_check(
+            "live-photo-manifest-resource",
+            "Recompute Live Photo manifest payload resource",
+            &manifest_resource,
+            signed_resource_by_role(content_digest, "tapDepthManifestPayload"),
+        ));
+        if let Some(video_bytes) = paired_video {
+            let video_hash = paired_video_hash_actual.as_deref().unwrap_or_default();
+            let video_resource = live_photo_paired_video_resource(video_bytes.len(), video_hash);
+            live_checks.push(optional_json_equality_check(
+                "live-photo-paired-video-resource",
+                "Recompute Live Photo paired MOV resource",
+                &video_resource,
+                signed_resource_by_role(content_digest, "pairedLivePhotoVideo"),
+            ));
+        } else {
+            live_checks.push(json!({
+                "id": "live-photo-paired-video-resource",
+                "label": "Require Live Photo paired MOV resource",
+                "status": "fail",
+                "detail": "This capture is signed as a Live Photo, but no paired-video.mov bytes were supplied."
+            }));
+        }
+
+        let mut checks = common_verification_checks(
+            &slot,
+            schema,
+            is_live_photo,
+            proofs.len(),
+            container,
+            payload.get("capture"),
             proof_type,
-            PROOF_TYPE,
-        ),
-        equality_check(
-            "proof-algorithm",
-            "Require TAPCam signature algorithm",
             proof_algorithm,
-            PROOF_ALGORITHM,
-        ),
-        non_empty_check("proof-key", "Require proof key id", proof_key_id),
-        equality_check(
-            "proof-key-binding",
-            "Proof key id matches proof value key id",
             proof_key_id,
             proof_value_key_id,
-        ),
-        equality_check(
-            "proof-created-at",
-            "Proof timestamp matches capture digest",
             proof_created_at,
             manifest_captured_at,
-        ),
-        equality_check(
-            "content-binding-schema",
-            "Require content-binding v2 schema",
-            content_digest
-                .get("schemaID")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            CONTENT_BINDING_SCHEMA_ID,
-        ),
-        equality_check(
-            "manifest-capture-id",
-            "Manifest payload id matches content digest",
+            content_schema_id,
             manifest_capture_id,
             proof_content_capture_id,
-        ),
-        equality_check(
-            "manifest-captured-at",
-            "Manifest capturedAt matches content digest",
-            manifest_captured_at,
             proof_content_captured_at,
-        ),
-        equality_check(
-            "capture-id",
-            "Capture id matches signing binding",
-            manifest_capture_id,
             signing_capture_id,
-        ),
-        equality_check(
-            "asset-hash",
-            "Recompute asset hash excluding proof slot",
             &asset_hash_actual,
             proof_asset_hash,
-        ),
-        equality_check(
-            "metadata-hash",
-            "Recompute manifest payload metadata hash",
             &metadata_hash_actual,
             proof_metadata_hash,
-        ),
-        equality_check(
-            "body-sha",
-            "Recompute signingBinding.bodySHA256",
-            &body_sha_actual,
-            body_sha_expected,
-        ),
-        json_equality_check(
-            "content-digest",
-            "Rebuild canonical content digest",
-            &recomputed_digest,
-            content_digest,
-        ),
-        json_equality_check(
-            "signing-binding",
-            "Rebuild signing binding",
-            &expected_signing_binding,
-            signing_binding,
-        ),
-        non_empty_check(
+        );
+        checks.extend(live_checks);
+        if let (Some(body_sha), Some(expected_binding), Some(digest)) = (
+            body_sha_actual.as_deref(),
+            expected_signing_binding.as_ref(),
+            recomputed_digest.as_ref(),
+        ) {
+            checks.push(equality_check(
+                "body-sha",
+                "Recompute signingBinding.bodySHA256",
+                body_sha,
+                body_sha_expected,
+            ));
+            checks.push(json_equality_check(
+                "content-digest",
+                "Rebuild canonical Live Photo content digest",
+                digest,
+                content_digest,
+            ));
+            checks.push(json_equality_check(
+                "signing-binding",
+                "Rebuild signing binding",
+                expected_binding,
+                signing_binding,
+            ));
+        }
+        checks.push(non_empty_check(
             "assertion-object",
             "Require App Attest assertion object",
             assertion_object,
-        ),
-    ];
+        ));
 
-    let has_failed = checks.iter().any(|check| check["status"] == "fail");
-    let status = if has_failed { "invalid" } else { "valid" };
-    let summary = if has_failed {
-        "The TAP content binding failed local self-checks."
-    } else {
-        "All local content binding checks passed."
-    };
-    let server_request = if has_failed {
-        Value::Null
-    } else {
-        json!({
-            "keyId": proof_value_key_id,
-            "assertionObject": assertion_object,
-            "signingBinding": signing_binding
-        })
-    };
+        return Ok(build_verification_report(
+            is_live_photo,
+            container,
+            schema,
+            proofs.len(),
+            payload,
+            manifest_capture_id,
+            manifest_captured_at,
+            &slot,
+            proof_type,
+            proof_algorithm,
+            proof_key_id,
+            proof_created_at,
+            &asset_hash_actual,
+            &metadata_hash_actual,
+            body_sha_actual.as_deref(),
+            &signing_binding_sha256,
+            paired_video_hash_actual.as_deref(),
+            proof_asset_hash,
+            proof_metadata_hash,
+            body_sha_expected,
+            content_digest,
+            proof_value_key_id,
+            assertion_object,
+            signing_binding,
+            live_photo_paired_status,
+            paired_video.map(|bytes| bytes.len()),
+            checks,
+        ));
+    }
 
-    Ok(json!({
-        "status": status,
-        "summary": summary,
-        "captureId": manifest_capture_id,
-        "capturedAt": manifest_captured_at,
-        "manifest": {
-            "containerFormat": container.as_report_str(),
-            "schemaId": schema.get("id").and_then(Value::as_str),
-            "proofCount": proofs.len(),
-            "capture": payload.get("capture")
-        },
-        "proofSlot": {
-            "kind": slot.kind,
-            "offset": slot.container_offset,
-            "length": slot.container_length,
-            "payloadOffset": slot.payload_offset,
-            "payloadLength": slot.payload_length
-        },
-        "proof": {
-            "type": proof_type,
-            "algorithm": proof_algorithm,
-            "keyId": proof_key_id,
-            "createdAt": proof_created_at
-        },
-        "recomputed": {
-            "assetSHA256": asset_hash_actual,
-            "metadataSHA256": metadata_hash_actual,
-            "bodySHA256": body_sha_actual,
-            "signingBindingSHA256": signing_binding_sha256
-        },
-        "expected": {
-            "assetSHA256": proof_asset_hash,
-            "metadataSHA256": proof_metadata_hash,
-            "bodySHA256": body_sha_expected,
-            "contentDigest": content_digest
-        },
-        "serverRequest": server_request,
-        "checks": checks
-    }))
+    let digest = recompute_content_digest(
+        container,
+        bytes.len(),
+        &slot,
+        manifest_capture_id,
+        manifest_captured_at,
+        &asset_hash_actual,
+        &metadata_hash_actual,
+    );
+    let body_sha = sha256_base64url(&canonical_json_bytes(&digest)?);
+    let signing_binding_expected = json!({
+        "bodySHA256": body_sha,
+        "captureID": manifest_capture_id,
+        "operation": SIGNING_OPERATION,
+        "schemaID": SIGNING_SCHEMA_ID
+    });
+    recomputed_digest = Some(digest);
+    body_sha_actual = Some(body_sha);
+    expected_signing_binding = Some(signing_binding_expected);
+
+    let mut checks = common_verification_checks(
+        &slot,
+        schema,
+        is_live_photo,
+        proofs.len(),
+        container,
+        payload.get("capture"),
+        proof_type,
+        proof_algorithm,
+        proof_key_id,
+        proof_value_key_id,
+        proof_created_at,
+        manifest_captured_at,
+        content_schema_id,
+        manifest_capture_id,
+        proof_content_capture_id,
+        proof_content_captured_at,
+        signing_capture_id,
+        &asset_hash_actual,
+        proof_asset_hash,
+        &metadata_hash_actual,
+        proof_metadata_hash,
+    );
+    checks.push(equality_check(
+        "body-sha",
+        "Recompute signingBinding.bodySHA256",
+        body_sha_actual.as_deref().unwrap_or_default(),
+        body_sha_expected,
+    ));
+    checks.push(json_equality_check(
+        "content-digest",
+        "Rebuild canonical content digest",
+        recomputed_digest.as_ref().unwrap(),
+        content_digest,
+    ));
+    checks.push(json_equality_check(
+        "signing-binding",
+        "Rebuild signing binding",
+        expected_signing_binding.as_ref().unwrap(),
+        signing_binding,
+    ));
+    checks.push(non_empty_check(
+        "assertion-object",
+        "Require App Attest assertion object",
+        assertion_object,
+    ));
+
+    Ok(build_verification_report(
+        is_live_photo,
+        container,
+        schema,
+        proofs.len(),
+        payload,
+        manifest_capture_id,
+        manifest_captured_at,
+        &slot,
+        proof_type,
+        proof_algorithm,
+        proof_key_id,
+        proof_created_at,
+        &asset_hash_actual,
+        &metadata_hash_actual,
+        body_sha_actual.as_deref(),
+        &signing_binding_sha256,
+        paired_video_hash_actual.as_deref(),
+        proof_asset_hash,
+        proof_metadata_hash,
+        body_sha_expected,
+        content_digest,
+        proof_value_key_id,
+        assertion_object,
+        signing_binding,
+        live_photo_paired_status,
+        paired_video.map(|bytes| bytes.len()),
+        checks,
+    ))
 }
 
 fn visualize_depth_u8_inner(
@@ -1478,6 +1603,13 @@ impl Container {
             Container::Jpeg => "jpeg",
         }
     }
+
+    fn uniform_type_identifier(self) -> &'static str {
+        match self {
+            Container::Heic => "public.heic",
+            Container::Jpeg => "public.jpeg",
+        }
+    }
 }
 
 struct ProofSlot {
@@ -1502,40 +1634,373 @@ fn recompute_content_digest(
         "manifestSchemaID": MANIFEST_SCHEMA_ID,
         "captureID": capture_id,
         "capturedAt": captured_at,
-        "assetHash": {
-            "kind": "c2pa-style-format-native-byte-ranges",
-            "fileContainer": container.file_container(),
-            "algorithm": "SHA-256",
-            "byteCount": byte_count,
-            "value": asset_hash,
-            "excludedRanges": [
-                {
-                    "offset": slot.container_offset,
-                    "length": slot.container_length,
-                    "reason": "tap-proof-slot"
-                }
-            ]
+        "assetHash": asset_hash_object(container, byte_count, slot, asset_hash),
+        "metadataHash": metadata_hash_object(MANIFEST_PAYLOAD_MEDIA_TYPE_V1, metadata_hash),
+        "proofSlot": proof_slot_object(slot),
+        "depthResource": depth_resource_object()
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn recompute_live_photo_content_digest(
+    container: Container,
+    byte_count: usize,
+    slot: &ProofSlot,
+    capture_id: &str,
+    captured_at: &str,
+    asset_hash: &str,
+    metadata_hash: &str,
+    payload_byte_count: usize,
+    paired_video_hash: &str,
+    paired_video_byte_count: usize,
+) -> Value {
+    json!({
+        "schemaID": LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID,
+        "manifestSchemaID": LIVE_PHOTO_MANIFEST_SCHEMA_ID,
+        "captureID": capture_id,
+        "capturedAt": captured_at,
+        "assetHash": asset_hash_object(container, byte_count, slot, asset_hash),
+        "metadataHash": metadata_hash_object(MANIFEST_PAYLOAD_MEDIA_TYPE_V2, metadata_hash),
+        "proofSlot": proof_slot_object(slot),
+        "depthResource": depth_resource_object(),
+        "signedResources": [
+            live_photo_primary_resource(container, byte_count, slot, asset_hash),
+            live_photo_manifest_resource(payload_byte_count, metadata_hash),
+            live_photo_paired_video_resource(paired_video_byte_count, paired_video_hash)
+        ]
+    })
+}
+
+fn asset_hash_object(
+    container: Container,
+    byte_count: usize,
+    slot: &ProofSlot,
+    asset_hash: &str,
+) -> Value {
+    json!({
+        "kind": "c2pa-style-format-native-byte-ranges",
+        "fileContainer": container.file_container(),
+        "algorithm": "SHA-256",
+        "byteCount": byte_count,
+        "value": asset_hash,
+        "excludedRanges": [
+            {
+                "offset": slot.container_offset,
+                "length": slot.container_length,
+                "reason": "tap-proof-slot"
+            }
+        ]
+    })
+}
+
+fn metadata_hash_object(media_type: &str, metadata_hash: &str) -> Value {
+    json!({
+        "kind": "canonical-json",
+        "mediaType": media_type,
+        "algorithm": "SHA-256",
+        "value": metadata_hash
+    })
+}
+
+fn proof_slot_object(slot: &ProofSlot) -> Value {
+    json!({
+        "kind": slot.kind,
+        "offset": slot.container_offset,
+        "length": slot.container_length,
+        "payloadOffset": slot.payload_offset,
+        "payloadLength": slot.payload_length,
+        "padding": "zero-filled-after-envelope"
+    })
+}
+
+fn depth_resource_object() -> Value {
+    json!({
+        "presence": "required",
+        "binding": "covered-by-assetHash",
+        "interpretation": "not-part-of-base-signature",
+        "platformPresenceCheck": "AVDepthData-readback"
+    })
+}
+
+fn live_photo_primary_resource(
+    container: Container,
+    byte_count: usize,
+    slot: &ProofSlot,
+    asset_hash: &str,
+) -> Value {
+    let asset = asset_hash_object(container, byte_count, slot, asset_hash);
+    json!({
+        "role": "primaryPhoto",
+        "kind": asset["kind"],
+        "mediaType": container.uniform_type_identifier(),
+        "algorithm": asset["algorithm"],
+        "byteCount": asset["byteCount"],
+        "value": asset["value"],
+        "binding": "format-native-byte-ranges",
+        "excludedRanges": asset["excludedRanges"]
+    })
+}
+
+fn live_photo_manifest_resource(payload_byte_count: usize, metadata_hash: &str) -> Value {
+    json!({
+        "role": "tapDepthManifestPayload",
+        "kind": "canonical-json",
+        "mediaType": MANIFEST_PAYLOAD_MEDIA_TYPE_V2,
+        "algorithm": "SHA-256",
+        "byteCount": payload_byte_count,
+        "value": metadata_hash,
+        "binding": "canonical-json"
+    })
+}
+
+fn live_photo_paired_video_resource(byte_count: usize, video_hash: &str) -> Value {
+    json!({
+        "role": "pairedLivePhotoVideo",
+        "kind": "format-native-full-file",
+        "mediaType": QUICKTIME_MOVIE_MEDIA_TYPE,
+        "algorithm": "SHA-256",
+        "byteCount": byte_count,
+        "value": video_hash,
+        "binding": "full-file"
+    })
+}
+
+fn signed_resource_by_role<'a>(content_digest: &'a Value, role: &str) -> Option<&'a Value> {
+    content_digest
+        .get("signedResources")?
+        .as_array()?
+        .iter()
+        .find(|resource| resource.get("role").and_then(Value::as_str) == Some(role))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn common_verification_checks(
+    slot: &ProofSlot,
+    schema: &Value,
+    is_live_photo: bool,
+    proof_count: usize,
+    container: Container,
+    capture: Option<&Value>,
+    proof_type: &str,
+    proof_algorithm: &str,
+    proof_key_id: &str,
+    proof_value_key_id: &str,
+    proof_created_at: &str,
+    manifest_captured_at: &str,
+    content_schema_id: &str,
+    manifest_capture_id: &str,
+    proof_content_capture_id: &str,
+    proof_content_captured_at: &str,
+    signing_capture_id: &str,
+    asset_hash_actual: &str,
+    proof_asset_hash: &str,
+    metadata_hash_actual: &str,
+    proof_metadata_hash: &str,
+) -> Vec<Value> {
+    vec![
+        check_pass(
+            "proof-slot-present",
+            "Locate TAP proof slot",
+            &format!(
+                "{} at offset {}, length {}.",
+                slot.kind, slot.container_offset, slot.container_length
+            ),
+        ),
+        check_pass(
+            "proof-slot-envelope",
+            "Read proof slot envelope",
+            "Slot magic, version, envelope length, and zero padding are valid.",
+        ),
+        check_pass(
+            "manifest-present",
+            "Read XMP tapdepth:Manifest",
+            "Manifest JSON was found in the uploaded photo.",
+        ),
+        schema_check(schema, is_live_photo),
+        manifest_proofs_empty_check(proof_count),
+        capture_policy_check(container, capture),
+        equality_check(
+            "proof-type",
+            "Require appAttestAssertion proof",
+            proof_type,
+            PROOF_TYPE,
+        ),
+        equality_check(
+            "proof-algorithm",
+            "Require TAPCam signature algorithm",
+            proof_algorithm,
+            PROOF_ALGORITHM,
+        ),
+        non_empty_check("proof-key", "Require proof key id", proof_key_id),
+        equality_check(
+            "proof-key-binding",
+            "Proof key id matches proof value key id",
+            proof_key_id,
+            proof_value_key_id,
+        ),
+        equality_check(
+            "proof-created-at",
+            "Proof timestamp matches capture digest",
+            proof_created_at,
+            manifest_captured_at,
+        ),
+        equality_check(
+            "content-binding-schema",
+            if is_live_photo {
+                "Require content-binding v3 schema"
+            } else {
+                "Require content-binding v2 schema"
+            },
+            content_schema_id,
+            if is_live_photo {
+                LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID
+            } else {
+                CONTENT_BINDING_SCHEMA_ID
+            },
+        ),
+        equality_check(
+            "manifest-capture-id",
+            "Manifest payload id matches content digest",
+            manifest_capture_id,
+            proof_content_capture_id,
+        ),
+        equality_check(
+            "manifest-captured-at",
+            "Manifest capturedAt matches content digest",
+            manifest_captured_at,
+            proof_content_captured_at,
+        ),
+        equality_check(
+            "capture-id",
+            "Capture id matches signing binding",
+            manifest_capture_id,
+            signing_capture_id,
+        ),
+        equality_check(
+            "asset-hash",
+            "Recompute asset hash excluding proof slot",
+            asset_hash_actual,
+            proof_asset_hash,
+        ),
+        equality_check(
+            "metadata-hash",
+            "Recompute manifest payload metadata hash",
+            metadata_hash_actual,
+            proof_metadata_hash,
+        ),
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_verification_report(
+    is_live_photo: bool,
+    container: Container,
+    schema: &Value,
+    proof_count: usize,
+    payload: &Value,
+    manifest_capture_id: &str,
+    manifest_captured_at: &str,
+    slot: &ProofSlot,
+    proof_type: &str,
+    proof_algorithm: &str,
+    proof_key_id: &str,
+    proof_created_at: &str,
+    asset_hash_actual: &str,
+    metadata_hash_actual: &str,
+    body_sha_actual: Option<&str>,
+    signing_binding_sha256: &str,
+    paired_video_hash_actual: Option<&str>,
+    proof_asset_hash: &str,
+    proof_metadata_hash: &str,
+    body_sha_expected: &str,
+    content_digest: &Value,
+    proof_value_key_id: &str,
+    assertion_object: &str,
+    signing_binding: &Value,
+    live_photo_paired_status: Option<&str>,
+    paired_video_byte_count: Option<usize>,
+    checks: Vec<Value>,
+) -> Value {
+    let has_failed = checks.iter().any(|check| check["status"] == "fail");
+    let status = if has_failed { "invalid" } else { "valid" };
+    let summary = match (is_live_photo, has_failed) {
+        (true, true) => "The TAP Live Photo content binding is incomplete or failed local self-checks.",
+        (true, false) => "All local Live Photo content binding checks passed.",
+        (false, true) => "The TAP content binding failed local self-checks.",
+        (false, false) => "All local content binding checks passed.",
+    };
+    let server_request = if has_failed {
+        Value::Null
+    } else {
+        json!({
+            "keyId": proof_value_key_id,
+            "assertionObject": assertion_object,
+            "signingBinding": signing_binding
+        })
+    };
+    let expected_video_hash = signed_resource_by_role(content_digest, "pairedLivePhotoVideo")
+        .and_then(|resource| resource.get("value"))
+        .and_then(Value::as_str);
+
+    json!({
+        "status": status,
+        "summary": summary,
+        "mediaKind": if is_live_photo { "livePhoto" } else { "stillPhoto" },
+        "captureId": manifest_capture_id,
+        "capturedAt": manifest_captured_at,
+        "manifest": {
+            "containerFormat": container.as_report_str(),
+            "schemaId": schema.get("id").and_then(Value::as_str),
+            "proofCount": proof_count,
+            "capture": payload.get("capture"),
+            "livePhoto": payload.get("livePhoto")
         },
-        "metadataHash": {
-            "kind": "canonical-json",
-            "mediaType": "application/vnd.tapnap.depth-manifest.payload+json;version=1",
-            "algorithm": "SHA-256",
-            "value": metadata_hash
+        "livePhoto": if is_live_photo {
+            json!({
+                "pairedVideoFilename": payload
+                    .get("livePhoto")
+                    .and_then(|live_photo| live_photo.get("pairedVideoFilename"))
+                    .and_then(Value::as_str)
+                    .unwrap_or(LIVE_PHOTO_PAIRED_VIDEO_FILENAME),
+                "pairedVideo": {
+                    "status": live_photo_paired_status.unwrap_or("unknown"),
+                    "byteCount": paired_video_byte_count,
+                    "actualSHA256": paired_video_hash_actual,
+                    "expectedSHA256": expected_video_hash
+                }
+            })
+        } else {
+            Value::Null
         },
         "proofSlot": {
             "kind": slot.kind,
             "offset": slot.container_offset,
             "length": slot.container_length,
             "payloadOffset": slot.payload_offset,
-            "payloadLength": slot.payload_length,
-            "padding": "zero-filled-after-envelope"
+            "payloadLength": slot.payload_length
         },
-        "depthResource": {
-            "presence": "required",
-            "binding": "covered-by-assetHash",
-            "interpretation": "not-part-of-base-signature",
-            "platformPresenceCheck": "AVDepthData-readback"
-        }
+        "proof": {
+            "type": proof_type,
+            "algorithm": proof_algorithm,
+            "keyId": proof_key_id,
+            "createdAt": proof_created_at
+        },
+        "recomputed": {
+            "assetSHA256": asset_hash_actual,
+            "metadataSHA256": metadata_hash_actual,
+            "bodySHA256": body_sha_actual,
+            "signingBindingSHA256": signing_binding_sha256,
+            "pairedVideoSHA256": paired_video_hash_actual
+        },
+        "expected": {
+            "assetSHA256": proof_asset_hash,
+            "metadataSHA256": proof_metadata_hash,
+            "bodySHA256": body_sha_expected,
+            "pairedVideoSHA256": expected_video_hash,
+            "contentDigest": content_digest
+        },
+        "serverRequest": server_request,
+        "checks": checks
     })
 }
 
@@ -2434,6 +2899,25 @@ fn json_equality_check(id: &str, label: &str, actual: &Value, expected: &Value) 
     })
 }
 
+fn optional_json_equality_check(
+    id: &str,
+    label: &str,
+    actual: &Value,
+    expected: Option<&Value>,
+) -> Value {
+    match expected {
+        Some(expected) => json_equality_check(id, label, actual, expected),
+        None => json!({
+            "id": id,
+            "label": label,
+            "status": "fail",
+            "detail": "Expected signed resource descriptor is missing.",
+            "actual": actual,
+            "expected": Value::Null
+        }),
+    }
+}
+
 fn manifest_proofs_empty_check(count: usize) -> Value {
     json!({
         "id": "manifest-proofs-empty",
@@ -2449,11 +2933,11 @@ fn manifest_proofs_empty_check(count: usize) -> Value {
     })
 }
 
-fn schema_check(schema: &Value) -> Value {
+fn schema_check(schema: &Value, is_live_photo: bool) -> Value {
     let expected = json!({
-        "id": MANIFEST_SCHEMA_ID,
-        "mediaType": MANIFEST_MEDIA_TYPE,
-        "version": 1,
+        "id": if is_live_photo { LIVE_PHOTO_MANIFEST_SCHEMA_ID } else { MANIFEST_SCHEMA_ID },
+        "mediaType": if is_live_photo { LIVE_PHOTO_MANIFEST_MEDIA_TYPE } else { MANIFEST_MEDIA_TYPE },
+        "version": if is_live_photo { 2 } else { 1 },
         "xmpManifestPath": MANIFEST_XMP_PATH,
         "xmpNamespaceURI": MANIFEST_XMP_NAMESPACE_URI,
         "xmpPrefix": MANIFEST_XMP_PREFIX
@@ -2464,6 +2948,41 @@ fn schema_check(schema: &Value) -> Value {
         schema,
         &expected,
     )
+}
+
+fn live_photo_payload_check(live_photo: Option<&Value>) -> Value {
+    let Some(live_photo) = live_photo else {
+        return json!({
+            "id": "live-photo-payload",
+            "label": "Require Live Photo manifest payload",
+            "status": "fail",
+            "detail": "manifest.payload.livePhoto is missing."
+        });
+    };
+
+    let mut violations = Vec::new();
+    if live_photo.get("presence").and_then(Value::as_str) != Some("paired-video") {
+        violations.push("presence must be paired-video");
+    }
+    if live_photo
+        .get("pairedVideoFilename")
+        .and_then(Value::as_str)
+        != Some(LIVE_PHOTO_PAIRED_VIDEO_FILENAME)
+    {
+        violations.push("pairedVideoFilename must be paired-video.mov");
+    }
+
+    json!({
+        "id": "live-photo-payload",
+        "label": "Require Live Photo manifest payload",
+        "status": if violations.is_empty() { "pass" } else { "fail" },
+        "detail": if violations.is_empty() {
+            "manifest.payload.livePhoto declares the paired MOV resource.".to_string()
+        } else {
+            violations.join("; ")
+        },
+        "actual": live_photo
+    })
 }
 
 fn capture_policy_check(container: Container, capture: Option<&Value>) -> Value {
@@ -2984,6 +3503,71 @@ mod tests {
     }
 
     #[test]
+    fn synthetic_live_photo_content_binding_verifies_with_paired_video() {
+        let paired_video = b"synthetic mov bytes";
+        let bytes = synthetic_signed_live_photo(paired_video);
+        let report = verify_capture_package_bytes(&bytes, Some(paired_video));
+
+        assert_eq!(report["status"], "valid");
+        assert_eq!(report["mediaKind"], "livePhoto");
+        assert_eq!(report["manifest"]["schemaId"], LIVE_PHOTO_MANIFEST_SCHEMA_ID);
+        assert_eq!(report["livePhoto"]["pairedVideo"]["status"], "matched");
+        assert!(report["serverRequest"].is_object());
+        assert!(report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check["id"] == "live-photo-paired-video-resource"
+                && check["status"] == "pass"));
+        assert!(report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check["id"] == "content-digest" && check["status"] == "pass"));
+    }
+
+    #[test]
+    fn synthetic_live_photo_reports_missing_paired_video_without_reclassifying_still_photo() {
+        let paired_video = b"synthetic mov bytes";
+        let bytes = synthetic_signed_live_photo(paired_video);
+        let report = verify_capture_bytes(&bytes);
+
+        assert_eq!(report["status"], "invalid");
+        assert_eq!(report["mediaKind"], "livePhoto");
+        assert_eq!(report["livePhoto"]["pairedVideo"]["status"], "missing");
+        assert!(report["serverRequest"].is_null());
+        assert!(report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check["id"] == "asset-hash" && check["status"] == "pass"));
+        assert!(report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check["id"] == "live-photo-paired-video-resource"
+                && check["status"] == "fail"));
+    }
+
+    #[test]
+    fn synthetic_live_photo_reports_mismatched_paired_video() {
+        let paired_video = b"synthetic mov bytes";
+        let bytes = synthetic_signed_live_photo(paired_video);
+        let report = verify_capture_package_bytes(&bytes, Some(b"wrong mov bytes"));
+
+        assert_eq!(report["status"], "invalid");
+        assert_eq!(report["mediaKind"], "livePhoto");
+        assert_eq!(report["livePhoto"]["pairedVideo"]["status"], "mismatch");
+        assert!(report["serverRequest"].is_null());
+        assert!(report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check["id"] == "live-photo-paired-video-resource"
+                && check["status"] == "fail"));
+    }
+
+    #[test]
     fn local_heic_fixture_verifies_when_available() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
@@ -3151,6 +3735,100 @@ mod tests {
         let proof = json!({
             "algorithm": PROOF_ALGORITHM,
             "createdAt": "2026-06-22T00:00:00.000Z",
+            "keyID": "key",
+            "type": PROOF_TYPE,
+            "value": URL_SAFE_NO_PAD.encode(canonical_json_bytes(&proof_value).unwrap())
+        });
+        let envelope = canonical_json_bytes(&proof).unwrap();
+        let signed_payload = proof_slot_payload(&envelope);
+        let mut signed = unsigned;
+        let payload_range = slot.payload_offset..slot.payload_offset + slot.payload_length;
+        signed[payload_range].copy_from_slice(&signed_payload);
+        signed
+    }
+
+    fn synthetic_signed_live_photo(paired_video: &[u8]) -> Vec<u8> {
+        let payload = json!({
+            "alignmentStatus": "sameCapturePipeline",
+            "capture": {
+                "depthDataDeliveryEnabled": true,
+                "depthDataFiltered": true,
+                "embedsDepthDataInPhoto": true,
+                "photoQualityPrioritization": "quality",
+                "requestedCodec": "hvc1"
+            },
+            "capturedAt": "2026-07-02T00:00:00.000Z",
+            "id": "live-capture",
+            "livePhoto": {
+                "audio": "not-captured",
+                "durationSeconds": 2.5,
+                "height": 1080,
+                "pairedVideoFilename": LIVE_PHOTO_PAIRED_VIDEO_FILENAME,
+                "photoDisplayTimeSeconds": 1.0,
+                "presence": "paired-video",
+                "videoCodec": "hvc1",
+                "width": 1920
+            }
+        });
+        let manifest = json!({
+            "schema": {
+                "id": LIVE_PHOTO_MANIFEST_SCHEMA_ID,
+                "mediaType": LIVE_PHOTO_MANIFEST_MEDIA_TYPE,
+                "version": 2,
+                "xmpManifestPath": MANIFEST_XMP_PATH,
+                "xmpNamespaceURI": MANIFEST_XMP_NAMESPACE_URI,
+                "xmpPrefix": MANIFEST_XMP_PREFIX
+            },
+            "payload": payload,
+            "proofs": []
+        });
+        let manifest_box = bmff_box(
+            b"free",
+            format!(
+                "<x:xmpmeta><tapdepth:Manifest>{}</tapdepth:Manifest></x:xmpmeta>",
+                String::from_utf8(canonical_json_bytes(&manifest).unwrap()).unwrap()
+            )
+            .as_bytes(),
+        );
+
+        let mut unsigned = bmff_ftyp_box();
+        unsigned.extend(manifest_box);
+        unsigned.extend(bmff_proof_box(&proof_slot_payload(&[])));
+        let slot = locate_proof_slot(&unsigned, Container::Heic).unwrap();
+        let asset_hash =
+            sha256_base64url_excluding(&unsigned, slot.container_offset, slot.container_length)
+                .unwrap();
+        let payload_canonical = canonical_json_bytes(&payload).unwrap();
+        let metadata_hash = sha256_base64url(&payload_canonical);
+        let paired_video_hash = sha256_base64url(paired_video);
+        let digest = recompute_live_photo_content_digest(
+            Container::Heic,
+            unsigned.len(),
+            &slot,
+            "live-capture",
+            "2026-07-02T00:00:00.000Z",
+            &asset_hash,
+            &metadata_hash,
+            payload_canonical.len(),
+            &paired_video_hash,
+            paired_video.len(),
+        );
+        let body_sha = sha256_base64url(&canonical_json_bytes(&digest).unwrap());
+        let signing_binding = json!({
+            "bodySHA256": body_sha,
+            "captureID": "live-capture",
+            "operation": SIGNING_OPERATION,
+            "schemaID": SIGNING_SCHEMA_ID
+        });
+        let proof_value = json!({
+            "assertionObject": "assertion",
+            "contentDigest": digest,
+            "keyId": "key",
+            "signingBinding": signing_binding
+        });
+        let proof = json!({
+            "algorithm": PROOF_ALGORITHM,
+            "createdAt": "2026-07-02T00:00:00.000Z",
             "keyID": "key",
             "type": PROOF_TYPE,
             "value": URL_SAFE_NO_PAD.encode(canonical_json_bytes(&proof_value).unwrap())
