@@ -1,4 +1,4 @@
-export type CheckStatus = "pass" | "fail";
+export type CheckStatus = "pass" | "fail" | "warning";
 
 export interface VerificationCheck {
   id: string;
@@ -46,6 +46,18 @@ export interface LocalVerificationReport {
   status: "invalid" | "valid" | string;
   summary: string;
   mediaKind?: "stillPhoto" | "livePhoto" | string;
+  verificationScope?: "stillPhoto" | "fullLivePhoto" | "primaryPhotoFromLivePhoto" | string;
+  claims?: {
+    primaryPhotoVerified?: boolean;
+    manifestVerified?: boolean;
+    pairedVideoVerified?: boolean;
+    fullLivePhotoVerified?: boolean;
+  };
+  warnings?: Array<{
+    id?: string;
+    severity?: "warning" | "info" | string;
+    message?: string;
+  }>;
   captureId: string | null;
   capturedAt: string | null;
   manifest?: {

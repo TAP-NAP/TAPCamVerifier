@@ -24,6 +24,9 @@ const MANIFEST_XMP_PREFIX: &str = "tapdepth";
 const MANIFEST_XMP_PATH: &str = "tapdepth:Manifest";
 const LIVE_PHOTO_PAIRED_VIDEO_FILENAME: &str = "paired-video.mov";
 const QUICKTIME_MOVIE_MEDIA_TYPE: &str = "com.apple.quicktime-movie";
+const SCOPE_STILL_PHOTO: &str = "stillPhoto";
+const SCOPE_FULL_LIVE_PHOTO: &str = "fullLivePhoto";
+const SCOPE_LIVE_PHOTO_PRIMARY: &str = "primaryPhotoFromLivePhoto";
 const PROOF_TYPE: &str = "appAttestAssertion";
 const PROOF_ALGORITHM: &str = "TAPCam.AppAttestCaptureSignature.v1";
 const SIGNING_SCHEMA_ID: &str = "urn:tapnap:tapcam:app-attest-capture-signing:v1";
@@ -404,10 +407,10 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
         .get("captureID")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let mut recomputed_digest = None;
-    let mut body_sha_actual = None;
-    let mut expected_signing_binding = None;
-    let mut paired_video_hash_actual = None;
+    let mut recomputed_digest: Option<Value> = None;
+    let body_sha_actual: Option<String>;
+    let expected_signing_binding: Option<Value>;
+    let mut paired_video_hash_actual: Option<String> = None;
     let mut live_photo_paired_status = None;
 
     if is_live_photo {
@@ -421,6 +424,16 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
             payload_canonical.len(),
             &metadata_hash_actual,
         );
+        let embedded_content_digest_body_sha = sha256_base64url(&canonical_json_bytes(content_digest)?);
+        expected_signing_binding = Some(json!({
+            "bodySHA256": embedded_content_digest_body_sha,
+            "captureID": proof_content_capture_id,
+            "operation": SIGNING_OPERATION,
+            "schemaID": SIGNING_SCHEMA_ID
+        }));
+        body_sha_actual = Some(embedded_content_digest_body_sha);
+
+        let mut live_photo_scope = SCOPE_LIVE_PHOTO_PRIMARY;
         if let Some(video_bytes) = paired_video {
             let video_hash = sha256_base64url(video_bytes);
             let video_resource = live_photo_paired_video_resource(video_bytes.len(), &video_hash);
@@ -436,30 +449,21 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
                 &video_hash,
                 video_bytes.len(),
             );
-            let body_sha = sha256_base64url(&canonical_json_bytes(&digest)?);
-            expected_signing_binding = Some(json!({
-                "bodySHA256": body_sha,
-                "captureID": manifest_capture_id,
-                "operation": SIGNING_OPERATION,
-                "schemaID": SIGNING_SCHEMA_ID
-            }));
-            body_sha_actual = Some(body_sha);
-            recomputed_digest = Some(digest);
             paired_video_hash_actual = Some(video_hash.clone());
 
             let expected_video_hash = signed_resource_by_role(content_digest, "pairedLivePhotoVideo")
                 .and_then(|resource| resource.get("value"))
                 .and_then(Value::as_str);
-            live_photo_paired_status = Some(
-                if expected_video_hash == Some(video_hash.as_str())
-                    && signed_resource_by_role(content_digest, "pairedLivePhotoVideo")
-                        == Some(&video_resource)
-                {
-                    "matched"
-                } else {
-                    "mismatch"
-                },
-            );
+            if expected_video_hash == Some(video_hash.as_str())
+                && signed_resource_by_role(content_digest, "pairedLivePhotoVideo")
+                    == Some(&video_resource)
+            {
+                live_photo_scope = SCOPE_FULL_LIVE_PHOTO;
+                live_photo_paired_status = Some("matched");
+                recomputed_digest = Some(digest);
+            } else {
+                live_photo_paired_status = Some("mismatch");
+            }
         } else {
             live_photo_paired_status = Some("missing");
         }
@@ -478,22 +482,31 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
             &manifest_resource,
             signed_resource_by_role(content_digest, "tapDepthManifestPayload"),
         ));
+        let signed_video_resource = signed_resource_by_role(content_digest, "pairedLivePhotoVideo");
+        live_checks.push(live_photo_paired_video_descriptor_check(signed_video_resource));
         if let Some(video_bytes) = paired_video {
             let video_hash = paired_video_hash_actual.as_deref().unwrap_or_default();
             let video_resource = live_photo_paired_video_resource(video_bytes.len(), video_hash);
-            live_checks.push(optional_json_equality_check(
-                "live-photo-paired-video-resource",
-                "Recompute Live Photo paired MOV resource",
-                &video_resource,
-                signed_resource_by_role(content_digest, "pairedLivePhotoVideo"),
-            ));
+            if live_photo_paired_status == Some("matched") {
+                live_checks.push(optional_json_equality_check(
+                    "live-photo-paired-video-resource",
+                    "Recompute Live Photo paired MOV resource",
+                    &video_resource,
+                    signed_video_resource,
+                ));
+            } else {
+                live_checks.push(live_photo_paired_video_scope_warning(
+                    "mismatch",
+                    Some(&video_resource),
+                    signed_video_resource,
+                ));
+            }
         } else {
-            live_checks.push(json!({
-                "id": "live-photo-paired-video-resource",
-                "label": "Require Live Photo paired MOV resource",
-                "status": "fail",
-                "detail": "This capture is signed as a Live Photo, but no paired-video.mov bytes were supplied."
-            }));
+            live_checks.push(live_photo_paired_video_scope_warning(
+                "missing",
+                None,
+                signed_video_resource,
+            ));
         }
 
         let mut checks = common_verification_checks(
@@ -520,28 +533,28 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
             proof_metadata_hash,
         );
         checks.extend(live_checks);
-        if let (Some(body_sha), Some(expected_binding), Some(digest)) = (
-            body_sha_actual.as_deref(),
-            expected_signing_binding.as_ref(),
-            recomputed_digest.as_ref(),
-        ) {
+        if let (Some(body_sha), Some(expected_binding)) =
+            (body_sha_actual.as_deref(), expected_signing_binding.as_ref())
+        {
             checks.push(equality_check(
                 "body-sha",
-                "Recompute signingBinding.bodySHA256",
+                "Verify signingBinding.bodySHA256 over embedded content digest",
                 body_sha,
                 body_sha_expected,
             ));
+            checks.push(json_equality_check(
+                "signing-binding",
+                "Verify signing binding over embedded content digest",
+                expected_binding,
+                signing_binding,
+            ));
+        }
+        if let Some(digest) = recomputed_digest.as_ref() {
             checks.push(json_equality_check(
                 "content-digest",
                 "Rebuild canonical Live Photo content digest",
                 digest,
                 content_digest,
-            ));
-            checks.push(json_equality_check(
-                "signing-binding",
-                "Rebuild signing binding",
-                expected_binding,
-                signing_binding,
             ));
         }
         checks.push(non_empty_check(
@@ -552,6 +565,7 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
 
         return Ok(build_verification_report(
             is_live_photo,
+            live_photo_scope,
             container,
             schema,
             proofs.len(),
@@ -650,6 +664,7 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
 
     Ok(build_verification_report(
         is_live_photo,
+        SCOPE_STILL_PHOTO,
         container,
         schema,
         proofs.len(),
@@ -1894,6 +1909,7 @@ fn common_verification_checks(
 #[allow(clippy::too_many_arguments)]
 fn build_verification_report(
     is_live_photo: bool,
+    verification_scope: &str,
     container: Container,
     schema: &Value,
     proof_count: usize,
@@ -1923,11 +1939,16 @@ fn build_verification_report(
 ) -> Value {
     let has_failed = checks.iter().any(|check| check["status"] == "fail");
     let status = if has_failed { "invalid" } else { "valid" };
-    let summary = match (is_live_photo, has_failed) {
-        (true, true) => "The TAP Live Photo content binding is incomplete or failed local self-checks.",
-        (true, false) => "All local Live Photo content binding checks passed.",
-        (false, true) => "The TAP content binding failed local self-checks.",
-        (false, false) => "All local content binding checks passed.",
+    let summary = if has_failed && is_live_photo {
+        "The TAP Live Photo primary photo scope failed local self-checks."
+    } else if has_failed {
+        "The TAP content binding failed local self-checks."
+    } else if verification_scope == SCOPE_FULL_LIVE_PHOTO {
+        "Full TAP Live Photo content binding checks passed locally."
+    } else if verification_scope == SCOPE_LIVE_PHOTO_PRIMARY {
+        "TAP Live Photo primary photo checks passed locally; paired video was not verified."
+    } else {
+        "All local content binding checks passed."
     };
     let server_request = if has_failed {
         Value::Null
@@ -1941,11 +1962,23 @@ fn build_verification_report(
     let expected_video_hash = signed_resource_by_role(content_digest, "pairedLivePhotoVideo")
         .and_then(|resource| resource.get("value"))
         .and_then(Value::as_str);
+    let paired_status = live_photo_paired_status.unwrap_or("unknown");
+    let full_live_photo_verified = !has_failed && is_live_photo && paired_status == "matched";
+    let primary_photo_verified = !has_failed && is_live_photo;
+    let warnings = live_photo_scope_warnings(is_live_photo, paired_status);
 
     json!({
         "status": status,
         "summary": summary,
         "mediaKind": if is_live_photo { "livePhoto" } else { "stillPhoto" },
+        "verificationScope": verification_scope,
+        "claims": {
+            "primaryPhotoVerified": if is_live_photo { primary_photo_verified } else { !has_failed },
+            "manifestVerified": !has_failed,
+            "pairedVideoVerified": full_live_photo_verified,
+            "fullLivePhotoVerified": full_live_photo_verified
+        },
+        "warnings": warnings,
         "captureId": manifest_capture_id,
         "capturedAt": manifest_captured_at,
         "manifest": {
@@ -1963,7 +1996,7 @@ fn build_verification_report(
                     .and_then(Value::as_str)
                     .unwrap_or(LIVE_PHOTO_PAIRED_VIDEO_FILENAME),
                 "pairedVideo": {
-                    "status": live_photo_paired_status.unwrap_or("unknown"),
+                    "status": paired_status,
                     "byteCount": paired_video_byte_count,
                     "actualSHA256": paired_video_hash_actual,
                     "expectedSHA256": expected_video_hash
@@ -2985,6 +3018,95 @@ fn live_photo_payload_check(live_photo: Option<&Value>) -> Value {
     })
 }
 
+fn live_photo_paired_video_descriptor_check(resource: Option<&Value>) -> Value {
+    let Some(resource) = resource else {
+        return json!({
+            "id": "live-photo-paired-video-descriptor",
+            "label": "Require Live Photo paired MOV signed resource descriptor",
+            "status": "fail",
+            "detail": "The v3 content digest does not declare a pairedLivePhotoVideo signed resource."
+        });
+    };
+
+    let mut violations = Vec::new();
+    if resource.get("role").and_then(Value::as_str) != Some("pairedLivePhotoVideo") {
+        violations.push("role must be pairedLivePhotoVideo");
+    }
+    if resource.get("kind").and_then(Value::as_str) != Some("format-native-full-file") {
+        violations.push("kind must be format-native-full-file");
+    }
+    if resource.get("mediaType").and_then(Value::as_str) != Some(QUICKTIME_MOVIE_MEDIA_TYPE) {
+        violations.push("mediaType must be com.apple.quicktime-movie");
+    }
+    if resource.get("algorithm").and_then(Value::as_str) != Some("SHA-256") {
+        violations.push("algorithm must be SHA-256");
+    }
+    if resource.get("binding").and_then(Value::as_str) != Some("full-file") {
+        violations.push("binding must be full-file");
+    }
+    if resource.get("byteCount").and_then(Value::as_u64).is_none() {
+        violations.push("byteCount must be present");
+    }
+    if resource
+        .get("value")
+        .and_then(Value::as_str)
+        .map_or(true, str::is_empty)
+    {
+        violations.push("value must be present");
+    }
+
+    json!({
+        "id": "live-photo-paired-video-descriptor",
+        "label": "Require Live Photo paired MOV signed resource descriptor",
+        "status": if violations.is_empty() { "pass" } else { "fail" },
+        "detail": if violations.is_empty() {
+            "The v3 content digest declares the paired MOV signed resource.".to_string()
+        } else {
+            violations.join("; ")
+        },
+        "actual": resource
+    })
+}
+
+fn live_photo_paired_video_scope_warning(
+    status: &str,
+    actual: Option<&Value>,
+    expected: Option<&Value>,
+) -> Value {
+    json!({
+        "id": "live-photo-paired-video-resource",
+        "label": "Verify Live Photo paired MOV resource scope",
+        "status": "warning",
+        "detail": match status {
+            "missing" => "No paired-video.mov bytes were supplied; full Live Photo video verification was skipped, but the primary photo scope can still be verified.".to_string(),
+            "mismatch" => "The supplied paired-video.mov does not match the signed resource descriptor; full Live Photo verification failed, but the primary photo scope can still be verified.".to_string(),
+            _ => "The paired MOV resource was not verified in the full Live Photo scope.".to_string(),
+        },
+        "actual": actual.unwrap_or(&Value::Null),
+        "expected": expected.unwrap_or(&Value::Null)
+    })
+}
+
+fn live_photo_scope_warnings(is_live_photo: bool, paired_status: &str) -> Vec<Value> {
+    if !is_live_photo {
+        return Vec::new();
+    }
+
+    match paired_status {
+        "missing" => vec![json!({
+            "id": "paired-video-not-supplied",
+            "severity": "warning",
+            "message": "paired-video.mov was not supplied. The verifier checked the signed Live Photo primary photo and manifest, but did not verify motion/video bytes."
+        })],
+        "mismatch" => vec![json!({
+            "id": "paired-video-mismatch",
+            "severity": "warning",
+            "message": "The supplied paired-video.mov does not match the signed Live Photo resource. The verifier can only trust the primary photo scope."
+        })],
+        _ => Vec::new(),
+    }
+}
+
 fn capture_policy_check(container: Container, capture: Option<&Value>) -> Value {
     let Some(capture) = capture else {
         return json!({
@@ -3510,6 +3632,9 @@ mod tests {
 
         assert_eq!(report["status"], "valid");
         assert_eq!(report["mediaKind"], "livePhoto");
+        assert_eq!(report["verificationScope"], SCOPE_FULL_LIVE_PHOTO);
+        assert_eq!(report["claims"]["fullLivePhotoVerified"], true);
+        assert_eq!(report["claims"]["pairedVideoVerified"], true);
         assert_eq!(report["manifest"]["schemaId"], LIVE_PHOTO_MANIFEST_SCHEMA_ID);
         assert_eq!(report["livePhoto"]["pairedVideo"]["status"], "matched");
         assert!(report["serverRequest"].is_object());
@@ -3532,10 +3657,15 @@ mod tests {
         let bytes = synthetic_signed_live_photo(paired_video);
         let report = verify_capture_bytes(&bytes);
 
-        assert_eq!(report["status"], "invalid");
+        assert_eq!(report["status"], "valid");
         assert_eq!(report["mediaKind"], "livePhoto");
+        assert_eq!(report["verificationScope"], SCOPE_LIVE_PHOTO_PRIMARY);
+        assert_eq!(report["claims"]["primaryPhotoVerified"], true);
+        assert_eq!(report["claims"]["fullLivePhotoVerified"], false);
+        assert_eq!(report["claims"]["pairedVideoVerified"], false);
         assert_eq!(report["livePhoto"]["pairedVideo"]["status"], "missing");
-        assert!(report["serverRequest"].is_null());
+        assert!(report["serverRequest"].is_object());
+        assert_eq!(report["warnings"][0]["id"], "paired-video-not-supplied");
         assert!(report["checks"]
             .as_array()
             .unwrap()
@@ -3546,7 +3676,7 @@ mod tests {
             .unwrap()
             .iter()
             .any(|check| check["id"] == "live-photo-paired-video-resource"
-                && check["status"] == "fail"));
+                && check["status"] == "warning"));
     }
 
     #[test]
@@ -3555,16 +3685,20 @@ mod tests {
         let bytes = synthetic_signed_live_photo(paired_video);
         let report = verify_capture_package_bytes(&bytes, Some(b"wrong mov bytes"));
 
-        assert_eq!(report["status"], "invalid");
+        assert_eq!(report["status"], "valid");
         assert_eq!(report["mediaKind"], "livePhoto");
+        assert_eq!(report["verificationScope"], SCOPE_LIVE_PHOTO_PRIMARY);
+        assert_eq!(report["claims"]["primaryPhotoVerified"], true);
+        assert_eq!(report["claims"]["fullLivePhotoVerified"], false);
         assert_eq!(report["livePhoto"]["pairedVideo"]["status"], "mismatch");
-        assert!(report["serverRequest"].is_null());
+        assert!(report["serverRequest"].is_object());
+        assert_eq!(report["warnings"][0]["id"], "paired-video-mismatch");
         assert!(report["checks"]
             .as_array()
             .unwrap()
             .iter()
             .any(|check| check["id"] == "live-photo-paired-video-resource"
-                && check["status"] == "fail"));
+                && check["status"] == "warning"));
     }
 
     #[test]

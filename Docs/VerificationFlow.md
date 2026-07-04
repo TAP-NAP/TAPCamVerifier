@@ -4,8 +4,11 @@ The verifier follows TAPCamDemo still-photo `content-binding:v2` and Live Photo
 `content-binding:v3`. Still photos bind the native HEIC/JPG file bytes excluding
 the fixed proof slot plus canonical TAP manifest payload JSON. Live Photos keep
 that primary-photo binding and add the complete `paired-video.mov` bytes as a
-signed resource. The browser does not decode RGB pixels, video frames, or metric
-depth Float32 values for the base signature.
+signed resource. Verification is scoped: a full Live Photo package verifies the
+primary photo and MOV, while a primary-only transfer can still verify the signed
+Live Photo primary photo and submit the embedded signing binding to the server.
+The browser does not decode RGB pixels, video frames, or metric depth Float32
+values for the base signature.
 
 ## Hash Flow
 
@@ -36,7 +39,7 @@ flowchart TD
     Q --> R["SHA-256 signingBinding.bodySHA256"]
     R --> S["Rebuild CaptureSigningBinding"]
     S --> T["Compare with proofValue.signingBinding"]
-    T --> U["Local valid only if every hard-binding check passes"]
+    T --> U["Local valid if a supported hard-binding scope passes"]
     U --> V["POST keyId + assertionObject + signingBinding to server"]
     V --> W["Server verifies App Attest assertion"]
     W --> X["Final valid only if local and server checks pass"]
@@ -68,22 +71,35 @@ flowchart TD
 - Live Photo `signedResources` checks for:
   - `primaryPhoto`;
   - `tapDepthManifestPayload`;
-  - `pairedLivePhotoVideo`.
+  - `pairedLivePhotoVideo` descriptor;
+  - full `pairedLivePhotoVideo` bytes when MOV bytes are supplied and match.
 - Rebuilt `CaptureSigningBinding` equality.
 - `signingBindingSHA256` as a browser-recomputed diagnostic hash of the exact
   `signingBinding` sent to the server. If the server echoes the same field, the
   UI compares it to catch integration drift; this is not a server-side native
   file hash check.
 
-## Strict Verifier Rule
+## Scoped Verifier Rule
 
-The verifier does not degrade. Unsupported containers, missing slots, malformed
-padding, non-empty manifest proofs, profile drift, or any hash mismatch produce
-`invalid`. For Live Photo v2/v3 captures, a single HEIC/JPG without
-`paired-video.mov` is reported as a Live Photo with a missing video resource,
-not as a complete still-photo proof. There is no `blocked` state for RGB/depth
-decoding in the base signature path because decoded pixels are not signature
-inputs.
+The verifier does not reclassify Live Photos as still photos. Unsupported
+containers, missing slots, malformed padding, non-empty manifest proofs, profile
+drift, primary-photo hash mismatch, manifest hash mismatch, malformed v3 signed
+resource descriptors, or signing-binding mismatch produce `invalid`.
+
+For Live Photo v2/v3 captures, the verifier reports one of two valid scopes:
+
+- `fullLivePhoto`: the primary photo, manifest payload, paired MOV, embedded
+  content digest, signing binding, and server App Attest verification passed.
+- `primaryPhotoFromLivePhoto`: the primary photo and manifest payload match the
+  embedded v3 content digest, the digest declares a paired MOV resource, and the
+  embedded signing binding passes server App Attest verification, but
+  `paired-video.mov` was missing or did not match. The UI must state that
+  video/motion bytes were not verified.
+
+There is no `blocked` state for RGB/depth decoding in the base signature path
+because decoded pixels are not signature inputs. MOV-only input remains
+unsupported because the TAP proof slot, manifest payload, assertion object, and
+signing binding live in the primary HEIC/JPG.
 
 ## Server Boundary
 
@@ -112,3 +128,18 @@ The request body is:
 The production page origin is `https://verifier.tapnap.net`. Local development
 origins such as `http://127.0.0.1:4174` are expected to fail server verification
 unless the server CORS allowlist includes them.
+
+## UI Analysis Gate
+
+The browser gates downstream visualization behind the signature verdict:
+
+- `valid`: show the confirmation dialog `照片验签通过 / 该照片由 TAPCam 拍摄`,
+  then start original/depth/geometry analysis after about 1.5 seconds. A click
+  anywhere on the page skips the remaining delay and starts analysis
+  immediately.
+- `invalid`: show the banner `这张照片不是由 TAPCam 拍摄`, ask `还要继续进行分析吗？`,
+  and provide `是` / `否` actions. The verifier does not automatically build
+  the visual panes for invalid input.
+
+The original preview, depth panel, and 3D point-cloud panel remain downstream
+inspection tools. They are not inputs to the base signature verdict.

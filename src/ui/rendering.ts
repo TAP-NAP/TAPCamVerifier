@@ -27,6 +27,57 @@ export function renderVerificationError(error: unknown): string {
   `;
 }
 
+export function renderVerificationSuccessGate(result: CombinedVerificationResult): string {
+  return `
+    <div class="verification-modal" role="status" aria-live="polite">
+      <div class="verification-modal-panel">
+        <div class="verification-banner verification-banner--valid">
+          <span class="status-pill status-pill--valid">valid</span>
+          <div>
+            <strong>照片验签通过</strong>
+            <span>该照片由 TAPCam 拍摄</span>
+          </div>
+        </div>
+        <p class="summary verification-gate-note">${escapeHtml(result.fileName)} · ${formatBytes(result.fileSize)} · 正在准备解析深度数据。点击页面任意位置可立即继续。</p>
+      </div>
+    </div>
+  `;
+}
+
+export function renderVerificationAnalysisPrompt(
+  result: CombinedVerificationResult,
+  decision: "pending" | "continue" | "stop" = "pending"
+): string {
+  const disabledAttribute = decision === "pending" ? "" : " disabled";
+  const decisionMessage =
+    decision === "continue"
+      ? "已继续进行深度数据和 3D 点云分析。"
+      : decision === "stop"
+        ? "已停止分析。"
+        : "";
+
+  return `
+    <div class="verification-banner verification-banner--invalid" role="alert">
+      <span class="status-pill status-pill--invalid">invalid</span>
+      <div>
+        <strong>这张照片不是由 TAPCam 拍摄</strong>
+        <span>还要继续进行分析吗？</span>
+      </div>
+    </div>
+    <div class="verification-actions" role="group" aria-label="Continue analysis">
+      <button class="verification-action verification-action--primary" type="button" data-analysis-continue${disabledAttribute}>是</button>
+      <button class="verification-action" type="button" data-analysis-stop${disabledAttribute}>否</button>
+    </div>
+    ${decisionMessage ? `<p class="summary verification-decision">${escapeHtml(decisionMessage)}</p>` : ""}
+    <details class="checks-disclosure verification-details-disclosure">
+      <summary>验签细节</summary>
+      <div class="verification-result-details">
+        ${renderVerificationResult(result)}
+      </div>
+    </details>
+  `;
+}
+
 export function renderVerificationResult(result: CombinedVerificationResult): string {
   const serverStatus = result.server
     ? `${result.server.status}${result.server.reason ? ` · ${result.server.reason}` : ""}`
@@ -55,6 +106,10 @@ export function renderVerificationResult(result: CombinedVerificationResult): st
         <dd>${escapeHtml(formatMediaKind(result.local.mediaKind))}</dd>
       </div>
       <div>
+        <dt>Verified Scope</dt>
+        <dd>${escapeHtml(formatVerificationScope(result.local.verificationScope))}</dd>
+      </div>
+      <div>
         <dt>Live Photo Video</dt>
         <dd>${escapeHtml(formatLivePhotoVideoStatus(result.local))}</dd>
       </div>
@@ -80,6 +135,7 @@ export function renderVerificationResult(result: CombinedVerificationResult): st
       </div>
     </dl>
     <p class="summary">${escapeHtml(result.local.summary)}</p>
+    ${renderVerificationWarnings(result.local)}
     ${renderServerBoundaryDiagnostic(result.serverBoundary)}
     <details class="checks-disclosure">
       <summary>Local content binding checks</summary>
@@ -100,6 +156,19 @@ function formatMediaKind(mediaKind: string | undefined): string {
   return mediaKind ?? "unknown";
 }
 
+function formatVerificationScope(scope: string | undefined): string {
+  if (scope === "fullLivePhoto") {
+    return "Full Live Photo";
+  }
+  if (scope === "primaryPhotoFromLivePhoto") {
+    return "Live Photo primary photo";
+  }
+  if (scope === "stillPhoto") {
+    return "Still photo";
+  }
+  return scope ?? "unknown";
+}
+
 function formatLivePhotoVideoStatus(local: CombinedVerificationResult["local"]): string {
   if (local.mediaKind !== "livePhoto") {
     return "not required";
@@ -109,15 +178,35 @@ function formatLivePhotoVideoStatus(local: CombinedVerificationResult["local"]):
   const status = pairedVideo?.status ?? "unknown";
   const filename = local.livePhoto?.pairedVideoFilename ?? "paired-video.mov";
   if (status === "matched") {
-    return `${filename} matched`;
+    return `${filename} verified`;
   }
   if (status === "missing") {
-    return `${filename} missing`;
+    return `${filename} not supplied`;
   }
   if (status === "mismatch") {
     return `${filename} mismatch`;
   }
   return `${filename} ${status}`;
+}
+
+function renderVerificationWarnings(local: CombinedVerificationResult["local"]): string {
+  const warnings = local.warnings ?? [];
+  if (warnings.length === 0) {
+    return "";
+  }
+
+  return `
+    <ul class="verification-warnings">
+      ${warnings
+        .map((warning) => `
+          <li>
+            <strong>${escapeHtml(warning.severity ?? "warning")}</strong>
+            ${escapeHtml(warning.message ?? "Verification scope warning.")}
+          </li>
+        `)
+        .join("")}
+    </ul>
+  `;
 }
 
 function formatServerBoundaryStatus(diagnostic: ServerBoundaryDiagnostic): string {
