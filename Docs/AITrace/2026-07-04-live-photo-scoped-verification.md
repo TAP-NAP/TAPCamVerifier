@@ -38,9 +38,9 @@ paired video can verify by itself.
 
 The UI may show `valid` when either full Live Photo verification or primary-only
 Live Photo verification passes server App Attest verification. Analysis and
-verification run as independent async paths: visual panes may start from the
-primary photo bytes while local/server verification is still in flight. It must
-also show which scope was verified:
+verification run as independent async paths, but the visual panes are revealed
+only after the valid-signature modal is shown and then dismissed. It must also
+show which scope was verified:
 
 - full Live Photo: paired video matched and was verified.
 - primary-only: paired video was not supplied, so video/motion bytes were not

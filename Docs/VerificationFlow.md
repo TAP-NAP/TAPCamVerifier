@@ -137,7 +137,11 @@ visual analysis and signature verification as independent async paths:
 - Verification reads the proof slot, manifest, content binding, and server App
   Attest result, then updates the verification result panel.
 - Analysis reads the same primary photo bytes for original preview, embedded
-  depth/disparity decoding, and relative 3D point-cloud inspection.
+  depth/disparity decoding, and relative 3D point-cloud inspection. The work may
+  run while verification is still in flight.
+- For valid signatures, the success modal is shown before the visual panes are
+  revealed. The already-running analysis results become visible only after the
+  modal auto-dismisses or the user clicks through it.
 - Missing `paired-video.mov` does not block verification. The verifier checks the
   remaining Live Photo primary-photo scope and continues to server verification
   when that scope passes.

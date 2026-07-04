@@ -8,7 +8,8 @@ import {
   renderOriginalPreviewLoading,
   renderOriginalPreviewResult,
   renderPixelProjectionPanel,
-  renderVerificationResult
+  renderVerificationResult,
+  renderVerificationSuccessGate
 } from "./rendering";
 
 const result: CombinedVerificationResult = {
@@ -51,6 +52,16 @@ const result: CombinedVerificationResult = {
 };
 
 describe("renderVerificationResult", () => {
+  it("renders the valid signature modal before analysis is revealed", () => {
+    const html = renderVerificationSuccessGate(result);
+
+    expect(html).toContain("照片验签通过");
+    expect(html).toContain("该照片由 TAPCam 拍摄");
+    expect(html).toContain("分析过程已在后台继续运行");
+    expect(html).toContain("点击页面任意位置可立即查看验签细节");
+    expect(html).toContain("verification-modal");
+  });
+
   it("keeps the local summary visible and collapses detailed checks", () => {
     const html = renderVerificationResult(result);
 

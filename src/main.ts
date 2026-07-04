@@ -18,7 +18,8 @@ import {
   renderPixelProjectionPanel,
   renderVerificationBusy,
   renderVerificationError,
-  renderVerificationResult
+  renderVerificationResult,
+  renderVerificationSuccessGate
 } from "./ui/rendering";
 import { verifyCapturePackageLocally, visualizeDepthPlane } from "./wasm/tapcamVerifier";
 import { verifyCaptureSignature } from "./verifier/serverVerify";
@@ -60,6 +61,7 @@ if (!dropzone || !fileInput || !visualizationPanel || !resultPanel) {
 
 const resultEl = resultPanel;
 const visualizationEl = visualizationPanel;
+const VERIFIED_ANALYSIS_DELAY_MS = 1500;
 let activeRunId = 0;
 let activeObjectUrl: string | null = null;
 let activeFileBytes: Uint8Array | null = null;
@@ -171,10 +173,23 @@ async function verifyFile(file: File): Promise<void> {
       return;
     }
 
+    if (result.finalStatus === "valid") {
+      resultEl.innerHTML = renderVerificationSuccessGate(result);
+      await waitForVerificationGate(runId);
+      if (runId !== activeRunId) {
+        return;
+      }
+      resultEl.innerHTML = renderVerificationResult(result);
+      revealVisualization(runId);
+      return;
+    }
+
     resultEl.innerHTML = renderVerificationResult(result);
+    revealVisualization(runId);
   } catch (error) {
     if (runId === activeRunId) {
       resultEl.innerHTML = renderVerificationError(error);
+      revealVisualization(runId);
     }
   }
 }
@@ -218,6 +233,41 @@ function startAnalysis(runId: number, captureInput: CaptureInput): void {
   requestOriginalFallback(runId, captureInput.photoFile.name);
   requestDepthVisualization(runId);
   requestRgbAnalysis(runId, captureInput.photoFile);
+}
+
+function revealVisualization(runId: number): void {
+  if (runId === activeRunId && visualizationEl.innerHTML !== "") {
+    visualizationEl.hidden = false;
+  }
+}
+
+function waitForVerificationGate(runId: number): Promise<void> {
+  return new Promise((resolve) => {
+    let isResolved = false;
+    const timeoutId = window.setTimeout(finish, VERIFIED_ANALYSIS_DELAY_MS);
+
+    function finish(): void {
+      if (isResolved) {
+        return;
+      }
+
+      isResolved = true;
+      window.clearTimeout(timeoutId);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      resolve();
+    }
+
+    function handlePointerDown(): void {
+      finish();
+    }
+
+    if (runId !== activeRunId) {
+      finish();
+      return;
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+  });
 }
 
 function resolveOriginalDisplay(runId: number, reference: DisplayOrientationReference | null): void {
@@ -384,7 +434,7 @@ async function projectSelectedPixels(
 }
 
 function renderVisualizationScaffold(file: File, objectUrl: string): void {
-  visualizationEl.hidden = false;
+  visualizationEl.hidden = true;
   visualizationEl.innerHTML = `
     <div class="visual-grid">
       <article class="visual-pane">

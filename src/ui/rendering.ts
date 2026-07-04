@@ -27,6 +27,23 @@ export function renderVerificationError(error: unknown): string {
   `;
 }
 
+export function renderVerificationSuccessGate(result: CombinedVerificationResult): string {
+  return `
+    <div class="verification-modal" role="status" aria-live="polite">
+      <div class="verification-modal-panel">
+        <div class="verification-banner verification-banner--valid">
+          <span class="status-pill status-pill--valid">valid</span>
+          <div>
+            <strong>照片验签通过</strong>
+            <span>该照片由 TAPCam 拍摄</span>
+          </div>
+        </div>
+        <p class="summary verification-gate-note">${escapeHtml(result.fileName)} · ${formatBytes(result.fileSize)} · 分析过程已在后台继续运行。点击页面任意位置可立即查看验签细节。</p>
+      </div>
+    </div>
+  `;
+}
+
 export function renderVerificationResult(result: CombinedVerificationResult): string {
   const serverStatus = result.server
     ? `${result.server.status}${result.server.reason ? ` · ${result.server.reason}` : ""}`

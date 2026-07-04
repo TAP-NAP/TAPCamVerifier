@@ -39,8 +39,10 @@ the base signature. Rust/WASM verifies:
 The page also includes a downstream visual inspection path. After selection, the
 browser resolves the primary photo bytes once, then starts visual analysis and
 signature verification as independent async paths. Verification results update
-the result panel when local/server checks finish; original/depth/geometry panes
-do not wait for App Attest server verification. The left pane first tries the
+the result panel when local/server checks finish. For a valid signature, the UI
+shows the TAPCam verification modal first, while analysis work may continue in
+the background; original/depth/geometry panes are revealed after that modal
+auto-dismisses or the user clicks through it. The left pane first tries the
 browser's native image decoder for the original file. If that decoder cannot
 render HEIC, the browser falls back to `libheif-js` WASM to decode the primary
 HEIF image and sends the RGBA plane to Rust/WASM for TAP orientation handling
