@@ -1,5 +1,6 @@
+import { t } from "../i18n/i18n";
 import type { DepthPanelState, DepthVisualizationAvailable } from "../depth/types";
-import { defaultFilterOptions, filterProjectedPixelCloud } from "../geometry/filtering";
+import { defaultFilterOptions, filterProjectedPixelCloud, formatSensitivity } from "../geometry/filtering";
 import type { PixelProjectionState, ProjectedPixelCloud } from "../geometry/types";
 import type { OriginalPreviewAvailable, OriginalPreviewResult } from "../original/types";
 import type {
@@ -11,7 +12,7 @@ import type {
 export function renderVerificationBusy(fileName: string, fileSize: number): string {
   return `
     <div class="status-line">
-      <span class="status-pill status-pill--busy">verifying</span>
+      <span class="status-pill status-pill--busy">${t("status.verifying")}</span>
       <span>${escapeHtml(fileName)} · ${formatBytes(fileSize)}</span>
     </div>
   `;
@@ -21,82 +22,129 @@ export function renderVerificationError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return `
     <div class="status-line">
-      <span class="status-pill status-pill--invalid">invalid</span>
+      <span class="status-pill status-pill--invalid">${t("status.invalid")}</span>
       <span>${escapeHtml(message)}</span>
     </div>
   `;
 }
 
 export function renderVerificationSuccessGate(result: CombinedVerificationResult): string {
+  return renderResultModal("success", {
+    title: t("modal.validTitle"),
+    desc: t("modal.validDesc"),
+    detail: t("modal.validNote", { fileName: result.fileName, fileSize: formatBytes(result.fileSize) }),
+    buttonText: t("modal.viewDetails")
+  });
+}
+
+export type ResultModalType = "success" | "invalid" | "noSignature" | "networkError" | "parseError";
+
+export interface ResultModalConfig {
+  title: string;
+  desc: string;
+  detail?: string;
+  buttonText: string;
+}
+
+export function renderResultModal(type: ResultModalType, config: ResultModalConfig): string {
+  const iconSvg = getModalIcon(type);
   return `
-    <div class="verification-modal" role="status" aria-live="polite">
-      <div class="verification-modal-panel">
-        <div class="verification-banner verification-banner--valid">
-          <span class="status-pill status-pill--valid">valid</span>
-          <div>
-            <strong>照片验签通过</strong>
-            <span>该照片由 TAPCam 拍摄</span>
-          </div>
-        </div>
-        <p class="summary verification-gate-note">${escapeHtml(result.fileName)} · ${formatBytes(result.fileSize)} · 分析过程已在后台继续运行。点击页面任意位置可立即查看验签细节。</p>
+    <div class="result-modal-backdrop" data-result-modal role="dialog" aria-modal="true" aria-labelledby="result-modal-title">
+      <div class="result-modal result-modal--${type}">
+        <div class="result-modal-icon">${iconSvg}</div>
+        <h3 id="result-modal-title" class="result-modal-title">${escapeHtml(config.title)}</h3>
+        <p class="result-modal-desc">${escapeHtml(config.desc)}</p>
+        ${config.detail ? `<p class="result-modal-detail">${escapeHtml(config.detail)}</p>` : ""}
+        <button class="result-modal-btn" type="button" data-result-modal-close>${escapeHtml(config.buttonText)}</button>
       </div>
     </div>
   `;
 }
 
+function getModalIcon(type: ResultModalType): string {
+  switch (type) {
+    case "success":
+      return '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+    case "invalid":
+      return '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+    case "noSignature":
+      return '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+    case "networkError":
+      return '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>';
+    case "parseError":
+      return '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+  }
+}
+
+export function classifyResult(result: CombinedVerificationResult): ResultModalType {
+  if (result.finalStatus === "valid") {
+    return "success";
+  }
+  if (result.serverError && result.local.status === "valid") {
+    return "networkError";
+  }
+  const parseCheck = result.local.checks.find((c) => c.id === "parse");
+  if (parseCheck && parseCheck.status === "fail") {
+    return "noSignature";
+  }
+  return "invalid";
+}
+
 export function renderVerificationResult(result: CombinedVerificationResult): string {
   const serverStatus = result.server
     ? `${result.server.status}${result.server.reason ? ` · ${result.server.reason}` : ""}`
-    : result.serverError ?? "not run";
+    : result.serverError ?? t("result.notRun");
+
+  const statusText = result.finalStatus === "valid" ? t("status.valid") : t("status.invalid");
 
   return `
     <div class="status-line">
-      <span class="status-pill status-pill--${result.finalStatus}">${result.finalStatus}</span>
+      <span class="status-pill status-pill--${result.finalStatus}">${statusText}</span>
       <span>${escapeHtml(result.fileName)} · ${formatBytes(result.fileSize)}</span>
     </div>
     <dl class="summary-grid">
       <div>
-        <dt>Capture ID</dt>
-        <dd>${escapeHtml(result.local.captureId ?? "missing")}</dd>
+        <dt>${t("result.captureId")}</dt>
+        <dd>${escapeHtml(result.local.captureId ?? t("result.missing"))}</dd>
       </div>
       <div>
-        <dt>Captured At</dt>
-        <dd>${escapeHtml(result.local.capturedAt ?? "missing")}</dd>
+        <dt>${t("result.capturedAt")}</dt>
+        <dd>${escapeHtml(result.local.capturedAt ?? t("result.missing"))}</dd>
       </div>
       <div>
-        <dt>Format</dt>
+        <dt>${t("result.format")}</dt>
         <dd>${escapeHtml(result.local.manifest?.containerFormat ?? "unknown")}</dd>
       </div>
       <div>
-        <dt>Media</dt>
+        <dt>${t("result.media")}</dt>
         <dd>${escapeHtml(formatMediaKind(result.local.mediaKind))}</dd>
       </div>
       <div>
-        <dt>Verified Scope</dt>
+        <dt>${t("result.scope")}</dt>
         <dd>${escapeHtml(formatVerificationScope(result.local.verificationScope))}</dd>
       </div>
       <div>
-        <dt>Live Photo Video</dt>
+        <dt>${t("result.livePhotoVideo")}</dt>
         <dd>${escapeHtml(formatLivePhotoVideoStatus(result.local))}</dd>
       </div>
       <div>
-        <dt>Server</dt>
+        <dt>${t("result.server")}</dt>
         <dd>${escapeHtml(serverStatus)}</dd>
       </div>
       <div>
-        <dt>Asset SHA-256</dt>
-        <dd>${escapeHtml(result.local.recomputed?.assetSHA256 ?? "missing")}</dd>
+        <dt>${t("result.assetSha")}</dt>
+        <dd>${escapeHtml(result.local.recomputed?.assetSHA256 ?? t("result.missing"))}</dd>
       </div>
       <div>
-        <dt>Signing Binding SHA-256</dt>
-        <dd>${escapeHtml(result.local.recomputed?.signingBindingSHA256 ?? "missing")}</dd>
+        <dt>${t("result.signingSha")}</dt>
+        <dd>${escapeHtml(result.local.recomputed?.signingBindingSHA256 ?? t("result.missing"))}</dd>
       </div>
       <div>
-        <dt>Server Echo SHA-256</dt>
+        <dt>${t("result.serverEchoSha")}</dt>
         <dd>${escapeHtml(formatServerEcho(result.serverBoundary))}</dd>
       </div>
       <div>
-        <dt>Server Boundary</dt>
+        <dt>${t("result.serverBoundary")}</dt>
         <dd>${escapeHtml(formatServerBoundaryStatus(result.serverBoundary))}</dd>
       </div>
     </dl>
@@ -104,7 +152,7 @@ export function renderVerificationResult(result: CombinedVerificationResult): st
     ${renderVerificationWarnings(result.local)}
     ${renderServerBoundaryDiagnostic(result.serverBoundary)}
     <details class="checks-disclosure">
-      <summary>Local content binding checks</summary>
+      <summary>${t("checks.title")}</summary>
       <div class="checks">
         ${result.local.checks.map(renderCheck).join("")}
       </div>
@@ -114,45 +162,60 @@ export function renderVerificationResult(result: CombinedVerificationResult): st
 
 function formatMediaKind(mediaKind: string | undefined): string {
   if (mediaKind === "livePhoto") {
-    return "Live Photo";
+    return t("media.livePhoto");
   }
   if (mediaKind === "stillPhoto") {
-    return "Still photo";
+    return t("media.stillPhoto");
   }
   return mediaKind ?? "unknown";
 }
 
 function formatVerificationScope(scope: string | undefined): string {
   if (scope === "fullLivePhoto") {
-    return "Full Live Photo";
+    return t("scope.fullLivePhoto");
   }
   if (scope === "primaryPhotoFromLivePhoto") {
-    return "Live Photo primary photo";
+    return t("scope.primaryPhoto");
   }
   if (scope === "stillPhoto") {
-    return "Still photo";
+    return t("scope.stillPhoto");
   }
   return scope ?? "unknown";
 }
 
 function formatLivePhotoVideoStatus(local: CombinedVerificationResult["local"]): string {
   if (local.mediaKind !== "livePhoto") {
-    return "not required";
+    return t("video.notRequired");
   }
 
   const pairedVideo = local.livePhoto?.pairedVideo;
   const status = pairedVideo?.status ?? "unknown";
   const filename = local.livePhoto?.pairedVideoFilename ?? "paired-video.mov";
   if (status === "matched") {
-    return `${filename} verified`;
+    return t("video.verified", { filename });
   }
   if (status === "missing") {
-    return `${filename} not supplied`;
+    return t("video.notSupplied", { filename });
   }
   if (status === "mismatch") {
-    return `${filename} mismatch`;
+    return t("video.mismatch", { filename });
   }
   return `${filename} ${status}`;
+}
+
+function formatWarningSeverity(severity: string | undefined): string {
+  switch (severity) {
+    case "high":
+      return t("warning.high");
+    case "warning":
+      return t("warning.warning");
+    case "notice":
+      return t("warning.notice");
+    case "info":
+      return t("warning.info");
+    default:
+      return t("warning.warning");
+  }
 }
 
 function renderVerificationWarnings(local: CombinedVerificationResult["local"]): string {
@@ -166,7 +229,7 @@ function renderVerificationWarnings(local: CombinedVerificationResult["local"]):
       ${warnings
         .map((warning) => `
           <li>
-            <strong>${escapeHtml(warning.severity ?? "warning")}</strong>
+            <strong>${escapeHtml(formatWarningSeverity(warning.severity))}</strong>
             ${escapeHtml(warning.message ?? "Verification scope warning.")}
           </li>
         `)
@@ -177,22 +240,22 @@ function renderVerificationWarnings(local: CombinedVerificationResult["local"]):
 
 function formatServerBoundaryStatus(diagnostic: ServerBoundaryDiagnostic): string {
   if (diagnostic.status === "matched") {
-    return "matched";
+    return t("server.matched");
   }
   if (diagnostic.status === "mismatch") {
-    return "integration drift";
+    return t("server.drift");
   }
   if (diagnostic.status === "not-echoed") {
-    return "not echoed";
+    return t("result.notEchoed");
   }
-  return "not run";
+  return t("result.notRun");
 }
 
 function formatServerEcho(diagnostic: ServerBoundaryDiagnostic): string {
   if (diagnostic.serverSigningBindingSHA256) {
     return diagnostic.serverSigningBindingSHA256;
   }
-  return diagnostic.status === "not-run" ? "not run" : "not echoed";
+  return diagnostic.status === "not-run" ? t("result.notRun") : t("result.notEchoed");
 }
 
 function renderServerBoundaryDiagnostic(diagnostic: ServerBoundaryDiagnostic): string {
@@ -205,10 +268,10 @@ function renderServerBoundaryDiagnostic(diagnostic: ServerBoundaryDiagnostic): s
 
 export function renderDepthPanel(state: DepthPanelState): string {
   if (state.status === "idle") {
-    return renderDepthMessage("No depth data selected.");
+    return renderDepthMessage(t("depth.noData"));
   }
   if (state.status === "loading") {
-    return renderDepthMessage("Reading embedded depth data.");
+    return renderDepthMessage(t("depth.loading"));
   }
   if (state.status === "unavailable") {
     return renderDepthMessage(state.message);
@@ -219,23 +282,23 @@ export function renderDepthPanel(state: DepthPanelState): string {
 
   return `
     <div class="depth-canvas-frame">
-      <canvas id="depthCanvas" width="${state.width}" height="${state.height}" aria-label="Embedded depth visualization"></canvas>
+      <canvas id="depthCanvas" width="${state.width}" height="${state.height}" aria-label="${t("depth.ariaLabel")}"></canvas>
     </div>
     <dl class="depth-meta">
       <div>
-        <dt>Source</dt>
+        <dt>${t("depth.source")}</dt>
         <dd>${escapeHtml(state.sourceKind)}</dd>
       </div>
       <div>
-        <dt>Size</dt>
+        <dt>${t("depth.size")}</dt>
         <dd>${state.width} × ${state.height}</dd>
       </div>
       <div>
-        <dt>Range</dt>
+        <dt>${t("depth.range")}</dt>
         <dd>${formatNumber(state.minValue)} – ${formatNumber(state.maxValue)} ${escapeHtml(state.valueUnit)}</dd>
       </div>
       <div>
-        <dt>Rotation</dt>
+        <dt>${t("depth.rotation")}</dt>
         <dd>${escapeHtml(state.rotation)}</dd>
       </div>
     </dl>
@@ -245,10 +308,10 @@ export function renderDepthPanel(state: DepthPanelState): string {
 
 export function renderPixelProjectionPanel(state: PixelProjectionState): string {
   if (state.status === "idle") {
-    return renderProjectionMessage("No projection data selected.");
+    return renderProjectionMessage(t("geom.noData"));
   }
   if (state.status === "loading") {
-    return renderProjectionMessage("Building point cloud.");
+    return renderProjectionMessage(t("geom.loading"));
   }
   if (state.status === "unavailable") {
     return renderProjectionMessage(state.message);
@@ -259,95 +322,96 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
 
   const defaultFilter = defaultFilterOptions();
   const defaultFiltered = filterProjectedPixelCloud(state, defaultFilter);
+  const initialFilterText = `${t("filter.raw")} · ${formatSensitivity(defaultFilter.sensitivity)}`;
   return `
     <div class="geometry-viewer-shell">
-      <div id="geometryViewer" class="geometry-viewer" aria-label="Relative 3D pixel projection"></div>
+      <div id="geometryViewer" class="geometry-viewer" aria-label="${t("geom.ariaLabel")}"></div>
       ${renderGeometryFilterControls()}
-      <button class="geometry-reset" type="button" data-geometry-reset>Reset view</button>
+      <button class="geometry-reset" type="button" data-geometry-reset>${t("geom.resetView")}</button>
     </div>
     <dl class="depth-meta geometry-meta">
       <div>
-        <dt>Geometry</dt>
+        <dt>${t("geom.geometry")}</dt>
         <dd>${escapeHtml(state.geometryKind)}</dd>
       </div>
       <div>
-        <dt>View</dt>
+        <dt>${t("geom.view")}</dt>
         <dd>${escapeHtml(formatProjectionViewMode(state.viewMode))}</dd>
       </div>
       <div>
-        <dt>Camera Model</dt>
+        <dt>${t("geom.cameraModel")}</dt>
         <dd>${escapeHtml(state.cameraModel)}</dd>
       </div>
       <div>
-        <dt>Points</dt>
+        <dt>${t("geom.points")}</dt>
         <dd>${state.pointCount}</dd>
       </div>
       <div>
-        <dt>Visible Points</dt>
+        <dt>${t("geom.visiblePoints")}</dt>
         <dd><span data-geometry-visible-points>${defaultFiltered.visiblePointCount}</span> / ${defaultFiltered.totalPointCount}</dd>
       </div>
       <div>
-        <dt>Filter</dt>
-        <dd data-geometry-active-filter>Raw · Medium</dd>
+        <dt>${t("geom.filter")}</dt>
+        <dd data-geometry-active-filter>${initialFilterText}</dd>
       </div>
       <div>
-        <dt>Global Risk</dt>
+        <dt>${t("geom.globalRisk")}</dt>
         <dd>${escapeHtml(state.quality.globalRisk)}</dd>
       </div>
       <div>
-        <dt>Sample</dt>
+        <dt>${t("geom.sample")}</dt>
         <dd>${formatSampleStep(state.sampleStep)}</dd>
       </div>
       <div>
-        <dt>Projected Depth</dt>
+        <dt>${t("geom.projectedDepth")}</dt>
         <dd>${state.width} × ${state.height}</dd>
       </div>
       <div>
-        <dt>Source Depth</dt>
+        <dt>${t("geom.sourceDepth")}</dt>
         <dd>${state.inputDepthWidth} × ${state.inputDepthHeight}</dd>
       </div>
       <div>
-        <dt>RGB</dt>
+        <dt>${t("geom.rgb")}</dt>
         <dd>${state.rgbWidth} × ${state.rgbHeight}</dd>
       </div>
       <div>
-        <dt>Focal</dt>
+        <dt>${t("geom.focal")}</dt>
         <dd>${formatNumber(state.fx)} × ${formatNumber(state.fy)}</dd>
       </div>
       <div>
-        <dt>Principal Point</dt>
+        <dt>${t("geom.principal")}</dt>
         <dd>${formatNumber(state.cx)} × ${formatNumber(state.cy)}</dd>
       </div>
       <div>
-        <dt>Range</dt>
+        <dt>${t("depth.range")}</dt>
         <dd>${formatNumber(state.depthRange.min)} – ${formatNumber(state.depthRange.max)} ${escapeHtml(state.valueUnit)}</dd>
       </div>
       <div>
-        <dt>Rotation</dt>
+        <dt>${t("depth.rotation")}</dt>
         <dd>${escapeHtml(state.rotation)}</dd>
       </div>
       <div>
-        <dt>Depth Orientation</dt>
+        <dt>${t("geom.depthOrient")}</dt>
         <dd>${escapeHtml(state.orientation)}</dd>
       </div>
       <div>
-        <dt>Photo Orientation</dt>
+        <dt>${t("geom.photoOrient")}</dt>
         <dd>${escapeHtml(state.photoOrientation)}</dd>
       </div>
       <div>
-        <dt>Scale</dt>
-        <dd>${state.relativeGeometry ? "relative" : "metric"}</dd>
+        <dt>${t("geom.scale")}</dt>
+        <dd>${state.relativeGeometry ? t("geom.relative") : t("geom.metric")}</dd>
       </div>
       <div>
-        <dt>Clipped</dt>
+        <dt>${t("geom.clipped")}</dt>
         <dd>${formatRatio(state.quality.metrics.clippedLowRatio + state.quality.metrics.clippedHighRatio)}</dd>
       </div>
       <div>
-        <dt>Outliers</dt>
+        <dt>${t("geom.outliers")}</dt>
         <dd>${formatRatio(state.quality.metrics.outlierRatio)}</dd>
       </div>
       <div>
-        <dt>Discontinuities</dt>
+        <dt>${t("geom.discontinuities")}</dt>
         <dd>${formatRatio(state.quality.metrics.discontinuityRatio)}</dd>
       </div>
     </dl>
@@ -358,7 +422,7 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
 export function renderOriginalPreviewLoading(fileName: string): string {
   return `
     <div class="preview-message">
-      <span>Browser preview is unavailable for ${escapeHtml(fileName)}. Decoding original image with WASM.</span>
+      <span>${t("orig.browserUnavailable", { fileName })}</span>
     </div>
   `;
 }
@@ -367,7 +431,7 @@ export function renderOriginalPreviewResult(state: OriginalPreviewResult, fileNa
   if (state.status === "unavailable" || state.status === "error") {
     return `
       <div class="preview-message">
-        <span>Original preview is not available for ${escapeHtml(fileName)}. ${escapeHtml(state.message)}</span>
+        <span>${t("orig.unavailable", { fileName, message: state.message })}</span>
       </div>
     `;
   }
@@ -377,7 +441,7 @@ export function renderOriginalPreviewResult(state: OriginalPreviewResult, fileNa
       id="originalFallbackCanvas"
       width="${state.width}"
       height="${state.height}"
-      aria-label="Original image preview decoded from HEIC"
+      aria-label="${t("orig.ariaLabel")}"
     ></canvas>
     ${renderOriginalWarnings(state)}
   `;
@@ -451,7 +515,7 @@ function renderProjectionMessage(message: string): string {
 }
 
 function formatSampleStep(sampleStep: number): string {
-  return sampleStep <= 1 ? "every pixel" : `every ${sampleStep} px`;
+  return sampleStep <= 1 ? t("geom.everyPixel") : t("geom.everyNPx", { n: sampleStep });
 }
 
 function formatRatio(value: number): string {
@@ -459,49 +523,49 @@ function formatRatio(value: number): string {
 }
 
 function formatProjectionViewMode(viewMode: string): string {
-  return viewMode === "capture-camera" ? "capture camera" : viewMode;
+  return viewMode === "capture-camera" ? t("geom.captureCamera") : viewMode;
 }
 
 function renderGeometryFilterControls(): string {
   return `
       <div class="geometry-filter-panel" data-geometry-filter-panel>
-      <button class="geometry-filter-collapse" data-geometry-filter-toggle type="button" aria-expanded="true" aria-label="Collapse point filters"></button>
+      <button class="geometry-filter-collapse" data-geometry-filter-toggle type="button" aria-expanded="true" aria-label="${t("filter.collapse")}"></button>
       <div class="geometry-filter-body" data-geometry-filter-body>
         <label class="geometry-sensitivity-control">
-          <span>Sensitivity</span>
+          <span>${t("filter.sensitivity")}</span>
           <input data-geometry-filter-sensitivity type="range" min="0" max="2" step="1" value="1" />
-          <b data-geometry-filter-sensitivity-label>Medium</b>
+          <b data-geometry-filter-sensitivity-label>${t("filter.medium")}</b>
         </label>
         <div class="geometry-filter-group geometry-risk-types">
-          <div class="geometry-risk-title">Risk markers</div>
+          <div class="geometry-risk-title">${t("filter.riskMarkers")}</div>
           ${renderRiskTypeControl(
             "clipped",
-            "Clipped depth",
-            "The decoded depth value is near the low or high limit. These samples can flatten surfaces or exaggerate relative spacing, so they are marked for inspection rather than treated as a verification failure.",
+            t("filter.clippedDepth"),
+            t("filter.clippedDesc"),
             true,
             false
           )}
           ${renderRiskTypeControl(
             "outliers",
-            "Isolated outliers",
-            "This depth sample differs from a mostly consistent local neighborhood. It is a local noise candidate, not proof that the capture is invalid.",
+            t("filter.isolatedOutliers"),
+            t("filter.outliersDesc"),
             true,
             false
           )}
           ${renderRiskTypeControl(
             "edges",
-            "Depth edges",
-            "Neighboring depth samples change sharply at this point. This often marks a real object boundary, but it can also reveal a depth discontinuity or mapping artifact.",
+            t("filter.depthEdges"),
+            t("filter.edgesDesc"),
             true,
             false
           )}
           ${renderRiskTypeControl(
             "color",
-            "Color mapping risk",
-            "The depth point is still shown, but the RGB color attached to it may be less reliable near aspect-ratio, alignment, or uncorrected-distortion edges.",
+            t("filter.colorRisk"),
+            t("filter.colorDesc"),
             true,
             false,
-            "unstable"
+            t("filter.unstable")
           )}
         </div>
       </div>
@@ -526,10 +590,10 @@ function renderRiskTypeControl(
         <span class="geometry-risk-swatch geometry-risk-swatch--${id}" aria-hidden="true"></span>
       </span>
       <button class="geometry-risk-toggle geometry-risk-toggle--show" data-geometry-risk-show="${id}" type="button" aria-pressed="${showChecked ? "true" : "false"}">
-        ${showChecked ? "Show" : "Hide"}
+        ${showChecked ? t("filter.show") : t("filter.hide")}
       </button>
       <button class="geometry-risk-toggle geometry-risk-toggle--highlight" data-geometry-risk-highlight="${id}" type="button" aria-pressed="${highlightChecked ? "true" : "false"}"${highlightDisabled ? " disabled" : ""}>
-        ${highlightChecked ? "Highlight" : "Unhighlight"}
+        ${highlightChecked ? t("filter.highlight") : t("filter.unhighlight")}
       </button>
       <span class="geometry-info" tabindex="0" aria-label="${escapeHtml(description)}" data-tooltip="${escapeHtml(description)}">i</span>
     </div>
@@ -572,7 +636,7 @@ function renderProjectionWarnings(state: ProjectedPixelCloud): string {
       ${qualityWarnings
         .map((warning) => `
           <li class="projection-warning projection-warning--${escapeHtml(warning.severity)}">
-            <strong>${escapeHtml(warning.severity)}</strong>
+            <strong>${escapeHtml(formatWarningSeverity(warning.severity))}</strong>
             ${escapeHtml(warning.message)}
             ${typeof warning.affectedPointCount === "number" ? `<span>${warning.affectedPointCount} pts</span>` : ""}
           </li>

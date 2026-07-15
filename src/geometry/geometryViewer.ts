@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { t, onLangChange } from "../i18n/i18n";
 import {
   defaultFilterOptions,
   filterProjectedPixelCloud,
@@ -27,6 +28,39 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   renderer.domElement.className = "geometry-canvas";
   renderer.domElement.dataset.projectionCanvas = "true";
   host.append(renderer.domElement);
+
+  const rotateHint = document.createElement("div");
+  rotateHint.className = "geometry-rotate-hint";
+  rotateHint.innerHTML = `
+    <div class="geometry-rotate-hint__grid">
+      <span class="geometry-rotate-hint__arrow geometry-rotate-hint__arrow--up" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+      </span>
+      <span class="geometry-rotate-hint__row">
+        <span class="geometry-rotate-hint__arrow geometry-rotate-hint__arrow--left" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </span>
+        <span class="geometry-rotate-hint__center" aria-hidden="true"></span>
+        <span class="geometry-rotate-hint__arrow geometry-rotate-hint__arrow--right" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </span>
+      </span>
+      <span class="geometry-rotate-hint__arrow geometry-rotate-hint__arrow--down" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </span>
+    </div>
+    <span class="geometry-rotate-hint__label">${t("geom.dragToRotate")}</span>
+  `;
+  rotateHint.setAttribute("aria-label", t("geom.dragToRotate"));
+  host.append(rotateHint);
+
+  const hintTimeout = window.setTimeout(() => hideRotateHint(), 5000);
+  function hideRotateHint(): void {
+    if (!rotateHint.classList.contains("is-hidden")) {
+      rotateHint.classList.add("is-hidden");
+    }
+    window.clearTimeout(hintTimeout);
+  }
 
   const boundsGeometry = new THREE.BufferGeometry();
   boundsGeometry.setAttribute("position", new THREE.BufferAttribute(cloud.positions, 3));
@@ -58,9 +92,40 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
 
   let userMovedCamera = false;
   let canvasSize = { width: 1, height: 1 };
+  let defaultView: "initial" | "reset" = "initial";
+
+  const initialTilt = Math.PI / 18;
+  const initialPan = Math.PI / 25;
 
   const resetView = (): void => {
-    camera.position.set(0, 0, 0);
+    const tilt = 0;
+    const pan = 0;
+    const distance = targetDepth * 1.1;
+
+    const horizontalLen = distance * Math.cos(tilt);
+    const offsetX = horizontalLen * Math.sin(pan);
+    const offsetY = distance * Math.sin(tilt);
+    const offsetZ = horizontalLen * Math.cos(pan);
+
+    camera.position.set(offsetX, offsetY, -targetDepth + offsetZ);
+    camera.up.set(0, 1, 0);
+    controls.target.set(0, 0, -targetDepth);
+    controls.minDistance = Math.max(0.01, targetDepth * 0.05);
+    controls.maxDistance = Math.max(4, targetDepth * 6);
+    controls.update();
+  };
+
+  const setInitialView = (): void => {
+    const tilt = initialTilt;
+    const pan = initialPan;
+    const distance = targetDepth * 1.1;
+
+    const horizontalLen = distance * Math.cos(tilt);
+    const offsetX = horizontalLen * Math.sin(pan);
+    const offsetY = distance * Math.sin(tilt);
+    const offsetZ = horizontalLen * Math.cos(pan);
+
+    camera.position.set(offsetX, offsetY, -targetDepth + offsetZ);
     camera.up.set(0, 1, 0);
     controls.target.set(0, 0, -targetDepth);
     controls.minDistance = Math.max(0.01, targetDepth * 0.05);
@@ -69,6 +134,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   };
   const markCameraMoved = (): void => {
     userMovedCamera = true;
+    hideRotateHint();
   };
   controls.addEventListener("start", markCameraMoved);
 
@@ -87,7 +153,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     shell?.querySelectorAll<HTMLButtonElement>("[data-geometry-risk-highlight]") ?? []
   );
   let filterOptions = defaultFilterOptions();
-  let filterPanelCollapsed = false;
+  let filterPanelCollapsed = true;
 
   const applyFilter = (): void => {
     const filtered = filterProjectedPixelCloud(cloud, filterOptions);
@@ -115,16 +181,16 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     for (const button of riskShowButtons) {
       switch (button.dataset.geometryRiskShow) {
         case "clipped":
-          syncRiskToggle(button, filterOptions.showClippedDepth, "Show", "Hide", false);
+          syncRiskToggle(button, filterOptions.showClippedDepth, t("filter.show"), t("filter.hide"), false);
           break;
         case "outliers":
-          syncRiskToggle(button, filterOptions.showIsolatedOutliers, "Show", "Hide", false);
+          syncRiskToggle(button, filterOptions.showIsolatedOutliers, t("filter.show"), t("filter.hide"), false);
           break;
         case "edges":
-          syncRiskToggle(button, filterOptions.showDepthEdges, "Show", "Hide", false);
+          syncRiskToggle(button, filterOptions.showDepthEdges, t("filter.show"), t("filter.hide"), false);
           break;
         case "color":
-          syncRiskToggle(button, filterOptions.showColorMappingRisk, "Show", "Hide", false);
+          syncRiskToggle(button, filterOptions.showColorMappingRisk, t("filter.show"), t("filter.hide"), false);
           break;
       }
     }
@@ -134,8 +200,8 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
           syncRiskToggle(
             button,
             filterOptions.showClippedDepth && filterOptions.highlightClippedDepth,
-            "Highlight",
-            "Unhighlight",
+            t("filter.highlight"),
+            t("filter.unhighlight"),
             !filterOptions.showClippedDepth
           );
           break;
@@ -143,8 +209,8 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
           syncRiskToggle(
             button,
             filterOptions.showIsolatedOutliers && filterOptions.highlightIsolatedOutliers,
-            "Highlight",
-            "Unhighlight",
+            t("filter.highlight"),
+            t("filter.unhighlight"),
             !filterOptions.showIsolatedOutliers
           );
           break;
@@ -152,8 +218,8 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
           syncRiskToggle(
             button,
             filterOptions.showDepthEdges && filterOptions.highlightDepthEdges,
-            "Highlight",
-            "Unhighlight",
+            t("filter.highlight"),
+            t("filter.unhighlight"),
             !filterOptions.showDepthEdges
           );
           break;
@@ -161,8 +227,8 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
           syncRiskToggle(
             button,
             filterOptions.showColorMappingRisk && filterOptions.highlightColorMappingRisk,
-            "Highlight",
-            "Unhighlight",
+            t("filter.highlight"),
+            t("filter.unhighlight"),
             !filterOptions.showColorMappingRisk
           );
           break;
@@ -199,6 +265,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   };
   const handleResetButtonClick = (): void => {
     userMovedCamera = false;
+    defaultView = "reset";
     resetView();
   };
   filterToggle?.addEventListener("click", handleFilterToggleClick);
@@ -213,6 +280,14 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   syncControls();
   applyFilter();
 
+  const unsubscribeLangChange = onLangChange(() => {
+    syncControls();
+    applyFilter();
+    const labelEl = rotateHint.querySelector<HTMLElement>(".geometry-rotate-hint__label");
+    if (labelEl) labelEl.textContent = t("geom.dragToRotate");
+    rotateHint.setAttribute("aria-label", t("geom.dragToRotate"));
+  });
+
   const resize = (): void => {
     const rect = host.getBoundingClientRect();
     const width = Math.max(1, Math.floor(rect.width));
@@ -221,7 +296,11 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     renderer.setSize(width, height, false);
     updateCaptureCameraProjection(camera, cloud, width, height);
     if (!userMovedCamera) {
-      resetView();
+      if (defaultView === "initial") {
+        setInitialView();
+      } else {
+        resetView();
+      }
     }
   };
   const resizeObserver = new ResizeObserver(resize);
@@ -241,6 +320,8 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
 
   return () => {
     window.cancelAnimationFrame(animationFrame);
+    window.clearTimeout(hintTimeout);
+    unsubscribeLangChange();
     filterToggle?.removeEventListener("click", handleFilterToggleClick);
     resetButton?.removeEventListener("click", handleResetButtonClick);
     sensitivityInput?.removeEventListener("input", handleSensitivityInput);
@@ -257,6 +338,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     material.dispose();
     renderer.dispose();
     renderer.domElement.remove();
+    rotateHint.remove();
   };
 }
 
@@ -360,7 +442,7 @@ function syncFilterPanelToggle(
   filterToggle.setAttribute("aria-expanded", filterPanelCollapsed ? "false" : "true");
   filterToggle.setAttribute(
     "aria-label",
-    filterPanelCollapsed ? "Expand point filters" : "Collapse point filters"
+    filterPanelCollapsed ? t("filter.expand") : t("filter.collapse")
   );
 }
 
@@ -368,15 +450,17 @@ function formatFilterSummary(options: PixelProjectionFilterOptions): string {
   const sensitivity = formatSensitivity(options.sensitivity);
   const shownRiskCount = shownRiskTypeCount(options);
   if (shownRiskCount === 0) {
-    return `Clean · ${sensitivity}`;
+    return `${t("filter.clean")} · ${sensitivity}`;
   }
   if (allRiskTypesShown(options)) {
-    return anyRiskTypeHighlighted(options) ? `Raw · highlighted risk · ${sensitivity}` : `Raw · ${sensitivity}`;
+    return anyRiskTypeHighlighted(options)
+      ? `${t("filter.raw")} · ${t("filter.highlightedRisk")} · ${sensitivity}`
+      : `${t("filter.raw")} · ${sensitivity}`;
   }
-  const riskTypeLabel = shownRiskCount === 1 ? "risk type" : "risk types";
+  const riskTypeLabel = shownRiskCount === 1 ? t("filter.riskType") : t("filter.riskTypes");
   return anyRiskTypeHighlighted(options)
-    ? `Clean + ${shownRiskCount} ${riskTypeLabel} · highlighted · ${sensitivity}`
-    : `Clean + ${shownRiskCount} ${riskTypeLabel} · ${sensitivity}`;
+    ? `${t("filter.clean")} + ${shownRiskCount} ${riskTypeLabel} · ${t("filter.highlighted")} · ${sensitivity}`
+    : `${t("filter.clean")} + ${shownRiskCount} ${riskTypeLabel} · ${sensitivity}`;
 }
 
 function shownRiskTypeCount(options: PixelProjectionFilterOptions): number {

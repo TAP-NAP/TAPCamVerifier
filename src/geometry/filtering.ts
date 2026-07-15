@@ -1,3 +1,4 @@
+import { t } from "../i18n/i18n";
 import type { ProjectedPixelCloud } from "./types";
 
 export const RISK_CLIPPED_LOW = 1 << 0;
@@ -175,12 +176,12 @@ export function sliderValueFromSensitivity(sensitivity: PixelProjectionFilterSen
 
 export function formatSensitivity(sensitivity: PixelProjectionFilterSensitivity): string {
   if (sensitivity === "low") {
-    return "Low";
+    return t("filter.low");
   }
   if (sensitivity === "high") {
-    return "High";
+    return t("filter.high");
   }
-  return "Medium";
+  return t("filter.medium");
 }
 
 function allRiskTypesShown(options: PixelProjectionFilterOptions): boolean {
