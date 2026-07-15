@@ -746,6 +746,7 @@ fn visualize_depth_u8_inner(
         .and_then(|photo| photo.get("orientation"))
         .and_then(Value::as_str)
         .unwrap_or("unknown");
+    let is_front_camera = is_front_camera_capture(payload);
 
     let (display_width, display_height) = display_reference
         .map(|(width, height)| (Some(width), Some(height)))
@@ -757,6 +758,7 @@ fn visualize_depth_u8_inner(
         display_width,
         display_height,
         Some(photo_orientation),
+        is_front_camera,
     );
     let (output_width, output_height) = transform.output_dimensions(width, height);
 
@@ -975,6 +977,7 @@ fn project_depth_pixels_inner(
         .and_then(|photo| photo.get("orientation"))
         .and_then(Value::as_str)
         .unwrap_or("unknown");
+    let is_front_camera = is_front_camera_capture(payload);
 
     let (display_width, display_height) = display_reference
         .map(|(width, height)| (Some(width), Some(height)))
@@ -985,6 +988,7 @@ fn project_depth_pixels_inner(
         display_width,
         display_height,
         Some(photo_orientation),
+        is_front_camera,
     );
     let (output_width, output_height) = transform.output_dimensions(depth_width, depth_height);
 
@@ -1005,8 +1009,13 @@ fn project_depth_pixels_inner(
     let value_unit =
         infer_depth_value_unit(source_kind, pixel_format, metric_unit, value_range_kind);
     let relative_geometry = true;
-    let camera = pinhole_camera_from_manifest(depth, output_width, output_height)
-        .unwrap_or_else(|| virtual_pinhole_camera(output_width, output_height));
+    let camera = if is_front_camera {
+        pinhole_camera_from_manifest(depth, depth_width, depth_height)
+            .map(|camera| camera.display_oriented(transform))
+    } else {
+        pinhole_camera_from_manifest(depth, output_width, output_height)
+    }
+    .unwrap_or_else(|| virtual_pinhole_camera(output_width, output_height));
     let sample_step = output_width
         .max(output_height)
         .div_ceil(PIXEL_PROJECTION_TARGET_MAX_EDGE)
@@ -2449,6 +2458,76 @@ fn display_orientation_transform(
     display_width: Option<u32>,
     display_height: Option<u32>,
     photo_orientation: Option<&str>,
+    is_front_camera: bool,
+) -> OrientationTransform {
+    if !is_front_camera {
+        return legacy_display_orientation_transform(
+            width,
+            height,
+            display_width,
+            display_height,
+            photo_orientation,
+        );
+    }
+
+    let Some(display_width) = display_width else {
+        return OrientationTransform::None;
+    };
+    let Some(display_height) = display_height else {
+        return OrientationTransform::None;
+    };
+
+    let source_axis_matches_display =
+        same_display_axis(width, height, display_width, display_height);
+    if let Some(photo_transform) =
+        photo_orientation.and_then(OrientationTransform::from_photo_orientation_str)
+    {
+        let (photo_width, photo_height) = photo_transform.output_dimensions(width, height);
+        let photo_axis_matches_display =
+            same_display_axis(photo_width, photo_height, display_width, display_height);
+
+        if !source_axis_matches_display && photo_axis_matches_display {
+            return photo_transform;
+        }
+
+        if source_axis_matches_display {
+            if photo_transform.is_mirrored() && !photo_transform.swaps_axes() {
+                return photo_transform;
+            }
+
+            // For mirrored 90-degree orientations, libheif can return the auxiliary
+            // plane with the axis swap already applied. Preserve the remaining mirror
+            // in display space without swapping the dimensions a second time.
+            return photo_transform
+                .mirror_component_in_display_space()
+                .unwrap_or(OrientationTransform::None);
+        }
+    }
+
+    if source_axis_matches_display {
+        return OrientationTransform::None;
+    }
+
+    for transform in [
+        OrientationTransform::Clockwise90,
+        OrientationTransform::CounterClockwise90,
+        OrientationTransform::Rotate180,
+    ] {
+        let (output_width, output_height) = transform.output_dimensions(width, height);
+        if same_display_axis(output_width, output_height, display_width, display_height) {
+            return transform;
+        }
+    }
+
+    OrientationTransform::None
+}
+
+fn legacy_display_orientation_transform(
+    width: u32,
+    height: u32,
+    display_width: Option<u32>,
+    display_height: Option<u32>,
+    photo_orientation: Option<&str>,
 ) -> OrientationTransform {
     let Some(display_width) = display_width else {
         return OrientationTransform::None;
@@ -2458,7 +2537,8 @@ fn display_orientation_transform(
     };
 
     let photo_transform = photo_orientation
-        .map(OrientationTransform::from_photo_orientation_str)
+        .and_then(OrientationTransform::from_photo_orientation_str)
+        .filter(|transform| !transform.is_mirrored())
         .unwrap_or(OrientationTransform::None);
     let candidates = [
         OrientationTransform::None,
@@ -2498,6 +2578,14 @@ fn display_orientation_transform(
     OrientationTransform::None
 }
 
+fn is_front_camera_capture(payload: &Value) -> bool {
+    payload
+        .get("photoLens")
+        .and_then(|photo_lens| photo_lens.get("position"))
+        .and_then(Value::as_str)
+        == Some("front")
+}
+
 fn same_display_axis(width: u32, height: u32, display_width: u32, display_height: u32) -> bool {
     width.cmp(&height) == display_width.cmp(&display_height)
 }
@@ -2530,36 +2618,72 @@ fn infer_depth_value_unit(
     "value"
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OrientationTransform {
     None,
+    UpMirrored,
     Rotate180,
+    DownMirrored,
+    LeftMirrored,
     Clockwise90,
+    RightMirrored,
     CounterClockwise90,
 }
 
 impl OrientationTransform {
-    fn from_photo_orientation_str(orientation: &str) -> Self {
+    fn from_photo_orientation_str(orientation: &str) -> Option<Self> {
         match orientation {
-            value if value.ends_with(":3") || value == "3" => Self::Rotate180,
-            value if value.ends_with(":6") || value == "6" => Self::Clockwise90,
-            value if value.ends_with(":8") || value == "8" => Self::CounterClockwise90,
-            _ => Self::None,
+            value if value.ends_with(":1") || value == "1" => Some(Self::None),
+            value if value.ends_with(":2") || value == "2" => Some(Self::UpMirrored),
+            value if value.ends_with(":3") || value == "3" => Some(Self::Rotate180),
+            value if value.ends_with(":4") || value == "4" => Some(Self::DownMirrored),
+            value if value.ends_with(":5") || value == "5" => Some(Self::LeftMirrored),
+            value if value.ends_with(":6") || value == "6" => Some(Self::Clockwise90),
+            value if value.ends_with(":7") || value == "7" => Some(Self::RightMirrored),
+            value if value.ends_with(":8") || value == "8" => Some(Self::CounterClockwise90),
+            _ => None,
         }
     }
 
-    fn output_dimensions(self, width: u32, height: u32) -> (u32, u32) {
+    fn mirror_component_in_display_space(self) -> Option<Self> {
         match self {
-            Self::Clockwise90 | Self::CounterClockwise90 => (height, width),
-            Self::None | Self::Rotate180 => (width, height),
+            Self::UpMirrored | Self::DownMirrored => Some(Self::UpMirrored),
+            Self::LeftMirrored | Self::RightMirrored => Some(Self::DownMirrored),
+            _ => None,
+        }
+    }
+
+    fn is_mirrored(self) -> bool {
+        matches!(
+            self,
+            Self::UpMirrored | Self::DownMirrored | Self::LeftMirrored | Self::RightMirrored
+        )
+    }
+
+    fn swaps_axes(self) -> bool {
+        matches!(
+            self,
+            Self::LeftMirrored | Self::Clockwise90 | Self::RightMirrored | Self::CounterClockwise90
+        )
+    }
+
+    fn output_dimensions(self, width: u32, height: u32) -> (u32, u32) {
+        if self.swaps_axes() {
+            (height, width)
+        } else {
+            (width, height)
         }
     }
 
     fn as_report_str(self) -> &'static str {
         match self {
             Self::None => "none",
+            Self::UpMirrored => "upMirrored",
             Self::Rotate180 => "rotate180",
+            Self::DownMirrored => "downMirrored",
+            Self::LeftMirrored => "leftMirrored",
             Self::Clockwise90 => "clockwise90",
+            Self::RightMirrored => "rightMirrored",
             Self::CounterClockwise90 => "counterClockwise90",
         }
     }
@@ -2637,11 +2761,18 @@ fn inverse_orientation_transform(
 ) -> (f64, f64) {
     match transform {
         OrientationTransform::None => (x, y),
+        OrientationTransform::UpMirrored => ((source_width - 1) as f64 - x, y),
         OrientationTransform::Rotate180 => (
             (source_width - 1) as f64 - x,
             (source_height - 1) as f64 - y,
         ),
+        OrientationTransform::DownMirrored => (x, (source_height - 1) as f64 - y),
+        OrientationTransform::LeftMirrored => (y, x),
         OrientationTransform::Clockwise90 => (y, (source_height - 1) as f64 - x),
+        OrientationTransform::RightMirrored => (
+            (source_width - 1) as f64 - y,
+            (source_height - 1) as f64 - x,
+        ),
         OrientationTransform::CounterClockwise90 => ((source_width - 1) as f64 - y, x),
     }
 }
@@ -2725,6 +2856,66 @@ struct PinholeCamera {
     fy: f64,
     cx: f64,
     cy: f64,
+}
+
+impl PinholeCamera {
+    fn display_oriented(self, transform: OrientationTransform) -> Self {
+        let max_x = self.image_width.saturating_sub(1) as f64;
+        let max_y = self.image_height.saturating_sub(1) as f64;
+
+        match transform {
+            OrientationTransform::None => self,
+            OrientationTransform::UpMirrored => Self {
+                cx: max_x - self.cx,
+                ..self
+            },
+            OrientationTransform::Rotate180 => Self {
+                cx: max_x - self.cx,
+                cy: max_y - self.cy,
+                ..self
+            },
+            OrientationTransform::DownMirrored => Self {
+                cy: max_y - self.cy,
+                ..self
+            },
+            OrientationTransform::LeftMirrored => Self {
+                fx: self.fy,
+                fy: self.fx,
+                cx: self.cy,
+                cy: self.cx,
+                image_width: self.image_height,
+                image_height: self.image_width,
+                ..self
+            },
+            OrientationTransform::Clockwise90 => Self {
+                fx: self.fy,
+                fy: self.fx,
+                cx: max_y - self.cy,
+                cy: self.cx,
+                image_width: self.image_height,
+                image_height: self.image_width,
+                ..self
+            },
+            OrientationTransform::RightMirrored => Self {
+                fx: self.fy,
+                fy: self.fx,
+                cx: max_y - self.cy,
+                cy: max_x - self.cx,
+                image_width: self.image_height,
+                image_height: self.image_width,
+                ..self
+            },
+            OrientationTransform::CounterClockwise90 => Self {
+                fx: self.fy,
+                fy: self.fx,
+                cx: self.cy,
+                cy: max_x - self.cx,
+                image_width: self.image_height,
+                image_height: self.image_width,
+                ..self
+            },
+        }
+    }
 }
 
 fn virtual_pinhole_camera(width: u32, height: u32) -> PinholeCamera {
@@ -3291,6 +3482,179 @@ mod tests {
     }
 
     #[test]
+    fn orientation_transform_parses_all_exif_directions() {
+        let cases = [
+            ("cgImagePropertyOrientation:1", OrientationTransform::None),
+            (
+                "cgImagePropertyOrientation:2",
+                OrientationTransform::UpMirrored,
+            ),
+            (
+                "cgImagePropertyOrientation:3",
+                OrientationTransform::Rotate180,
+            ),
+            (
+                "cgImagePropertyOrientation:4",
+                OrientationTransform::DownMirrored,
+            ),
+            (
+                "cgImagePropertyOrientation:5",
+                OrientationTransform::LeftMirrored,
+            ),
+            (
+                "cgImagePropertyOrientation:6",
+                OrientationTransform::Clockwise90,
+            ),
+            (
+                "cgImagePropertyOrientation:7",
+                OrientationTransform::RightMirrored,
+            ),
+            (
+                "cgImagePropertyOrientation:8",
+                OrientationTransform::CounterClockwise90,
+            ),
+        ];
+
+        for (raw_value, expected) in cases {
+            assert_eq!(
+                OrientationTransform::from_photo_orientation_str(raw_value),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            OrientationTransform::from_photo_orientation_str("unspecified"),
+            None
+        );
+    }
+
+    #[test]
+    fn display_oriented_depth_grid_matches_all_exif_corner_mappings() {
+        let source = [1, 2, 3, 4, 5, 6];
+        let cases: &[(OrientationTransform, u32, u32, &[u8])] = &[
+            (OrientationTransform::None, 3, 2, &[1, 2, 3, 4, 5, 6]),
+            (OrientationTransform::UpMirrored, 3, 2, &[3, 2, 1, 6, 5, 4]),
+            (OrientationTransform::Rotate180, 3, 2, &[6, 5, 4, 3, 2, 1]),
+            (
+                OrientationTransform::DownMirrored,
+                3,
+                2,
+                &[4, 5, 6, 1, 2, 3],
+            ),
+            (
+                OrientationTransform::LeftMirrored,
+                2,
+                3,
+                &[1, 4, 2, 5, 3, 6],
+            ),
+            (OrientationTransform::Clockwise90, 2, 3, &[4, 1, 5, 2, 6, 3]),
+            (
+                OrientationTransform::RightMirrored,
+                2,
+                3,
+                &[6, 3, 5, 2, 4, 1],
+            ),
+            (
+                OrientationTransform::CounterClockwise90,
+                2,
+                3,
+                &[3, 6, 2, 5, 1, 4],
+            ),
+        ];
+
+        for &(transform, output_width, output_height, expected) in cases {
+            assert_eq!(
+                display_oriented_depth_grid(&source, 3, 2, output_width, output_height, transform,),
+                expected,
+                "unexpected mapping for {}",
+                transform.as_report_str()
+            );
+        }
+    }
+
+    #[test]
+    fn display_orientation_prefers_front_camera_mirrored_rotation() {
+        assert_eq!(
+            display_orientation_transform(
+                3,
+                2,
+                Some(2),
+                Some(3),
+                Some("cgImagePropertyOrientation:5"),
+                true,
+            ),
+            OrientationTransform::LeftMirrored
+        );
+        assert_eq!(
+            display_orientation_transform(
+                3,
+                2,
+                Some(2),
+                Some(3),
+                Some("cgImagePropertyOrientation:7"),
+                true,
+            ),
+            OrientationTransform::RightMirrored
+        );
+    }
+
+    #[test]
+    fn display_orientation_keeps_mirror_when_depth_rotation_is_already_applied() {
+        for orientation in [
+            "cgImagePropertyOrientation:5",
+            "cgImagePropertyOrientation:7",
+        ] {
+            assert_eq!(
+                display_orientation_transform(2, 3, Some(2), Some(3), Some(orientation), true),
+                OrientationTransform::DownMirrored
+            );
+        }
+    }
+
+    #[test]
+    fn front_camera_landscape_down_mirrored_uses_full_vertical_flip() {
+        assert_eq!(
+            display_orientation_transform(
+                640,
+                480,
+                Some(4032),
+                Some(3024),
+                Some("cgImagePropertyOrientation:4"),
+                true,
+            ),
+            OrientationTransform::DownMirrored
+        );
+    }
+
+    #[test]
+    fn non_front_capture_keeps_legacy_mirrored_orientation_behavior() {
+        assert_eq!(
+            display_orientation_transform(
+                640,
+                480,
+                Some(4032),
+                Some(3024),
+                Some("cgImagePropertyOrientation:4"),
+                false,
+            ),
+            OrientationTransform::None
+        );
+    }
+
+    #[test]
+    fn front_camera_detection_requires_signed_photo_lens_position() {
+        assert!(is_front_camera_capture(&json!({
+            "photoLens": { "position": "front" }
+        })));
+        assert!(!is_front_camera_capture(&json!({
+            "photoLens": { "position": "back" },
+            "depth": { "source": { "captureDeviceName": "Front TrueDepth Camera" } }
+        })));
+        assert!(!is_front_camera_capture(&json!({
+            "depth": { "source": { "captureDeviceName": "Front TrueDepth Camera" } }
+        })));
+    }
+
+    #[test]
     fn original_preview_preserves_decoded_portrait_display_direction() {
         let bytes = depth_manifest_fixture(2, 3, "cgImagePropertyOrientation:6", "").replace(
             r#""photo":{"orientation":"cgImagePropertyOrientation:6"}"#,
@@ -3486,6 +3850,35 @@ mod tests {
     }
 
     #[test]
+    fn pinhole_camera_follows_mirrored_rotated_display_orientation() {
+        let camera = PinholeCamera {
+            model: "metadata-pinhole",
+            image_width: 4,
+            image_height: 3,
+            fx: 40.0,
+            fy: 30.0,
+            cx: 0.5,
+            cy: 1.25,
+        };
+
+        let left_mirrored = camera.display_oriented(OrientationTransform::LeftMirrored);
+        assert_eq!(left_mirrored.image_width, 3);
+        assert_eq!(left_mirrored.image_height, 4);
+        assert_eq!(left_mirrored.fx, 30.0);
+        assert_eq!(left_mirrored.fy, 40.0);
+        assert_eq!(left_mirrored.cx, 1.25);
+        assert_eq!(left_mirrored.cy, 0.5);
+
+        let right_mirrored = camera.display_oriented(OrientationTransform::RightMirrored);
+        assert_eq!(right_mirrored.image_width, 3);
+        assert_eq!(right_mirrored.image_height, 4);
+        assert_eq!(right_mirrored.fx, 30.0);
+        assert_eq!(right_mirrored.fy, 40.0);
+        assert_eq!(right_mirrored.cx, 0.75);
+        assert_eq!(right_mirrored.cy, 2.5);
+    }
+
+    #[test]
     fn pixel_projection_reprojects_with_pinhole_intrinsics_to_source_pixel() {
         let camera = PinholeCamera {
             model: "metadata-pinhole",
@@ -3545,6 +3938,50 @@ mod tests {
         assert_eq!(report["width"], 3);
         assert_eq!(report["height"], 2);
         assert_eq!(report["rotation"], "clockwise90");
+    }
+
+    #[test]
+    fn pixel_projection_aligns_front_camera_mirrored_depth_with_display_rgb() {
+        let bytes = depth_manifest_fixture(
+            3,
+            2,
+            "cgImagePropertyOrientation:5",
+            r#""photoLens":{"position":"front"}"#,
+        );
+        let rgba = [
+            11, 1, 1, 255, 22, 2, 2, 255, 33, 3, 3, 255, 44, 4, 4, 255, 55, 5, 5, 255, 66, 6, 6,
+            255,
+        ];
+        let depth = [10, 20, 30, 40, 50, 60];
+
+        let report = project_depth_pixels(bytes.as_bytes(), &rgba, 2, 3, &depth, 3, 2, 2, 3);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["width"], 2);
+        assert_eq!(report["height"], 3);
+        assert_eq!(report["rotation"], "leftMirrored");
+
+        let colors = STANDARD
+            .decode(report["colorsBase64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            colors
+                .chunks_exact(3)
+                .map(|color| color[0])
+                .collect::<Vec<_>>(),
+            vec![11, 22, 33, 44, 55, 66]
+        );
+
+        let positions = STANDARD
+            .decode(report["positionsBase64"].as_str().unwrap())
+            .unwrap();
+        let z_values = (0..6)
+            .map(|index| read_f32_le(&positions, index * 3 + 2))
+            .collect::<Vec<_>>();
+        let expected = [-0.25, -1.30, -0.60, -1.65, -0.95, -2.0];
+        for (actual, expected) in z_values.iter().zip(expected) {
+            assert!((actual - expected).abs() < 0.000_1);
+        }
     }
 
     #[test]
@@ -3699,6 +4136,45 @@ mod tests {
             .iter()
             .any(|check| check["id"] == "live-photo-paired-video-resource"
                 && check["status"] == "warning"));
+    }
+
+    #[test]
+    fn local_front_camera_fixture_uses_down_mirrored_depth_orientation_when_available() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("test/tapcam-original-photo.jpg");
+
+        if !fixture.exists() {
+            return;
+        }
+
+        let bytes = std::fs::read(fixture).unwrap();
+        let manifest_json = extract_tap_manifest_json(&bytes).unwrap();
+        let manifest: Value = serde_json::from_str(&manifest_json).unwrap();
+        let payload = field(&manifest, "payload").unwrap();
+        let depth = field(payload, "depth").unwrap();
+        let photo = field(payload, "photo").unwrap();
+
+        assert!(is_front_camera_capture(payload));
+        assert_eq!(
+            photo.get("orientation").and_then(Value::as_str),
+            Some("cgImagePropertyOrientation:4")
+        );
+        assert_eq!(optional_u32(depth, "width"), Some(640));
+        assert_eq!(optional_u32(depth, "height"), Some(480));
+        assert_eq!(optional_u32(photo, "width"), Some(4032));
+        assert_eq!(optional_u32(photo, "height"), Some(3024));
+        assert_eq!(
+            display_orientation_transform(
+                640,
+                480,
+                Some(4032),
+                Some(3024),
+                Some("cgImagePropertyOrientation:4"),
+                true,
+            ),
+            OrientationTransform::DownMirrored
+        );
     }
 
     #[test]
