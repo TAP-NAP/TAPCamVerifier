@@ -110,6 +110,12 @@ Reference checks from this round:
   - `metadataHash = SHA-256(canonical manifest.payload JSON)`;
   - `CaptureContentBinding`;
   - `CaptureSigningBinding.bodySHA256`.
+
+Correction: the current verifier hashes the exact `manifest.payload` JSON bytes
+embedded in XMP rather than parsing and reserializing the payload. See
+`2026-07-16-location-metadata-hash-precision.md` for the high-precision location
+metadata compatibility fix.
+
 - The real fixture now verifies locally as `valid` with:
   - capture ID `19EE1B2E-16FD-47B5-AD24-D559568CA4AD`;
   - asset hash `L3PxMfXci4kCCi_rQ_XV1wxb9f_oFX7lcwFkTVScY1Y`;

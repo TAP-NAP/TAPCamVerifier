@@ -2,8 +2,10 @@
 
 use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
+use serde_json::value::RawValue;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::slice;
 
 static mut LAST_RESULT: Option<Vec<u8>> = None;
@@ -377,8 +379,8 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
 
     let asset_hash_actual =
         sha256_base64url_excluding(bytes, slot.container_offset, slot.container_length)?;
-    let payload_canonical = canonical_json_bytes(payload)?;
-    let metadata_hash_actual = sha256_base64url(&payload_canonical);
+    let embedded_payload_bytes = extract_tap_manifest_payload_bytes(&manifest_json)?;
+    let metadata_hash_actual = sha256_base64url(&embedded_payload_bytes);
     let signing_binding_sha256 = sha256_base64url(&canonical_json_bytes(signing_binding)?);
 
     let proof_content_capture_id = content_digest
@@ -421,7 +423,7 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
             &asset_hash_actual,
         );
         let manifest_resource = live_photo_manifest_resource(
-            payload_canonical.len(),
+            embedded_payload_bytes.len(),
             &metadata_hash_actual,
         );
         let embedded_content_digest_body_sha = sha256_base64url(&canonical_json_bytes(content_digest)?);
@@ -445,7 +447,7 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
                 manifest_captured_at,
                 &asset_hash_actual,
                 &metadata_hash_actual,
-                payload_canonical.len(),
+                embedded_payload_bytes.len(),
                 &video_hash,
                 video_bytes.len(),
             );
@@ -2257,6 +2259,18 @@ fn extract_tap_manifest_json(bytes: &[u8]) -> Result<String, String> {
     }
 }
 
+/// Returns the exact payload bytes embedded by Foundation's JSONEncoder.
+/// Parsing high-precision Doubles into `Value` and serializing them again can
+/// change their numeric lexemes and therefore the signed metadata hash.
+fn extract_tap_manifest_payload_bytes(manifest_json: &str) -> Result<Vec<u8>, String> {
+    let fields: BTreeMap<String, Box<RawValue>> = serde_json::from_str(manifest_json)
+        .map_err(|error| format!("tapdepth:Manifest is not valid JSON: {error}"))?;
+    let payload = fields
+        .get("payload")
+        .ok_or("tapdepth:Manifest payload is missing")?;
+    Ok(payload.get().as_bytes().to_vec())
+}
+
 fn extract_tap_manifest_element_values(text: &str) -> Result<Vec<String>, String> {
     let open_marker = "<tapdepth:Manifest";
     let close_marker = "</tapdepth:Manifest>";
@@ -3404,6 +3418,14 @@ mod tests {
     }
 
     #[test]
+    fn rejects_mixed_element_and_attribute_manifests() {
+        let bytes = br#"<x:xmpmeta><tapdepth:Manifest>{}</tapdepth:Manifest><rdf:Description tapdepth:Manifest="{}"></rdf:Description></x:xmpmeta>"#;
+        assert!(extract_tap_manifest_json(bytes)
+            .unwrap_err()
+            .contains("expected exactly one"));
+    }
+
+    #[test]
     fn depth_visualization_uses_apdi_range() {
         let bytes = depth_manifest_fixture(2, 2, "cgImagePropertyOrientation:1", "")
             .replace(
@@ -4062,6 +4084,41 @@ mod tests {
     }
 
     #[test]
+    fn synthetic_jpeg_preserves_foundation_location_number_lexemes() {
+        let parsed_payload: Value =
+            serde_json::from_str(SYNTHETIC_FOUNDATION_PAYLOAD_JSON).unwrap();
+        let serde_payload = canonical_json_bytes(&parsed_payload).unwrap();
+        assert_ne!(serde_payload, SYNTHETIC_FOUNDATION_PAYLOAD_JSON.as_bytes());
+        assert!(String::from_utf8(serde_payload)
+            .unwrap()
+            .contains(r#""altitude":123.45678901234568"#));
+
+        let bytes = synthetic_signed_jpeg_with_foundation_location_number_lexemes();
+        let manifest_json = extract_tap_manifest_json(&bytes).unwrap();
+        assert_eq!(
+            extract_tap_manifest_payload_bytes(&manifest_json).unwrap(),
+            SYNTHETIC_FOUNDATION_PAYLOAD_JSON.as_bytes()
+        );
+
+        let report = verify_capture_bytes(&bytes);
+        assert_eq!(report["status"], "valid");
+        assert_eq!(report["manifest"]["containerFormat"], "jpeg");
+        for check_id in [
+            "asset-hash",
+            "metadata-hash",
+            "body-sha",
+            "content-digest",
+            "signing-binding",
+        ] {
+            assert!(report["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|check| check["id"] == check_id && check["status"] == "pass"));
+        }
+    }
+
+    #[test]
     fn synthetic_live_photo_content_binding_verifies_with_paired_video() {
         let paired_video = b"synthetic mov bytes";
         let bytes = synthetic_signed_live_photo(paired_video);
@@ -4357,6 +4414,67 @@ mod tests {
         signed
     }
 
+    // Production-shaped but entirely artificial location values and timestamp.
+    // Foundation emits the altitude lexeme ending in 67; serde emits 68.
+    const SYNTHETIC_FOUNDATION_PAYLOAD_JSON: &str = concat!(
+        r#"{"alignmentStatus":"aligned","capture":{"depthDataDeliveryEnabled":true,"depthDataFiltered":true,"embedsDepthDataInPhoto":true,"photoQualityPrioritization":"quality","requestedCodec":"jpeg"},"capturedAt":"2035-01-01T00:00:00.000Z","id":"synthetic-foundation-location","location":{"altitude":123.45678901234567,"horizontalAccuracy":98.76543210987654,"#,
+        r#""latitude":12.34567890123456,"longitude":65.43210987654321,"timestamp":"2035-01-01T00:00:00.000Z","verticalAccuracy":87.65432109876544}}"#
+    );
+
+    fn synthetic_signed_jpeg_with_foundation_location_number_lexemes() -> Vec<u8> {
+        let manifest_json = format!(
+            r#"{{"payload":{SYNTHETIC_FOUNDATION_PAYLOAD_JSON},"proofs":[],"schema":{{"id":"{MANIFEST_SCHEMA_ID}","mediaType":"{MANIFEST_MEDIA_TYPE}","version":1,"xmpManifestPath":"{MANIFEST_XMP_PATH}","xmpNamespaceURI":"{MANIFEST_XMP_NAMESPACE_URI}","xmpPrefix":"{MANIFEST_XMP_PREFIX}"}}}}"#
+        );
+        let xmp = format!(
+            r#"<x:xmpmeta><rdf:RDF><rdf:Description xmlns:tapdepth="{MANIFEST_XMP_NAMESPACE_URI}" tapdepth:Manifest="{}"></rdf:Description></rdf:RDF></x:xmpmeta>"#,
+            xml_escape_attribute(&manifest_json)
+        );
+
+        let mut unsigned = vec![0xff, 0xd8];
+        unsigned.extend(jpeg_segment(0xeb, &proof_slot_payload(&[])));
+        unsigned.extend(jpeg_segment(0xe1, xmp.as_bytes()));
+        unsigned.extend([0xff, 0xd9]);
+
+        let slot = locate_proof_slot(&unsigned, Container::Jpeg).unwrap();
+        let asset_hash =
+            sha256_base64url_excluding(&unsigned, slot.container_offset, slot.container_length)
+                .unwrap();
+        let metadata_hash = sha256_base64url(SYNTHETIC_FOUNDATION_PAYLOAD_JSON.as_bytes());
+        let digest = recompute_content_digest(
+            Container::Jpeg,
+            unsigned.len(),
+            &slot,
+            "synthetic-foundation-location",
+            "2035-01-01T00:00:00.000Z",
+            &asset_hash,
+            &metadata_hash,
+        );
+        let body_sha = sha256_base64url(&canonical_json_bytes(&digest).unwrap());
+        let signing_binding = json!({
+            "bodySHA256": body_sha,
+            "captureID": "synthetic-foundation-location",
+            "operation": SIGNING_OPERATION,
+            "schemaID": SIGNING_SCHEMA_ID
+        });
+        let proof_value = json!({
+            "assertionObject": "synthetic-assertion",
+            "contentDigest": digest,
+            "keyId": "synthetic-key",
+            "signingBinding": signing_binding
+        });
+        let proof = json!({
+            "algorithm": PROOF_ALGORITHM,
+            "createdAt": "2035-01-01T00:00:00.000Z",
+            "keyID": "synthetic-key",
+            "type": PROOF_TYPE,
+            "value": URL_SAFE_NO_PAD.encode(canonical_json_bytes(&proof_value).unwrap())
+        });
+        let signed_payload = proof_slot_payload(&canonical_json_bytes(&proof).unwrap());
+        let payload_range = slot.payload_offset..slot.payload_offset + slot.payload_length;
+        unsigned[payload_range].copy_from_slice(&signed_payload);
+        unsigned
+    }
+
     fn synthetic_signed_live_photo(paired_video: &[u8]) -> Vec<u8> {
         let payload = json!({
             "alignmentStatus": "sameCapturePipeline",
@@ -4503,6 +4621,25 @@ mod tests {
         payload[PROOF_HEADER_BYTE_COUNT..PROOF_HEADER_BYTE_COUNT + envelope.len()]
             .copy_from_slice(envelope);
         payload
+    }
+
+    fn jpeg_segment(marker: u8, payload: &[u8]) -> Vec<u8> {
+        let segment_length = payload.len() + 2;
+        assert!(segment_length <= u16::MAX as usize);
+        let mut segment = Vec::with_capacity(payload.len() + 4);
+        segment.extend([0xff, marker]);
+        segment.extend((segment_length as u16).to_be_bytes());
+        segment.extend(payload);
+        segment
+    }
+
+    fn xml_escape_attribute(value: &str) -> String {
+        value
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
     }
 
     fn bmff_ftyp_box() -> Vec<u8> {

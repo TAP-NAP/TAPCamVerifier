@@ -2,13 +2,13 @@
 
 The verifier follows TAPCamDemo still-photo `content-binding:v2` and Live Photo
 `content-binding:v3`. Still photos bind the native HEIC/JPG file bytes excluding
-the fixed proof slot plus canonical TAP manifest payload JSON. Live Photos keep
-that primary-photo binding and add the complete `paired-video.mov` bytes as a
-signed resource. Verification is scoped: a full Live Photo package verifies the
-primary photo and MOV, while a primary-only transfer can still verify the signed
-Live Photo primary photo and submit the embedded signing binding to the server.
-The browser does not decode RGB pixels, video frames, or metric depth Float32
-values for the base signature.
+the fixed proof slot plus the exact TAP manifest payload JSON bytes embedded in
+XMP. Live Photos keep that primary-photo binding and add the complete
+`paired-video.mov` bytes as a signed resource. Verification is scoped: a full
+Live Photo package verifies the primary photo and MOV, while a primary-only
+transfer can still verify the signed Live Photo primary photo and submit the
+embedded signing binding to the server. The browser does not decode RGB pixels,
+video frames, or metric depth Float32 values for the base signature.
 
 ## Hash Flow
 
@@ -27,8 +27,8 @@ flowchart TD
     H --> I["Require schema and empty manifest.proofs"]
     I --> J["Validate Release profile policy"]
     B --> K["SHA-256 native file bytes excluding proof slot container range"]
-    I --> L["Canonicalize manifest.payload JSON"]
-    L --> M["SHA-256 metadata payload JSON"]
+    I --> L["Extract exact embedded manifest.payload JSON bytes"]
+    L --> M["SHA-256 payload bytes without reserialization"]
     D --> N["Rebuild proofSlot object"]
     K --> O["Rebuild CaptureContentBinding"]
     M --> O
@@ -66,7 +66,10 @@ flowchart TD
   - photo quality prioritization is `quality`.
 - `assetHash`: SHA-256 over uploaded bytes excluding the proof slot container
   range.
-- `metadataHash`: SHA-256 over canonical `manifest.payload` JSON.
+- `metadataHash`: SHA-256 over the exact `manifest.payload` JSON bytes extracted
+  from XMP after XML entity decoding. The verifier must not parse and
+  reserialize the payload before hashing because that can change high-precision
+  location number lexemes.
 - Rebuilt `CaptureContentBinding` equality.
 - Live Photo `signedResources` checks for:
   - `primaryPhoto`;

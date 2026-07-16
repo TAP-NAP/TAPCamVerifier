@@ -28,7 +28,8 @@ the base signature. Rust/WASM verifies:
 - Release capture profile policy for HEIC/JPG;
 - `assetHash` over native HEIC/JPG bytes excluding the proof slot container
   range;
-- `metadataHash` over canonical `manifest.payload` JSON;
+- `metadataHash` over the exact `manifest.payload` JSON bytes embedded in XMP,
+  after XML entity decoding and without parsing or reserializing the payload;
 - Live Photo `signedResources` for primary photo, manifest payload, and paired
   MOV descriptors;
 - complete `paired-video.mov` bytes when the input is a verification ZIP, or a
