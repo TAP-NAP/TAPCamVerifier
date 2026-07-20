@@ -57,6 +57,7 @@ export interface ProjectedPixelCloud {
   inputDepthHeight: number;
   rgbWidth: number;
   rgbHeight: number;
+  rgbCoordinateSpace?: "native-heif" | "display-oriented" | string;
   orientation: string;
   photoOrientation: string;
   rotation: string;

@@ -861,7 +861,7 @@ fn prepare_original_rgba_inner(
     }
 
     let photo_metadata = read_photo_metadata(file_bytes).unwrap_or_default();
-    let transform = OrientationTransform::None;
+    let transform = decoded_heif_display_transform(width, height, &photo_metadata);
     let (oriented_width, oriented_height) = transform.output_dimensions(width, height);
     let max_edge = if max_edge == 0 {
         oriented_width.max(oriented_height)
@@ -1030,6 +1030,7 @@ fn project_depth_pixels_inner(
         output_height,
         transform,
     );
+    let rgb_is_native_heif = matches!(detect_container(file_bytes), Ok(Container::Heic));
     let quality = analyze_depth_quality(
         &display_depth,
         output_width,
@@ -1063,8 +1064,16 @@ fn project_depth_pixels_inner(
             push_f32_le(&mut positions, y_unit as f32);
             push_f32_le(&mut positions, view_z as f32);
 
-            let rgb_x = scaled_coordinate(x, output_width, rgb_width);
-            let rgb_y = scaled_coordinate(y, output_height, rgb_height);
+            let (rgb_x, rgb_y) = display_rgb_source_coordinate(
+                x,
+                y,
+                output_width,
+                output_height,
+                rgb_width,
+                rgb_height,
+                transform,
+                rgb_is_native_heif,
+            );
             let rgb_offset = (rgb_y * rgb_width as usize + rgb_x) * 4;
             colors.push(rgba[rgb_offset]);
             colors.push(rgba[rgb_offset + 1]);
@@ -1138,6 +1147,7 @@ fn project_depth_pixels_inner(
         "inputDepthHeight": depth_height,
         "rgbWidth": rgb_width,
         "rgbHeight": rgb_height,
+        "rgbCoordinateSpace": if rgb_is_native_heif { "native-heif" } else { "display-oriented" },
         "orientation": orientation,
         "photoOrientation": photo_orientation,
         "rotation": transform.as_report_str(),
@@ -2706,22 +2716,61 @@ impl OrientationTransform {
 #[derive(Default)]
 struct PhotoMetadata {
     orientation: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    is_front_camera: bool,
 }
 
 fn read_photo_metadata(file_bytes: &[u8]) -> Result<PhotoMetadata, String> {
     let manifest_json = extract_tap_manifest_json(file_bytes)?;
     let manifest: Value = serde_json::from_str(&manifest_json)
         .map_err(|error| format!("tapdepth:Manifest is not valid JSON: {error}"))?;
-    let photo = manifest
-        .get("payload")
-        .and_then(|payload| payload.get("photo"));
+    let payload = manifest.get("payload");
+    let photo = payload.and_then(|payload| payload.get("photo"));
 
     Ok(PhotoMetadata {
         orientation: photo
             .and_then(|value| value.get("orientation"))
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
+        width: photo.and_then(|value| optional_u32(value, "width")),
+        height: photo.and_then(|value| optional_u32(value, "height")),
+        is_front_camera: payload.map(is_front_camera_capture).unwrap_or(false),
     })
+}
+
+fn decoded_heif_display_transform(
+    width: u32,
+    height: u32,
+    photo_metadata: &PhotoMetadata,
+) -> OrientationTransform {
+    if !photo_metadata.is_front_camera {
+        return OrientationTransform::None;
+    }
+
+    let Some(photo_orientation) = photo_metadata.orientation.as_deref() else {
+        return OrientationTransform::None;
+    };
+    let expected_display = match (
+        photo_metadata.width,
+        photo_metadata.height,
+        OrientationTransform::from_photo_orientation_str(photo_orientation),
+    ) {
+        (Some(photo_width), Some(photo_height), Some(photo_transform)) => {
+            Some(photo_transform.output_dimensions(photo_width, photo_height))
+        }
+        _ => None,
+    };
+    let (display_width, display_height) = expected_display.unwrap_or((width, height));
+
+    display_orientation_transform(
+        width,
+        height,
+        Some(display_width),
+        Some(display_height),
+        Some(photo_orientation),
+        true,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2829,6 +2878,37 @@ fn scaled_coordinate(pixel: u32, source_extent: u32, target_extent: u32) -> usiz
     ((pixel as f64 / (source_extent - 1) as f64) * (target_extent - 1) as f64)
         .round()
         .clamp(0.0, (target_extent - 1) as f64) as usize
+}
+
+#[allow(clippy::too_many_arguments)]
+fn display_rgb_source_coordinate(
+    display_x: u32,
+    display_y: u32,
+    display_width: u32,
+    display_height: u32,
+    rgb_width: u32,
+    rgb_height: u32,
+    transform: OrientationTransform,
+    rgb_is_native_heif: bool,
+) -> (usize, usize) {
+    if !rgb_is_native_heif {
+        return (
+            scaled_coordinate(display_x, display_width, rgb_width),
+            scaled_coordinate(display_y, display_height, rgb_height),
+        );
+    }
+
+    let (oriented_rgb_width, oriented_rgb_height) =
+        transform.output_dimensions(rgb_width, rgb_height);
+    let oriented_x = scaled_coordinate(display_x, display_width, oriented_rgb_width) as f64;
+    let oriented_y = scaled_coordinate(display_y, display_height, oriented_rgb_height) as f64;
+    let (source_x, source_y) =
+        inverse_orientation_transform(oriented_x, oriented_y, rgb_width, rgb_height, transform);
+
+    (
+        source_x.round().clamp(0.0, (rgb_width - 1) as f64) as usize,
+        source_y.round().clamp(0.0, (rgb_height - 1) as f64) as usize,
+    )
 }
 
 fn depth_display_value(normalized: f64, min_value: f64, max_value: f64) -> f64 {
@@ -3678,7 +3758,13 @@ mod tests {
 
     #[test]
     fn original_preview_preserves_decoded_portrait_display_direction() {
-        let bytes = depth_manifest_fixture(2, 3, "cgImagePropertyOrientation:6", "").replace(
+        let bytes = depth_manifest_fixture(
+            2,
+            3,
+            "cgImagePropertyOrientation:6",
+            r#""photoLens":{"position":"front"}"#,
+        )
+        .replace(
             r#""photo":{"orientation":"cgImagePropertyOrientation:6"}"#,
             r#""photo":{"height":2,"orientation":"cgImagePropertyOrientation:6","width":3}"#,
         );
@@ -3697,6 +3783,36 @@ mod tests {
             .decode(report["previewRgbaBase64"].as_str().unwrap())
             .unwrap();
         assert_eq!(&preview[0..4], &[10, 0, 0, 255]);
+    }
+
+    #[test]
+    fn original_preview_applies_remaining_front_heif_mirror() {
+        let bytes = depth_manifest_fixture(
+            2,
+            2,
+            "cgImagePropertyOrientation:4",
+            r#""photoLens":{"position":"front"}"#,
+        )
+        .replace(
+            r#""photo":{"orientation":"cgImagePropertyOrientation:4"}"#,
+            r#""photo":{"height":2,"orientation":"cgImagePropertyOrientation:4","width":2}"#,
+        );
+        let rgba = [10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255, 40, 0, 0, 255];
+
+        let report = prepare_original_rgba(bytes.as_bytes(), &rgba, 2, 2, 100);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["rotation"], "downMirrored");
+        let preview = STANDARD
+            .decode(report["previewRgbaBase64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            preview
+                .chunks_exact(4)
+                .map(|pixel| pixel[0])
+                .collect::<Vec<_>>(),
+            vec![30, 40, 10, 20]
+        );
     }
 
     #[test]
@@ -4004,6 +4120,68 @@ mod tests {
         for (actual, expected) in z_values.iter().zip(expected) {
             assert!((actual - expected).abs() < 0.000_1);
         }
+    }
+
+    #[test]
+    fn pixel_projection_transforms_native_heif_rgb_with_front_depth() {
+        let manifest = depth_manifest_fixture(
+            2,
+            2,
+            "cgImagePropertyOrientation:4",
+            r#""photoLens":{"position":"front"}"#,
+        );
+        let mut bytes = vec![0, 0, 0, 12];
+        bytes.extend_from_slice(b"ftyp");
+        bytes.extend_from_slice(b"heic");
+        bytes.extend_from_slice(manifest.as_bytes());
+        let rgba = [10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255, 40, 0, 0, 255];
+        let depth = [1, 2, 3, 4];
+
+        let report = project_depth_pixels(&bytes, &rgba, 2, 2, &depth, 2, 2, 2, 2);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["rotation"], "downMirrored");
+        assert_eq!(report["rgbCoordinateSpace"], "native-heif");
+        let colors = STANDARD
+            .decode(report["colorsBase64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            colors
+                .chunks_exact(3)
+                .map(|color| color[0])
+                .collect::<Vec<_>>(),
+            vec![30, 40, 10, 20]
+        );
+    }
+
+    #[test]
+    fn pixel_projection_does_not_transform_display_oriented_jpeg_rgb_twice() {
+        let manifest = depth_manifest_fixture(
+            2,
+            2,
+            "cgImagePropertyOrientation:4",
+            r#""photoLens":{"position":"front"}"#,
+        );
+        let mut bytes = vec![0xff, 0xd8];
+        bytes.extend_from_slice(manifest.as_bytes());
+        let display_oriented_rgba = [30, 0, 0, 255, 40, 0, 0, 255, 10, 0, 0, 255, 20, 0, 0, 255];
+        let depth = [1, 2, 3, 4];
+
+        let report = project_depth_pixels(&bytes, &display_oriented_rgba, 2, 2, &depth, 2, 2, 2, 2);
+
+        assert_eq!(report["status"], "available");
+        assert_eq!(report["rotation"], "downMirrored");
+        assert_eq!(report["rgbCoordinateSpace"], "display-oriented");
+        let colors = STANDARD
+            .decode(report["colorsBase64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            colors
+                .chunks_exact(3)
+                .map(|color| color[0])
+                .collect::<Vec<_>>(),
+            vec![30, 40, 10, 20]
+        );
     }
 
     #[test]
