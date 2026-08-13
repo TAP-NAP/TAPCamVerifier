@@ -9,6 +9,11 @@ import {
   sliderValueFromSensitivity,
   type PixelProjectionFilterOptions
 } from "./filtering";
+import {
+  makePointCloudMaterial,
+  representativeDepthForCloud,
+  splatWorldSizeForCloud
+} from "./pointCloudMaterial";
 import type { ProjectedPixelCloud } from "./types";
 
 export type GeometryViewerCleanup = () => void;
@@ -22,8 +27,12 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
 
   const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 100);
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(pixelRatio);
   renderer.setClearColor(backgroundColor);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.04;
   renderer.autoClear = false;
   renderer.domElement.className = "geometry-canvas";
   renderer.domElement.dataset.projectionCanvas = "true";
@@ -62,21 +71,12 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     window.clearTimeout(hintTimeout);
   }
 
-  const boundsGeometry = new THREE.BufferGeometry();
-  boundsGeometry.setAttribute("position", new THREE.BufferAttribute(cloud.positions, 3));
-  boundsGeometry.computeBoundingBox();
-  const bounds = boundsGeometry.boundingBox ?? new THREE.Box3(
-    new THREE.Vector3(-1, -1, -1),
-    new THREE.Vector3(1, 1, 1)
-  );
-  boundsGeometry.dispose();
-
+  const targetDepth = representativeDepthForCloud(cloud);
+  const gl = renderer.getContext();
+  const pointSizeRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array | number[];
+  const maximumPointSize = Number(pointSizeRange?.[1] ?? 64);
+  const { material, uniforms } = makePointCloudMaterial(cloud, targetDepth, maximumPointSize);
   let geometry = new THREE.BufferGeometry();
-  const material = new THREE.PointsMaterial({
-    size: pointSizeForCloud(cloud),
-    sizeAttenuation: true,
-    vertexColors: true
-  });
 
   const model = new THREE.Points(geometry, material);
   scene.add(model);
@@ -88,26 +88,24 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   controls.screenSpacePanning = true;
   controls.minDistance = 0.05;
   controls.maxDistance = 10;
-  const targetDepth = targetDepthForBounds(bounds);
+  const raycaster = new THREE.Raycaster();
+  raycaster.params.Points = {
+    threshold: Math.max(splatWorldSizeForCloud(cloud, targetDepth) * 2.8, targetDepth * 0.008)
+  };
+  const pointerNdc = new THREE.Vector2();
+  const interactionPoint = new THREE.Vector3();
+  let hoverTarget = 0;
+  let hoverStrength = 0;
+  let pulseStartedAt: number | null = null;
+  let activePointer: { id: number; x: number; y: number; moved: boolean; pointerType: string } | null = null;
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   let userMovedCamera = false;
   let canvasSize = { width: 1, height: 1 };
   let defaultView: "initial" | "reset" = "initial";
 
-  const initialTilt = Math.PI / 18;
-  const initialPan = Math.PI / 25;
-
   const resetView = (): void => {
-    const tilt = 0;
-    const pan = 0;
-    const distance = targetDepth * 1.1;
-
-    const horizontalLen = distance * Math.cos(tilt);
-    const offsetX = horizontalLen * Math.sin(pan);
-    const offsetY = distance * Math.sin(tilt);
-    const offsetZ = horizontalLen * Math.cos(pan);
-
-    camera.position.set(offsetX, offsetY, -targetDepth + offsetZ);
+    camera.position.set(0, 0, 0);
     camera.up.set(0, 1, 0);
     controls.target.set(0, 0, -targetDepth);
     controls.minDistance = Math.max(0.01, targetDepth * 0.05);
@@ -116,27 +114,123 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   };
 
   const setInitialView = (): void => {
-    const tilt = initialTilt;
-    const pan = initialPan;
-    const distance = targetDepth * 1.1;
-
-    const horizontalLen = distance * Math.cos(tilt);
-    const offsetX = horizontalLen * Math.sin(pan);
-    const offsetY = distance * Math.sin(tilt);
-    const offsetZ = horizontalLen * Math.cos(pan);
-
-    camera.position.set(offsetX, offsetY, -targetDepth + offsetZ);
-    camera.up.set(0, 1, 0);
-    controls.target.set(0, 0, -targetDepth);
-    controls.minDistance = Math.max(0.01, targetDepth * 0.05);
-    controls.maxDistance = Math.max(4, targetDepth * 6);
-    controls.update();
+    resetView();
   };
   const markCameraMoved = (): void => {
     userMovedCamera = true;
     hideRotateHint();
   };
   controls.addEventListener("start", markCameraMoved);
+  controls.addEventListener("start", handleControlsStart);
+  controls.addEventListener("end", handleControlsEnd);
+
+  function handleControlsStart(): void {
+    renderer.domElement.classList.add("is-grabbing");
+    hoverTarget = 0;
+  }
+
+  function handleControlsEnd(): void {
+    renderer.domElement.classList.remove("is-grabbing");
+  }
+
+  function pointAtPointer(clientX: number, clientY: number): THREE.Vector3 | null {
+    const rect = renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+    pointerNdc.set(
+      (clientX - rect.left) / rect.width * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1
+    );
+    raycaster.setFromCamera(pointerNdc, camera);
+    const hit = raycaster.intersectObject(model, false)[0];
+    if (!hit) {
+      return null;
+    }
+    if (typeof hit.index === "number") {
+      const positions = model.geometry.getAttribute("position");
+      if (positions && hit.index < positions.count) {
+        return interactionPoint.fromBufferAttribute(positions, hit.index);
+      }
+    }
+    return model.worldToLocal(interactionPoint.copy(hit.point));
+  }
+
+  function updateHoverFromPointer(event: PointerEvent): THREE.Vector3 | null {
+    const point = pointAtPointer(event.clientX, event.clientY);
+    if (point) {
+      uniforms.uHoverPoint.value.copy(point);
+      hoverTarget = 1;
+      renderer.domElement.classList.add("is-point-hovered");
+    } else {
+      hoverTarget = 0;
+      renderer.domElement.classList.remove("is-point-hovered");
+    }
+    return point;
+  }
+
+  function handlePointerDown(event: PointerEvent): void {
+    activePointer = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      moved: false,
+      pointerType: event.pointerType
+    };
+    updateHoverFromPointer(event);
+  }
+
+  function handlePointerMove(event: PointerEvent): void {
+    if (activePointer?.id === event.pointerId) {
+      if (Math.hypot(event.clientX - activePointer.x, event.clientY - activePointer.y) > 5) {
+        activePointer.moved = true;
+      }
+      if (activePointer.moved) {
+        hoverTarget = 0;
+      }
+      return;
+    }
+    if (event.buttons === 0 && (event.pointerType === "mouse" || event.pointerType === "pen")) {
+      updateHoverFromPointer(event);
+    }
+  }
+
+  function handlePointerUp(event: PointerEvent): void {
+    if (activePointer?.id !== event.pointerId) {
+      return;
+    }
+    const shouldPulse = !activePointer.moved;
+    const pointerType = activePointer.pointerType;
+    activePointer = null;
+    const point = updateHoverFromPointer(event);
+    if (shouldPulse && point && !reducedMotion) {
+      uniforms.uPulsePoint.value.copy(point);
+      pulseStartedAt = performance.now();
+    }
+    if (pointerType === "touch") {
+      hoverTarget = 0;
+      renderer.domElement.classList.remove("is-point-hovered");
+    }
+  }
+
+  function handlePointerCancel(): void {
+    activePointer = null;
+    hoverTarget = 0;
+    renderer.domElement.classList.remove("is-point-hovered", "is-grabbing");
+  }
+
+  function handlePointerLeave(): void {
+    if (!activePointer) {
+      hoverTarget = 0;
+      renderer.domElement.classList.remove("is-point-hovered");
+    }
+  }
+
+  renderer.domElement.addEventListener("pointerdown", handlePointerDown);
+  renderer.domElement.addEventListener("pointermove", handlePointerMove);
+  renderer.domElement.addEventListener("pointerup", handlePointerUp);
+  renderer.domElement.addEventListener("pointercancel", handlePointerCancel);
+  renderer.domElement.addEventListener("pointerleave", handlePointerLeave);
 
   const shell = host.parentElement;
   const filterPanel = shell?.querySelector<HTMLElement>("[data-geometry-filter-panel]");
@@ -294,6 +388,9 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     const height = Math.max(1, Math.floor(rect.height));
     canvasSize = { width, height };
     renderer.setSize(width, height, false);
+    uniforms.uViewportHeight.value = height;
+    uniforms.uPixelRatio.value = pixelRatio;
+    uniforms.uMinPointSize.value = 1.35 * pixelRatio;
     updateCaptureCameraProjection(camera, cloud, width, height);
     if (!userMovedCamera) {
       if (defaultView === "initial") {
@@ -308,7 +405,25 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   resize();
 
   let animationFrame = 0;
-  const render = (): void => {
+  let lastFrameTime = performance.now();
+  const render = (frameTime = performance.now()): void => {
+    const deltaSeconds = Math.min(Math.max((frameTime - lastFrameTime) / 1000, 0), 0.05);
+    lastFrameTime = frameTime;
+    hoverStrength = THREE.MathUtils.damp(hoverStrength, hoverTarget, hoverTarget > 0 ? 14 : 8, deltaSeconds);
+    uniforms.uHoverStrength.value = hoverStrength;
+    if (!reducedMotion && hoverStrength > 0.001) {
+      const rollPhase = frameTime / 1000 * 4.8;
+      uniforms.uRollDirection.value.set(Math.cos(rollPhase), Math.sin(rollPhase));
+    }
+    if (pulseStartedAt !== null) {
+      const progress = (frameTime - pulseStartedAt) / 820;
+      if (progress >= 1) {
+        pulseStartedAt = null;
+        uniforms.uPulseProgress.value = -1;
+      } else {
+        uniforms.uPulseProgress.value = progress;
+      }
+    }
     controls.update();
     renderer.clear(true, true, true);
     renderer.setViewport(0, 0, canvasSize.width, canvasSize.height);
@@ -332,6 +447,13 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
       button.removeEventListener("click", handleRiskToggleClick);
     }
     controls.removeEventListener("start", markCameraMoved);
+    controls.removeEventListener("start", handleControlsStart);
+    controls.removeEventListener("end", handleControlsEnd);
+    renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
+    renderer.domElement.removeEventListener("pointermove", handlePointerMove);
+    renderer.domElement.removeEventListener("pointerup", handlePointerUp);
+    renderer.domElement.removeEventListener("pointercancel", handlePointerCancel);
+    renderer.domElement.removeEventListener("pointerleave", handlePointerLeave);
     resizeObserver.disconnect();
     controls.dispose();
     geometry.dispose();
@@ -490,12 +612,6 @@ function anyRiskTypeHighlighted(options: PixelProjectionFilterOptions): boolean 
   );
 }
 
-function pointSizeForCloud(cloud: ProjectedPixelCloud): number {
-  const longestEdge = Math.max(cloud.width, cloud.height, 1);
-  const projectedSpacing = (cloud.sampleStep / longestEdge) * 2;
-  return clamp(projectedSpacing * 2.4, 0.015, 0.034);
-}
-
 function updateCaptureCameraProjection(
   camera: THREE.PerspectiveCamera,
   cloud: ProjectedPixelCloud,
@@ -556,16 +672,4 @@ function cameraIntrinsicsForFullCanvas(
     cx: cloud.cx * scale,
     cy: yOffset + cloud.cy * scale
   };
-}
-
-function targetDepthForBounds(bounds: THREE.Box3): number {
-  if (bounds.isEmpty()) {
-    return 1;
-  }
-  const center = bounds.getCenter(new THREE.Vector3());
-  return Math.max(0.25, -center.z);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }

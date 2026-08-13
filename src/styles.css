@@ -481,6 +481,16 @@ input {
   display: block;
   width: 100%;
   height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.geometry-canvas.is-point-hovered {
+  cursor: pointer;
+}
+
+.geometry-canvas.is-grabbing {
+  cursor: grabbing;
 }
 
 .geometry-rotate-hint {
@@ -549,6 +559,12 @@ input {
 @keyframes rotateHintPulse {
   0%, 100% { transform: scale(1); background: rgb(255 255 255 / 12%); }
   50% { transform: scale(1.08); background: rgb(255 255 255 / 22%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .geometry-rotate-hint__arrow {
+    animation: none;
+  }
 }
 
 .geometry-reset {
