@@ -124,8 +124,10 @@ export function renderVerificationResult(result: CombinedVerificationResult): st
         <dd>${escapeHtml(formatVerificationScope(result.local.verificationScope))}</dd>
       </div>
       <div>
-        <dt>${t("result.livePhotoVideo")}</dt>
-        <dd>${escapeHtml(formatLivePhotoVideoStatus(result.local))}</dd>
+        <dt>${t(result.local.mediaKind === "video" ? "result.videoIntegrity" : "result.livePhotoVideo")}</dt>
+        <dd>${escapeHtml(result.local.mediaKind === "video"
+          ? t(result.local.status === "valid" ? "video.fullVerified" : "video.notVerified")
+          : formatLivePhotoVideoStatus(result.local))}</dd>
       </div>
       <div>
         <dt>${t("result.server")}</dt>
@@ -167,6 +169,9 @@ function formatMediaKind(mediaKind: string | undefined): string {
   if (mediaKind === "stillPhoto") {
     return t("media.stillPhoto");
   }
+  if (mediaKind === "video") {
+    return t("media.video");
+  }
   return mediaKind ?? "unknown";
 }
 
@@ -179,6 +184,9 @@ function formatVerificationScope(scope: string | undefined): string {
   }
   if (scope === "stillPhoto") {
     return t("scope.stillPhoto");
+  }
+  if (scope === "fullVideo") {
+    return t("scope.fullVideo");
   }
   return scope ?? "unknown";
 }

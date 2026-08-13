@@ -182,3 +182,23 @@ visual analysis and signature verification as independent async paths:
 
 The original preview, depth panel, and 3D point-cloud panel remain downstream
 inspection tools. They are not inputs to the base signature verdict.
+
+## TAP Video Flow
+
+Raw `.mp4` / `video/mp4` input takes the TAP Video path rather than the photo or
+Live Photo package path. The browser requires exactly one
+`TAPCAMVIDEOMANF1` UUID box and one fixed `TAPCAMPROOFSLOT1` UUID box, validates
+the proof envelope and zero padding, hashes the full MP4 excluding exactly the
+proof-slot box, hashes canonical manifest-v2 payload JSON, and compares the
+reconstructed `content-binding:v4` and signing binding with the proof value.
+The existing App Attest server endpoint receives only `keyId`,
+`assertionObject`, and `signingBinding` after those local checks pass.
+
+Video analysis is downstream of that hard-binding gate. The native browser
+player renders RGB/audio while the verifier reads the manifest-selected MP4
+metadata track's `stsz`, `stsc`, and `stco`/`co64` tables. Each Apple `mebx`
+sample unwraps one KLV-v2 depth frame. Player time selects the nearest signed
+depth timestamp, and seeks invalidate stale work. Raw and zstd1 frames are
+decoded on demand with a two-frame cache. Video mode explicitly disables the
+3D point-cloud pane; it does not reinterpret a time series as a still-photo
+point cloud.

@@ -22,6 +22,24 @@ function verificationSidecar(
 }
 
 describe("resolveCaptureInput", () => {
+  it("recognizes a raw MP4 as TAP Video input without routing it through ZIP parsing", () => {
+    const bytes = new Uint8Array([
+      0, 0, 0, 20,
+      0x66, 0x74, 0x79, 0x70,
+      0x6d, 0x70, 0x34, 0x32,
+      0, 0, 0, 0,
+      0x6d, 0x70, 0x34, 0x32
+    ]);
+    const file = new File([bytes], "tap-video.mp4", { type: "video/mp4" });
+
+    const input = resolveCaptureInput(file, bytes);
+
+    expect(input.kind).toBe("tap-video");
+    if (input.kind !== "tap-video") throw new Error("expected TAP Video input");
+    expect(input.videoFile).toBe(file);
+    expect(Array.from(input.videoBytes)).toEqual(Array.from(bytes));
+  });
+
   it.each([
     ["capture.HEIC", "image/heic"],
     ["capture.heif", "image/heif"],

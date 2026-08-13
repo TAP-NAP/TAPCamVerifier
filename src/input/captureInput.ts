@@ -12,19 +12,50 @@ const MAX_CAPTURE_RESOURCE_BYTES = 384 * 1024 * 1024;
 const MAX_CAPTURE_EXTRACTED_BYTES = 512 * 1024 * 1024;
 const MAX_VERIFICATION_SIDECAR_BYTES = 256 * 1024;
 
-export type CaptureInputKind = "single-photo" | "capture-package";
+export type CaptureInputKind = "single-photo" | "capture-package" | "tap-video";
 
-export interface CaptureInput {
-  kind: CaptureInputKind;
+interface CaptureInputBase {
   fileName: string;
   fileSize: number;
+}
+
+export interface PhotoCaptureInput extends CaptureInputBase {
+  kind: "single-photo" | "capture-package";
+  photoFile: File;
+  photoBytes: Uint8Array;
+  pairedVideoBytes?: Uint8Array;
+  pairedVideoName?: string;
+  videoFile?: File;
+  videoBytes?: Uint8Array;
+}
+
+export interface VideoCaptureInput extends CaptureInputBase {
+  kind: "tap-video";
+  videoFile: File;
+  videoBytes: Uint8Array;
+  // Aliases keep the legacy CaptureInput read shape source-compatible. Video
+  // call sites must still branch on `kind` before choosing an analysis path.
   photoFile: File;
   photoBytes: Uint8Array;
   pairedVideoBytes?: Uint8Array;
   pairedVideoName?: string;
 }
 
+export type CaptureInput = PhotoCaptureInput | VideoCaptureInput;
+
 export function resolveCaptureInput(file: File, fileBytes: Uint8Array): CaptureInput {
+  if (isMP4Video(file, fileBytes)) {
+    return {
+      kind: "tap-video",
+      fileName: file.name,
+      fileSize: file.size,
+      videoFile: file,
+      videoBytes: fileBytes,
+      photoFile: file,
+      photoBytes: fileBytes
+    };
+  }
+
   if (!isCapturePackage(file, fileBytes)) {
     return {
       kind: "single-photo",
@@ -76,6 +107,19 @@ export function resolveCaptureInput(file: File, fileBytes: Uint8Array): CaptureI
     pairedVideoBytes,
     pairedVideoName: pairedVideoName ?? undefined
   };
+}
+
+function isMP4Video(file: File, fileBytes: Uint8Array): boolean {
+  const lowerName = file.name.toLowerCase();
+  const lowerType = file.type.toLowerCase();
+  if (!lowerName.endsWith(".mp4") && lowerType !== "video/mp4") {
+    return false;
+  }
+  return fileBytes.length >= 12 && ascii(fileBytes, 4, 4) === "ftyp";
+}
+
+function ascii(bytes: Uint8Array, offset: number, length: number): string {
+  return String.fromCharCode(...bytes.subarray(offset, offset + length));
 }
 
 function unzipCapturePackage(fileBytes: Uint8Array): Unzipped {

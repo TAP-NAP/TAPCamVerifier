@@ -173,6 +173,24 @@ describe("renderVerificationResult", () => {
     expect(html).toContain("paired-video.mov not supplied");
     expect(html).toContain("did not verify motion/video bytes");
   });
+
+  it("does not label a failed TAP Video as byte-verified", () => {
+    const html = renderVerificationResult({
+      ...result,
+      finalStatus: "invalid",
+      local: {
+        ...result.local,
+        status: "invalid",
+        mediaKind: "video",
+        verificationScope: "fullVideo",
+        manifest: { containerFormat: "mp4" }
+      }
+    });
+
+    expect(html).toContain("TAP Video");
+    expect(html).toContain("Complete video bytes did not pass the local content-binding check");
+    expect(html).not.toContain("Complete video bytes passed the local content-binding check");
+  });
 });
 
 describe("renderDepthPanel", () => {

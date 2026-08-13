@@ -1,12 +1,13 @@
 # TAPCamVerifier
 
 TAPCamVerifier is a static web verifier for TAPCam signed HEIC/JPG captures,
-TAPNAP capture packages, legacy TAPCam Live Photo verification ZIPs, and Live
-Photo primary photos that lost their paired MOV during transport.
+signed TAP Video MP4 files, TAPNAP capture packages, legacy TAPCam Live Photo
+verification ZIPs, and Live Photo primary photos that lost their paired MOV
+during transport.
 
-The page accepts a dropped image, `.tapnap` package, or legacy Live Photo ZIP and
-runs the local Rust/WASM verifier. When the local hard-binding checks pass, the
-page posts the proof material to the TAP-NAP server:
+The page accepts a dropped image, TAP Video MP4, `.tapnap` package, or legacy
+Live Photo ZIP and runs the appropriate local hard-binding verifier. When the
+local checks pass, the page posts the proof material to the TAP-NAP server:
 
 ```text
 POST https://www.tapnap.net/tapcam/capture-signatures/verify
@@ -85,6 +86,25 @@ signed or trusted: the browser derives the real media/signature scope from the
 proof-bearing primary photo, and falls back to the fixed filenames when the
 sidecar is absent or invalid. A still-photo package is valid input without
 `paired-video.mov`. Existing `.zip` packages remain supported.
+
+## TAP Video MP4
+
+TAP Video is one signed `video/mp4` file, not a `.tapnap` wrapper. The browser
+reads its v2 manifest UUID box and fixed proof-slot UUID box, recomputes the v4
+SHA-256 content binding over every MP4 byte except that proof slot, and derives
+the existing App Attest server request from the verified proof envelope.
+
+Only after the local hard binding passes does downstream playback begin. The
+standard RGB/audio tracks use the native browser player. The TAP private
+`mdta/com.tapnap.depth.klv` track is indexed from the MP4 sample tables; raw and
+zstd1 Float16/Float32 depth or disparity frames are decoded on demand and
+synchronized to the player's current time. At most two decoded frames are
+retained. LZFSE remains readable in the Apple app but is not supported by this
+browser build.
+
+The 3D point-cloud pane is deliberately disabled for TAP Video. This release
+provides verified video playback plus synchronized 2D depth frames and does not
+claim video 3D reconstruction.
 
 ## Run
 

@@ -45,8 +45,8 @@ export interface ServerBoundaryDiagnostic {
 export interface LocalVerificationReport {
   status: "invalid" | "valid" | string;
   summary: string;
-  mediaKind?: "stillPhoto" | "livePhoto" | string;
-  verificationScope?: "stillPhoto" | "fullLivePhoto" | "primaryPhotoFromLivePhoto" | string;
+  mediaKind?: "stillPhoto" | "livePhoto" | "video" | string;
+  verificationScope?: "stillPhoto" | "fullLivePhoto" | "primaryPhotoFromLivePhoto" | "fullVideo" | string;
   claims?: {
     primaryPhotoVerified?: boolean;
     manifestVerified?: boolean;
@@ -61,7 +61,7 @@ export interface LocalVerificationReport {
   captureId: string | null;
   capturedAt: string | null;
   manifest?: {
-    containerFormat?: "heif" | "jpeg" | "unknown" | string;
+    containerFormat?: "heif" | "jpeg" | "mp4" | "unknown" | string;
     schemaId?: string | null;
     proofCount?: number;
     capture?: unknown;

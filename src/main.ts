@@ -8,7 +8,8 @@ import type { DecodedRgbImage, PixelProjectionState } from "./geometry/types";
 import {
   resolveCaptureInput,
   TAPNAP_CAPTURE_PACKAGE_MIME_TYPE,
-  type CaptureInput
+  type CaptureInput,
+  type PhotoCaptureInput
 } from "./input/captureInput";
 import { visualizeOriginalHeicFallback } from "./original/originalVisualization";
 import type { OriginalPreviewResult } from "./original/types";
@@ -31,6 +32,8 @@ import {
 import { verifyCapturePackageLocally, visualizeDepthPlane } from "./wasm/tapcamVerifier";
 import { verifyCaptureSignature } from "./verifier/serverVerify";
 import { buildServerBoundaryDiagnostic } from "./verifier/serverBoundaryDiagnostic";
+import { verifyTapVideoLocally } from "./video/tapVideo";
+import { mountTapVideoDepthPlayback, type TapVideoPlaybackCleanup } from "./video/videoPlayback";
 import type {
   CaptureSignatureVerifyResponse,
   CombinedVerificationResult,
@@ -96,7 +99,7 @@ app.innerHTML = `
       </div>
     </section>
     <div class="dropzone" id="dropzone">
-      <input id="fileInput" class="file-input" type="file" accept=".heic,.heif,.jpg,.jpeg,.tapnap,.zip,image/heic,image/heif,image/jpeg,${TAPNAP_CAPTURE_PACKAGE_MIME_TYPE},application/zip" />
+      <input id="fileInput" class="file-input" type="file" accept=".heic,.heif,.jpg,.jpeg,.mp4,.tapnap,.zip,image/heic,image/heif,image/jpeg,video/mp4,${TAPNAP_CAPTURE_PACKAGE_MIME_TYPE},application/zip" />
       <div class="dropzone-copy">
         <p>${t("dropzone.subtitle")}</p>
       </div>
@@ -133,6 +136,8 @@ let activeDepthPlane: DecodedDepthPlane | null = null;
 let activeRgbImage: DecodedRgbImage | null = null;
 let activeOriginalDisplayReference: DisplayOrientationReference | null = null;
 let activeGeometryViewerCleanup: GeometryViewerCleanup | null = null;
+let activeVideoPlaybackCleanup: TapVideoPlaybackCleanup | null = null;
+let activeInputKind: CaptureInput["kind"] | null = null;
 let originalDisplayResolvedRunId = 0;
 let originalFallbackNeededRunId = 0;
 let originalFallbackStartedRunId = 0;
@@ -224,11 +229,13 @@ navBlogBtn!.addEventListener("click", () => {
 function resetToHome(event?: Event): void {
   event?.preventDefault();
   cleanupGeometryViewer();
+  cleanupVideoPlayback();
   document.querySelector("[data-result-modal]")?.remove();
   if (activeObjectUrl) {
     URL.revokeObjectURL(activeObjectUrl);
   }
   activeObjectUrl = null;
+  activeInputKind = null;
   activeFileBytes = null;
   activeDepthPlane = null;
   activeRgbImage = null;
@@ -322,7 +329,7 @@ async function verifyFile(file: File): Promise<void> {
   startAnalysis(runId, captureInput);
 
   try {
-    const result = await verifyFileBytes(captureInput);
+    const result = await verifyFileBytes(runId, captureInput);
     if (runId !== activeRunId) {
       return;
     }
@@ -359,11 +366,12 @@ async function verifyFile(file: File): Promise<void> {
 }
 
 function buildModalConfig(type: ResultModalType, result: CombinedVerificationResult): { title: string; desc: string; detail?: string; buttonText: string } {
+  const isVideo = result.local.mediaKind === "video";
   switch (type) {
     case "success":
       return {
-        title: t("modal.validTitle"),
-        desc: t("modal.validDesc"),
+        title: t(isVideo ? "modal.videoValidTitle" : "modal.validTitle"),
+        desc: t(isVideo ? "modal.videoValidDesc" : "modal.validDesc"),
         detail: t("modal.validNote", { fileName: result.fileName, fileSize: formatBytes(result.fileSize) }),
         buttonText: t("modal.viewDetails")
       };
@@ -374,7 +382,7 @@ function buildModalConfig(type: ResultModalType, result: CombinedVerificationRes
         : failCheck?.detail ?? result.local.summary;
       return {
         title: t("modal.invalidTitle"),
-        desc: t("modal.invalidDesc"),
+        desc: t(isVideo ? "modal.videoInvalidDesc" : "modal.invalidDesc"),
         detail: reason,
         buttonText: t("modal.retry")
       };
@@ -382,8 +390,8 @@ function buildModalConfig(type: ResultModalType, result: CombinedVerificationRes
     case "noSignature":
       return {
         title: t("modal.noSignatureTitle"),
-        desc: t("modal.noSignatureDesc"),
-        detail: t("modal.noSignatureHint"),
+        desc: t(isVideo ? "modal.videoNoSignatureDesc" : "modal.noSignatureDesc"),
+        detail: t(isVideo ? "modal.videoNoSignatureHint" : "modal.noSignatureHint"),
         buttonText: t("modal.retry")
       };
     case "networkError":
@@ -453,10 +461,12 @@ function beginSelectedFile(file: File): number {
   rgbResolvedRunId = 0;
   pixelProjectionStartedRunId = 0;
   cleanupGeometryViewer();
+  cleanupVideoPlayback();
   if (activeObjectUrl) {
     URL.revokeObjectURL(activeObjectUrl);
   }
   activeObjectUrl = null;
+  activeInputKind = null;
 
   currentFile = file;
   currentResult = null;
@@ -477,6 +487,12 @@ function beginSelectedFile(file: File): number {
 
 function startAnalysis(runId: number, captureInput: CaptureInput): void {
   if (runId !== activeRunId) {
+    return;
+  }
+
+  activeInputKind = captureInput.kind;
+  if (captureInput.kind === "tap-video") {
+    renderVideoVisualizationScaffold(captureInput.videoFile);
     return;
   }
 
@@ -689,7 +705,67 @@ function renderVisualizationScaffold(file: File, objectUrl: string): void {
   attachOriginalPreviewFallback(file, activeRunId);
 }
 
+function renderVideoVisualizationScaffold(file: File): void {
+  visualizationEl.hidden = true;
+  visualizationEl.innerHTML = `
+    <div class="visual-grid visual-grid--video">
+      <article class="visual-pane" data-pane-video>
+        <header>
+          <h2>${t("panel.video")}</h2>
+          <span>${escapeHtml(file.name)} · ${formatBytes(file.size)}</span>
+        </header>
+        <div class="video-frame" id="videoFrame">
+          <div class="video-auth-wait" data-video-auth-wait>${t("videoPlayer.waitingForVerification")}</div>
+          <video id="videoPreview" controls playsinline preload="metadata" aria-label="${t("videoPlayer.ariaLabel")}" hidden></video>
+        </div>
+      </article>
+      <article class="visual-pane" data-pane-video-depth>
+        <header>
+          <h2>${t("panel.videoDepth")}</h2>
+          <span data-video-depth-meta>${t("videoPlayer.depthSubtitle")}</span>
+        </header>
+        <div class="video-depth-frame">
+          <canvas id="videoDepthCanvas" aria-label="${t("videoPlayer.depthAriaLabel")}"></canvas>
+          <p class="video-depth-status" data-video-depth-status>${t("videoPlayer.waitingForVerification")}</p>
+        </div>
+      </article>
+      <article class="visual-pane visual-pane--geometry visual-pane--disabled" data-pane-geometry aria-disabled="true">
+        <header>
+          <h2>${t("panel.geometry")}</h2>
+          <span class="disabled-badge">${t("videoPlayer.disabled")}</span>
+        </header>
+        <div class="geometry-message geometry-message--disabled">
+          <span>${t("videoPlayer.geometryDisabled")}</span>
+        </div>
+      </article>
+    </div>
+  `;
+}
+
+function activateVerifiedVideoPlayback(runId: number, input: Extract<CaptureInput, { kind: "tap-video" }>): void {
+  if (runId !== activeRunId || activeInputKind !== "tap-video") return;
+  const video = visualizationEl.querySelector<HTMLVideoElement>("#videoPreview");
+  const canvas = visualizationEl.querySelector<HTMLCanvasElement>("#videoDepthCanvas");
+  const status = visualizationEl.querySelector<HTMLElement>("[data-video-depth-status]");
+  const metadata = visualizationEl.querySelector<HTMLElement>("[data-video-depth-meta]");
+  const wait = visualizationEl.querySelector<HTMLElement>("[data-video-auth-wait]");
+  if (!video || !canvas || !status || !metadata) return;
+
+  cleanupVideoPlayback();
+  if (activeObjectUrl) URL.revokeObjectURL(activeObjectUrl);
+  activeObjectUrl = URL.createObjectURL(input.videoFile);
+  video.src = activeObjectUrl;
+  video.hidden = false;
+  wait?.remove();
+  status.textContent = t("videoPlayer.depthLoading");
+  activeVideoPlaybackCleanup = mountTapVideoDepthPlayback(video, canvas, status, metadata, input.videoBytes);
+}
+
 function updatePaneHeaders(): void {
+  const videoPane = visualizationEl.querySelector<HTMLElement>("[data-pane-video] h2");
+  const videoDepthPane = visualizationEl.querySelector<HTMLElement>("[data-pane-video-depth] h2");
+  if (videoPane) videoPane.textContent = t("panel.video");
+  if (videoDepthPane) videoDepthPane.textContent = t("panel.videoDepth");
   const originalPane = visualizationEl.querySelector<HTMLElement>("[data-pane-original] h2");
   const depthPane = visualizationEl.querySelector<HTMLElement>("[data-pane-depth] h2");
   const depthPaneSubtitle = visualizationEl.querySelector<HTMLElement>("[data-pane-depth] header span");
@@ -701,6 +777,10 @@ function updatePaneHeaders(): void {
   if (depthPaneSubtitle) depthPaneSubtitle.textContent = t("panel.depthSubtitle");
   if (geometryPane) geometryPane.textContent = t("panel.geometry");
   if (geometryPaneSubtitle) geometryPaneSubtitle.textContent = t("panel.geometrySubtitle");
+  const disabledBadge = visualizationEl.querySelector<HTMLElement>(".disabled-badge");
+  const disabledMessage = visualizationEl.querySelector<HTMLElement>(".geometry-message--disabled span");
+  if (disabledBadge) disabledBadge.textContent = t("videoPlayer.disabled");
+  if (disabledMessage) disabledMessage.textContent = t("videoPlayer.geometryDisabled");
 }
 
 function attachOriginalPreviewFallback(file: File, runId: number): void {
@@ -811,12 +891,20 @@ function cleanupGeometryViewer(): void {
   activeGeometryViewerCleanup = null;
 }
 
-async function verifyFileBytes(captureInput: CaptureInput): Promise<CombinedVerificationResult> {
-  const local = await verifyCapturePackageLocally(
-    captureInput.photoBytes,
-    captureInput.pairedVideoBytes
-  );
+function cleanupVideoPlayback(): void {
+  activeVideoPlaybackCleanup?.();
+  activeVideoPlaybackCleanup = null;
+}
+
+async function verifyFileBytes(runId: number, captureInput: CaptureInput): Promise<CombinedVerificationResult> {
+  const local = captureInput.kind === "tap-video"
+    ? await verifyTapVideoLocally(captureInput.videoBytes)
+    : await verifyPhotoInputLocally(captureInput);
   const localFailure = hasLocalFailure(local);
+
+  if (!localFailure && captureInput.kind === "tap-video") {
+    activateVerifiedVideoPlayback(runId, captureInput);
+  }
 
   if (localFailure || !local.serverRequest) {
     const serverErrorMsg = localFailure ? t("error.serverNotRun") : t("error.serverMissingRequest");
@@ -853,6 +941,10 @@ async function verifyFileBytes(captureInput: CaptureInput): Promise<CombinedVeri
     serverBoundary: buildServerBoundaryDiagnostic(local, server, serverError),
     finalStatus: finalStatus(local, server)
   };
+}
+
+function verifyPhotoInputLocally(captureInput: PhotoCaptureInput): Promise<LocalVerificationReport> {
+  return verifyCapturePackageLocally(captureInput.photoBytes, captureInput.pairedVideoBytes);
 }
 
 function finalStatus(
