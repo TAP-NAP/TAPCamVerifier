@@ -5,17 +5,18 @@ The verifier follows TAPCamDemo still-photo `content-binding:v2` and Live Photo
 the fixed proof slot plus the exact TAP manifest payload JSON bytes embedded in
 XMP. Live Photos keep that primary-photo binding and add the complete
 `paired-video.mov` bytes as a signed resource. Verification is scoped: a full
-Live Photo package verifies the primary photo and MOV, while a primary-only
-transfer can still verify the signed Live Photo primary photo and submit the
-embedded signing binding to the server. The browser does not decode RGB pixels,
-video frames, or metric depth Float32 values for the base signature.
+Live Photo `.tapnap` or legacy ZIP package verifies the primary photo and MOV,
+while a primary-only transfer can still verify the signed Live Photo primary
+photo and submit the embedded signing binding to the server. The browser does
+not decode RGB pixels, video frames, or metric depth Float32 values for the base
+signature.
 
 ## Hash Flow
 
 ```mermaid
 flowchart TD
-    A["Upload signed HEIC/JPG or Live Photo ZIP"] --> B["Rust/WASM reads primary photo bytes"]
-    A --> Z["ZIP reader preserves primary-photo.* and paired-video.mov bytes"]
+    A["Upload signed HEIC/JPG, .tapnap, or legacy ZIP"] --> B["Rust/WASM reads primary photo bytes"]
+    A --> Z["Package reader preserves primary-photo.* and optional paired-video.mov bytes"]
     Z --> B
     Z --> Y["Hash paired-video.mov full file for Live Photo v3"]
     B --> C["Detect HEIC/BMFF or JPEG container"]
@@ -44,6 +45,35 @@ flowchart TD
     V --> W["Server verifies App Attest assertion"]
     W --> X["Final valid only if local and server checks pass"]
 ```
+
+## Capture Package Resolution
+
+The preferred transport filename is `TAPNAP-Capture.tapnap`. Its identifiers
+are UTI `net.tapnap.capture-package` and MIME
+`application/vnd.tapnap.capture-package+zip`. The browser recognizes `.tapnap`,
+the TAPNAP MIME, legacy `.zip` / `application/zip`, and ZIP magic; raw
+HEIC/HEIF/JPG/JPEG input remains unchanged.
+
+Both still and Live Photo packages use the existing
+`urn:tapnap:tapcam:verification-export:v1` sidecar. The sidecar is an untrusted
+resource index only. `packageKind` is informational and is limited by the
+producer contract to `stillPhoto` or `livePhotoPackage`. Resource roles may
+point the reader to a supported photo or MOV entry, but `packageKind`, declared
+media types, and other sidecar fields cannot define the verification scope. If
+the sidecar is absent, malformed, or maps a role to an unsupported entry, the reader falls back to
+`primary-photo.heic|heif|jpg|jpeg` and `paired-video.mov`.
+
+The resolved primary-photo bytes are passed unchanged to Rust/WASM. MOV bytes
+are passed only when the package contains a paired video. Therefore a still
+`.tapnap` package without a MOV follows the ordinary still-photo verification
+path, while a signed Live Photo primary without a MOV follows the existing
+`primaryPhotoFromLivePhoto` path. No TypeScript package metadata can reclassify
+the signed media type.
+
+Package parsing is bounded before extraction: oversized inputs, excessive ZIP
+entries, oversized resources, and ambiguous primary-photo or paired-video
+matches are rejected. Only the root sidecar and supported photo/MOV candidates
+are materialized in browser memory.
 
 ## Implemented Checks
 

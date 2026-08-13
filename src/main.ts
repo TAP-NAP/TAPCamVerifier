@@ -5,7 +5,11 @@ import type { DecodedDepthPlane, DepthPanelState, DisplayOrientationReference } 
 import { mountGeometryViewer, type GeometryViewerCleanup } from "./geometry/geometryViewer";
 import { decodeRgbForPixelProjection, projectSignedDepthPixels } from "./geometry/pixelProjection";
 import type { DecodedRgbImage, PixelProjectionState } from "./geometry/types";
-import { resolveCaptureInput, type CaptureInput } from "./input/captureInput";
+import {
+  resolveCaptureInput,
+  TAPNAP_CAPTURE_PACKAGE_MIME_TYPE,
+  type CaptureInput
+} from "./input/captureInput";
 import { visualizeOriginalHeicFallback } from "./original/originalVisualization";
 import type { OriginalPreviewResult } from "./original/types";
 import {
@@ -92,7 +96,7 @@ app.innerHTML = `
       </div>
     </section>
     <div class="dropzone" id="dropzone">
-      <input id="fileInput" class="file-input" type="file" accept=".heic,.heif,.jpg,.jpeg,.zip,image/heic,image/heif,image/jpeg,application/zip" />
+      <input id="fileInput" class="file-input" type="file" accept=".heic,.heif,.jpg,.jpeg,.tapnap,.zip,image/heic,image/heif,image/jpeg,${TAPNAP_CAPTURE_PACKAGE_MIME_TYPE},application/zip" />
       <div class="dropzone-copy">
         <p>${t("dropzone.subtitle")}</p>
       </div>
