@@ -33,7 +33,10 @@ export interface TapVideoManifest {
     packageID: string;
     capturedAt: string;
     container?: Record<string, unknown>;
-    rgbTrack?: Record<string, unknown>;
+    rgbTrack?: {
+      transform?: string | null;
+      [key: string]: unknown;
+    };
     audioTrack?: Record<string, unknown>;
     depthCoverage: {
       trackID: number | null;
@@ -61,6 +64,23 @@ export interface TapVideoDepthFrame {
 export interface TapVideoInspection {
   manifest: TapVideoManifest;
   depthFrames: TapVideoDepthFrame[];
+}
+
+export type TapVideoDisplayOrientation =
+  | "up"
+  | "upMirrored"
+  | "down"
+  | "downMirrored"
+  | "leftMirrored"
+  | "right"
+  | "rightMirrored"
+  | "left";
+
+export interface OrientedTapDepthPixels {
+  width: number;
+  height: number;
+  rgba: Uint8ClampedArray;
+  orientation: TapVideoDisplayOrientation;
 }
 
 interface Box {
@@ -268,7 +288,8 @@ export async function decodeTapDepthFrame(frame: TapVideoDepthFrame): Promise<Ui
 export function renderTapDepthFrame(
   bytes: Uint8Array,
   format: TapVideoDepthFormat,
-  canvas: HTMLCanvasElement
+  canvas: HTMLCanvasElement,
+  transform?: string | null
 ): { min: number; max: number } {
   const { width, height, bytesPerSample, packedRowStride, pixelFormat } = format;
   if (width <= 0 || height <= 0 || width * height > 16_777_216) {
@@ -300,26 +321,90 @@ export function renderTapDepthFrame(
     max = 0;
   }
   const span = Math.max(max - min, Number.EPSILON);
-  const image = new ImageData(width, height);
+  const rgba = new Uint8ClampedArray(width * height * 4);
   const isDisparity = pixelFormat.endsWith("dis") || format.kind === "disparity";
   for (let index = 0; index < values.length; index += 1) {
     const raw = Number.isFinite(values[index]) ? (values[index] - min) / span : 0;
     const normalized = isDisparity ? raw : 1 - raw;
     const [r, g, b] = depthColor(normalized);
     const offset = index * 4;
-    image.data[offset] = r;
-    image.data[offset + 1] = g;
-    image.data[offset + 2] = b;
-    image.data[offset + 3] = 255;
+    rgba[offset] = r;
+    rgba[offset + 1] = g;
+    rgba[offset + 2] = b;
+    rgba[offset + 3] = 255;
   }
-  canvas.width = width;
-  canvas.height = height;
+  const oriented = orientTapDepthPixels(rgba, width, height, transform);
+  canvas.width = oriented.width;
+  canvas.height = oriented.height;
   const context = canvas.getContext("2d");
   if (!context) {
     throw new Error("Depth canvas 2D context is unavailable.");
   }
+  const image = new ImageData(oriented.width, oriented.height);
+  image.data.set(oriented.rgba);
   context.putImageData(image, 0, 0);
   return { min, max };
+}
+
+/** Applies the signed RGB-track transform to the raw depth grid. */
+export function orientTapDepthPixels(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  transform?: string | null
+): OrientedTapDepthPixels {
+  if (width <= 0 || height <= 0 || rgba.length !== width * height * 4) {
+    throw new Error("Invalid TAP depth pixel buffer for display orientation.");
+  }
+  const orientation = tapVideoDisplayOrientation(transform);
+  const swapsAxes = orientation === "leftMirrored" || orientation === "right" ||
+    orientation === "rightMirrored" || orientation === "left";
+  const outputWidth = swapsAxes ? height : width;
+  const outputHeight = swapsAxes ? width : height;
+  const output = new Uint8ClampedArray(rgba.length);
+
+  for (let sourceY = 0; sourceY < height; sourceY += 1) {
+    for (let sourceX = 0; sourceX < width; sourceX += 1) {
+      const [displayX, displayY] = orientedCoordinate(sourceX, sourceY, width, height, orientation);
+      const sourceOffset = (sourceY * width + sourceX) * 4;
+      const displayOffset = (displayY * outputWidth + displayX) * 4;
+      output.set(rgba.subarray(sourceOffset, sourceOffset + 4), displayOffset);
+    }
+  }
+  return { width: outputWidth, height: outputHeight, rgba: output, orientation };
+}
+
+export function tapVideoDisplayOrientation(transform?: string | null): TapVideoDisplayOrientation {
+  if (!transform || transform === "identity") return "up";
+  const components = transform.split(";");
+  const mirrored = components.includes("mirrored");
+  const rotationComponent = components.find((component) => component.startsWith("rotation:"));
+  const degrees = rotationComponent ? Number(rotationComponent.slice("rotation:".length)) : 0;
+  const normalized = Number.isFinite(degrees) ? ((Math.round(degrees) % 360) + 360) % 360 : 0;
+
+  if (normalized === 90) return mirrored ? "rightMirrored" : "right";
+  if (normalized === 180) return mirrored ? "downMirrored" : "down";
+  if (normalized === 270) return mirrored ? "leftMirrored" : "left";
+  return mirrored ? "upMirrored" : "up";
+}
+
+function orientedCoordinate(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  orientation: TapVideoDisplayOrientation
+): [number, number] {
+  switch (orientation) {
+    case "up": return [x, y];
+    case "upMirrored": return [width - 1 - x, y];
+    case "down": return [width - 1 - x, height - 1 - y];
+    case "downMirrored": return [x, height - 1 - y];
+    case "leftMirrored": return [y, x];
+    case "right": return [height - 1 - y, x];
+    case "rightMirrored": return [height - 1 - y, width - 1 - x];
+    case "left": return [y, width - 1 - x];
+  }
 }
 
 function getZstdDecoder(): Promise<ZSTDDecoder> {

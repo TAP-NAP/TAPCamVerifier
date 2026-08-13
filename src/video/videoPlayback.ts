@@ -34,6 +34,7 @@ export function mountTapVideoDepthPlayback(
   }
 
   const format = inspection.manifest.payload.depthCoverage.format;
+  const displayTransform = inspection.manifest.payload.rgbTrack?.transform;
   const frames = inspection.depthFrames;
   if (!format || frames.length === 0) {
     status.textContent = "该 TAP Video 没有存储深度帧；视频仍可正常播放。";
@@ -44,7 +45,7 @@ export function mountTapVideoDepthPlayback(
   }
 
   status.textContent = "等待视频播放位置…";
-  metadata.textContent = `${frames.length} frames · ${format.width} × ${format.height} · ${format.pixelFormat}`;
+  metadata.textContent = `${frames.length} frames · ${format.width} × ${format.height} · ${format.pixelFormat} · ${displayTransform || "identity"}`;
 
   const renderAtCurrentTime = (): void => {
     if (disposed) return;
@@ -53,7 +54,7 @@ export function mountTapVideoDepthPlayback(
     const generation = ++renderGeneration;
     void decodedFrame(frame).then((decoded) => {
       if (disposed || generation !== renderGeneration) return;
-      const range = renderTapDepthFrame(decoded, format, canvas);
+      const range = renderTapDepthFrame(decoded, format, canvas, displayTransform);
       renderedFrameIndex = frame.frameIndex;
       status.textContent = `深度帧 ${frame.frameIndex} · ${formatTime(frame.presentationTimeSeconds)} · ${format.kind} ${formatNumber(range.min)}–${formatNumber(range.max)}`;
       status.classList.remove("is-error");

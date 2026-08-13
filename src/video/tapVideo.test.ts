@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { decodeTapDepthFrame, inspectTapVideoDepth, verifyTapVideoLocally } from "./tapVideo";
+import {
+  decodeTapDepthFrame,
+  inspectTapVideoDepth,
+  orientTapDepthPixels,
+  tapVideoDisplayOrientation,
+  verifyTapVideoLocally
+} from "./tapVideo";
 
 const encoder = new TextEncoder();
 
@@ -73,6 +79,46 @@ describe("TAP Video browser support", () => {
     });
 
     expect(new TextDecoder().decode(decoded)).toBe("TAP_DEPTH_VECTOR_V2:TAP_DEPTH_VECTOR_V2:");
+  });
+
+  it("maps every signed RGB transform to the matching depth display orientation", () => {
+    expect([
+      tapVideoDisplayOrientation("identity"),
+      tapVideoDisplayOrientation("rotation:0;mirrored"),
+      tapVideoDisplayOrientation("rotation:180"),
+      tapVideoDisplayOrientation("rotation:180;mirrored"),
+      tapVideoDisplayOrientation("rotation:270;mirrored"),
+      tapVideoDisplayOrientation("rotation:90"),
+      tapVideoDisplayOrientation("rotation:90;mirrored"),
+      tapVideoDisplayOrientation("rotation:270")
+    ]).toEqual([
+      "up",
+      "upMirrored",
+      "down",
+      "downMirrored",
+      "leftMirrored",
+      "right",
+      "rightMirrored",
+      "left"
+    ]);
+  });
+
+  it("rotates and mirrors depth pixels with the signed RGB-track transform", () => {
+    // Raw 3 x 2 grid, represented by the red channel:
+    // 1 2 3
+    // 4 5 6
+    const rgba = new Uint8ClampedArray([
+      1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255,
+      4, 0, 0, 255, 5, 0, 0, 255, 6, 0, 0, 255
+    ]);
+
+    const right = orientTapDepthPixels(rgba, 3, 2, "rotation:90");
+    expect([right.width, right.height]).toEqual([2, 3]);
+    expect(redChannels(right.rgba)).toEqual([4, 1, 5, 2, 6, 3]);
+
+    const rightMirrored = orientTapDepthPixels(rgba, 3, 2, "rotation:90;mirrored");
+    expect([rightMirrored.width, rightMirrored.height]).toEqual([2, 3]);
+    expect(redChannels(rightMirrored.rgba)).toEqual([6, 3, 5, 2, 4, 1]);
   });
 
   it("verifies a synthetic v4 MP4 content binding and produces the server request", async () => {
@@ -170,10 +216,17 @@ function makeManifest(depthCoverage: Record<string, unknown>) {
       id: "synthetic-video",
       packageID: "00000000-0000-0000-0000-000000000001",
       capturedAt: "2026-08-13T00:00:00Z",
+      rgbTrack: { transform: "rotation:90;mirrored" },
       depthCoverage
     },
     proofs: []
   };
+}
+
+function redChannels(rgba: Uint8ClampedArray): number[] {
+  const values: number[] = [];
+  for (let index = 0; index < rgba.length; index += 4) values.push(rgba[index]);
+  return values;
 }
 
 function box(type: string, payload: Uint8Array): Uint8Array {

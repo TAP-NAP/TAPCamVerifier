@@ -99,8 +99,10 @@ standard RGB/audio tracks use the native browser player. The TAP private
 `mdta/com.tapnap.depth.klv` track is indexed from the MP4 sample tables; raw and
 zstd1 Float16/Float32 depth or disparity frames are decoded on demand and
 synchronized to the player's current time. At most two decoded frames are
-retained. LZFSE remains readable in the Apple app but is not supported by this
-browser build.
+retained. The signed RGB-track rotation and optional front-camera mirroring are
+applied to the depth canvas as well, so both panes keep the same display
+direction. LZFSE remains readable in the Apple app but is not supported by
+this browser build.
 
 The 3D point-cloud pane is deliberately disabled for TAP Video. This release
 provides verified video playback plus synchronized 2D depth frames and does not

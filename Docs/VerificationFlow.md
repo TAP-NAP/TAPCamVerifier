@@ -199,6 +199,9 @@ player renders RGB/audio while the verifier reads the manifest-selected MP4
 metadata track's `stsz`, `stsc`, and `stco`/`co64` tables. Each Apple `mebx`
 sample unwraps one KLV-v2 depth frame. Player time selects the nearest signed
 depth timestamp, and seeks invalidate stale work. Raw and zstd1 frames are
-decoded on demand with a two-frame cache. Video mode explicitly disables the
+decoded on demand with a two-frame cache. Every depth frame applies the signed
+`payload.rgbTrack.transform` (`rotation:0/90/180/270` plus optional `mirrored`)
+used by TAPCamDemo, covering all eight display orientations without guessing
+from aspect ratio. Video mode explicitly disables the
 3D point-cloud pane; it does not reinterpret a time series as a still-photo
 point cloud.
