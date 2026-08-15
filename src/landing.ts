@@ -34,8 +34,9 @@ landing.innerHTML = `
       <strong>TAPCam</strong>
     </a>
     <nav class="landing-topbar__nav" aria-label="TAPCam navigation" data-top-navigation>
-      <a class="landing-topbar__link landing-topbar__link--verify" href="./verify/">VERIFY</a>
-      <a class="landing-topbar__link" href="https://github.com/TAP-NAP/TAPCamVerifier/blob/main/Docs/VerificationFlow.md" target="_blank" rel="noopener noreferrer">DOCS</a>
+      <a class="landing-topbar__link landing-topbar__link--verify" href="./verify/" data-copy="nav.verifier">验证器</a>
+      <a class="landing-topbar__link" href="https://github.com/TAP-NAP/TAPCamVerifier/blob/main/Docs/VerificationFlow.md" target="_blank" rel="noopener noreferrer" data-copy="nav.docs">文档</a>
+      <a class="landing-topbar__link landing-topbar__link--download" href="https://testflight.apple.com/join/bwcgjzNd" target="_blank" rel="noopener noreferrer" data-copy="nav.download">下载</a>
       <a class="landing-topbar__link" href="https://github.com/TAP-NAP" target="_blank" rel="noopener noreferrer">GITHUB</a>
       <button class="landing-topbar__lang" type="button" data-language-toggle aria-label="Switch to English">
         <span lang="zh-CN">中</span><i aria-hidden="true">/</i><span lang="en">EN</span>
@@ -77,7 +78,6 @@ landing.innerHTML = `
 
   <section class="landing-hero" id="intro" aria-labelledby="landing-title">
     <div class="hero-lockup">
-      <img class="hero-mark" src="./launch_logo.png" alt="" width="152" height="152" />
       <span class="hero-wordmark" aria-label="TAPCam">TAPCam</span>
     </div>
     <div class="hero-copy">
@@ -636,34 +636,20 @@ const snapKeys = new Set([
   " "
 ]);
 
-const chapterIntroRanges = [
-  { min: LANDING_PRESENTATION_PROGRESS.capture, max: 0.26 },
-  { min: LANDING_PRESENTATION_PROGRESS.sign, max: 0.62 },
-  { min: 0.86, max: LANDING_PRESENTATION_PROGRESS.privacy }
-] as const;
-
 function getNodeStatePoints(): number[] {
   const storyRect = story!.getBoundingClientRect();
   const actionRect = actionSection!.getBoundingClientRect();
   const storyTop = window.scrollY + storyRect.top;
   const storyDistance = Math.max(1, storyRect.height - window.innerHeight);
   const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-  const progressHeight = pageProgress!.getBoundingClientRect().height;
+  const progressTop = pageProgress!.getBoundingClientRect().top;
 
-  const chapterPoints = chapterCopies.map((copy, index) => {
+  const chapterPoints = chapterCopies.map((copy) => {
     const copyRect = copy.getBoundingClientRect();
     const copyTop = window.scrollY + copyRect.top;
-    const desiredTop = presentationTopForCopy(
-      window.innerHeight,
-      progressHeight,
-      copyRect.height
-    );
+    const desiredTop = presentationTopForCopy(progressTop, copyRect.height);
     const visibilityProgress = (copyTop - desiredTop - storyTop) / storyDistance;
-    const range = chapterIntroRanges[index];
-    const presentationProgress = Math.min(
-      range.max,
-      Math.max(range.min, visibilityProgress)
-    );
+    const presentationProgress = clamp01(visibilityProgress);
 
     return storyTop + storyDistance * presentationProgress;
   });

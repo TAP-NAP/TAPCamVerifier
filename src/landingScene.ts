@@ -421,7 +421,9 @@ export class LandingScene {
     }
     this.signingGroup.rotation.y = Math.sin(time * 0.18) * 0.055;
 
-    const privacyProgress = smoothstep(rangeProgress(progress, 0.66, 1));
+    const privacyProgress = smoothstep(
+      rangeProgress(progress, 0.66, LANDING_PRESENTATION_PROGRESS.privacy)
+    );
     const proofCore = this.privacyGroup.getObjectByName("proof-core");
     const privacyShell = this.privacyGroup.getObjectByName("privacy-shell");
     if (proofCore) {

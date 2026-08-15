@@ -33,12 +33,12 @@ No actionable P0, P1, or P2 findings remain.
 - Fonts and typography: the implementation preserves the references' oversized Chinese display type, condensed monospace metadata, hard line breaks, and high-contrast hierarchy. Desktop and mobile wraps were inspected; no clipping or orphaned wordmark remains.
 - Spacing and layout rhythm: hero, three long sticky chapters, and the horizontal final links follow the selected order. The desktop comparison keeps the subject right, twin camera modules centered, and photo/depth output left. Mobile collapses only the final link row and keeps all scene labels and copy readable.
 - Colors and tokens: black background is continuous. Warm white, lime, coral, and bright cobalt reproduce the young technical palette; cobalt was raised to `#5e78ff` for small-text contrast. There are no generic rounded cards, glass surfaces, or decorative gradients.
-- Image quality and asset fidelity: the real `launch_logo.png` asset is used for the brand. The point-cloud scene is live WebGL at capped device pixel ratio rather than a raster placeholder. The source concepts provide composition and motion direction rather than a production hardware asset; that intentional limitation is recorded as P3 above.
+- Image quality and asset fidelity: the real `launch_logo.png` asset is used for the rounded top-bar and footer brand marks; the Hero now intentionally uses the TAPCam wordmark alone. The point-cloud scene is live WebGL at capped device pixel ratio rather than a raster placeholder. The source concepts provide composition and motion direction rather than a production hardware asset; that intentional limitation is recorded as P3 above.
 - Copy and content: the hero explicitly states the post-capture verification problem and TAPCam's role. Current local checks and the server verification boundary are distinguished from decentralized verification and zero-knowledge privacy proofs, which are labeled R&D/future work.
 - Accessibility and interaction: skip link, semantic headings/links, visible focus treatments, a polite chapter status announcement that preserves keyboard focus in the progress navigation, reduced-motion presentation frames, mobile tap targets, WebGL fallback, and context restore paths were checked. The Verify link was activated and reached `/verify/`; the existing file-drop verifier mounted successfully.
 - Semantic chapter navigation: each bottom node lands after that chapter's intro motion, with the explanatory panel visible rather than at the chapter's raw DOM start. The active progress line is quantized to the five node centers. Desktop measurements put the active-dot/line-end error between `0.006` and `0.015` CSS px.
 - Moving annotations: RGB, depth, spatial-camera, and real-world-subject callouts are projected from their live Three.js targets every frame. Their opacity measured `0` during the early move, approximately `0.384` mid-transition, and `1` at the Capture presentation state; the two-segment leaders use obtuse bends.
-- Panel alignment: Capture, Bind & Sign, and Open Verification presentation states place the copy top at approximately `64%` of the viewport when the panel fits. Desktop measurements were `63.98%`, `64.01%`, and `63.99%`; a short `1910 × 1075` desktop check placed all three at `64.00%`. Every panel remained fully visible above the fixed progress navigation. The same calculation moves taller copy upward as a hard bottom-clearance constraint; an English Open Verification check at the requested `320 × 568` override remained clear of both the top bar and progress navigation.
+- Panel alignment: Capture, Bind & Sign, and Open Verification presentation states are now defined by one exact geometric rule: the chapter panel bottom meets the fixed progress navigation top. At `900 × 998`, measured gaps were `-0.12px`, `-0.02px`, and `0.09px`; the `393 × 852` Capture gap was `-0.19px`. The target is recalculated from live panel and progress-bar rectangles, so copy height, locale, and viewport size do not require separate offsets.
 
 ## Focused region comparison
 
@@ -96,23 +96,27 @@ Fixes made:
 
 Final browser inspection covered all five node destinations, moving and settled Capture states, initial and same-document hash navigation, Chinese and English copy, desktop and mobile layouts, viewport changes while a node was aligned, and the isolated verifier route. Capture, Bind & Sign, and Open Verification all landed with the expected stage active and their copy fully visible. All four mobile callout labels remained inside the scene after their leader directions were adapted for the narrow layout. No horizontal overflow or browser error-level console entries were found. The browser screenshot compositor produced duplicated tiles in one capture attempt, so that artifact was excluded from layout findings; DOM geometry and the clean saved comparison captures were used instead.
 
+### Pass 5 — passed
+
+The annotated navigation and panel-stop refinements were checked against the supplied `900 × 998` browser evidence and at `393 × 852` mobile width. The top-bar mark is rounded, the Hero mark is removed, and the navigation now switches `验证器 / 文档 / 下载` with `VERIFIER / DOCS / DOWNLOAD`; the coral Download link remains background-free. All labels fit without horizontal overflow at 393px and 320px widths. The three chapter node destinations land within `0.2px` of the requested panel-bottom/progress-top alignment.
+
 ## Primary checks
 
 - Production routes: `/` 200; `/verify/` 200; `/wasm/tapcam_verifier_wasm.wasm` 200 with `application/wasm`.
 - Browser console: no error-level entries on the production landing or verifier routes.
 - Responsive checks: 1440 × 900 and 390 × 844; no horizontal overflow at mobile width.
-- Automated checks: 48 Rust tests and 77 Vitest tests passed; TypeScript and Vite production build passed.
+- Automated checks: the current refinement passed 13 focused landing tests, TypeScript, and the Vite production build; the earlier baseline passed 48 Rust tests and 77 Vitest tests.
 
 ## Implementation checklist
 
-- [x] Black introductory hero with logo and explicit problem/solution copy.
+- [x] Black introductory hero with a standalone TAPCam wordmark and explicit problem/solution copy.
 - [x] Stereo capture composition: outputs left, two capture modules center, subject right.
 - [x] Scroll-driven bind/sign animation with completed signature state.
 - [x] Open verification and privacy/R&D boundaries represented accurately.
-- [x] Persistent top navigation and bilingual landing copy.
+- [x] Persistent top navigation with bilingual Verifier / Docs / Download labels and a coral TestFlight destination.
 - [x] Five semantic bottom nodes with center-aligned progress fill.
 - [x] Live projected Capture callouts with progressive reveal and obtuse leaders.
-- [x] Capture, Bind & Sign, and Open Verification copy aligned to the same stable viewport height.
+- [x] Capture, Bind & Sign, and Open Verification panel bottoms aligned to the progress-navigation top.
 - [x] Horizontal Download / Verify / Technology destinations.
 - [x] Existing verifier isolated at `/verify/` and production WASM path verified.
 

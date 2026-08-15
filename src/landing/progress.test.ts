@@ -45,14 +45,12 @@ describe("landing scroll progress", () => {
     expect(progressForActiveStep(4, 5)).toBe(1);
   });
 
-  it("uses the shared presentation height when chapter copy fits", () => {
-    expect(presentationTopForCopy(1000, 70, 180)).toBe(640);
+  it("aligns the chapter copy bottom with the progress bar top", () => {
+    expect(presentationTopForCopy(914, 144)).toBe(770);
   });
 
-  it("moves tall copy upward instead of allowing the progress bar to cover it", () => {
-    const top = presentationTopForCopy(568, 62, 300);
-    expect(top).toBe(182);
-    expect(top + 300).toBeLessThanOrEqual(568 - 62 - 24);
+  it("keeps a copy taller than the available region pinned to the viewport top", () => {
+    expect(presentationTopForCopy(280, 300)).toBe(0);
   });
 
   it("only snaps toward the user's intended next stage", () => {

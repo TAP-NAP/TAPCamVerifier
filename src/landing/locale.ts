@@ -2,6 +2,9 @@ export type LandingLocale = "zh" | "en";
 
 export type LandingCopyKey =
   | "skip"
+  | "nav.verifier"
+  | "nav.docs"
+  | "nav.download"
   | "hero.title"
   | "hero.body"
   | "capture.title"
@@ -24,6 +27,9 @@ const LANDING_LANGUAGE_STORAGE_KEY = "tapcam.landing.lang";
 const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
   zh: {
     skip: "跳到产品原理",
+    "nav.verifier": "验证器",
+    "nav.docs": "文档",
+    "nav.download": "下载",
     "hero.title": "让媒体带着<br />拍摄凭证离开相机。",
     "hero.body":
       "媒体一旦离开拍摄设备，来源、完整性与空间上下文往往无法一起核验。TAPCam 将媒体内容、深度数据和由 App Attest 支持的采集凭证绑定在同一次捕获中，让原始文件仍能被独立检查。",
@@ -47,6 +53,9 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
   },
   en: {
     skip: "Skip to how TAPCam works",
+    "nav.verifier": "VERIFIER",
+    "nav.docs": "DOCS",
+    "nav.download": "DOWNLOAD",
     "hero.title": "Let media leave the camera<br />with its capture proof.",
     "hero.body":
       "Once media leaves the capture device, its origin, integrity, and spatial context rarely remain verifiable together. TAPCam binds media, depth data, and App Attest-backed capture evidence in one capture so the original file can still be independently inspected.",
@@ -105,4 +114,3 @@ export function saveLandingLocale(locale: LandingLocale): void {
 export function landingCopy(locale: LandingLocale, key: LandingCopyKey): string {
   return copy[locale][key];
 }
-

@@ -4,7 +4,7 @@ export type ScrollDirection = -1 | 0 | 1;
 export const LANDING_PRESENTATION_PROGRESS = {
   capture: 0.1,
   sign: 0.5,
-  privacy: 0.995
+  privacy: 0.9
 } as const;
 
 export function clamp01(value: number): number {
@@ -56,24 +56,10 @@ export function progressForActiveStep(activeIndex: number, stepCount: number): n
 }
 
 export function presentationTopForCopy(
-  viewportHeight: number,
-  progressHeight: number,
-  copyHeight: number,
-  bottomGap = 24,
-  preferredTopRatio = 0.64
+  progressTop: number,
+  copyHeight: number
 ): number {
-  const safeViewportHeight = Math.max(0, viewportHeight);
-  const availableBottom = Math.max(
-    0,
-    safeViewportHeight - Math.max(0, progressHeight) - Math.max(0, bottomGap)
-  );
-  return Math.max(
-    0,
-    Math.min(
-      safeViewportHeight * clamp01(preferredTopRatio),
-      availableBottom - Math.max(0, copyHeight)
-    )
-  );
+  return Math.max(0, Math.max(0, progressTop) - Math.max(0, copyHeight));
 }
 
 export function directionalSnapTarget(
