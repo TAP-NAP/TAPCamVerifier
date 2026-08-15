@@ -207,6 +207,7 @@ landing.innerHTML = `
 `;
 
 const story = document.querySelector<HTMLElement>("[data-story]");
+const storyStageElement = document.querySelector<HTMLElement>(".story-stage");
 const canvas = document.querySelector<HTMLCanvasElement>("[data-story-canvas]");
 const fallback = document.querySelector<HTMLElement>("[data-story-fallback]");
 const actionSection = document.querySelector<HTMLElement>("#next");
@@ -252,6 +253,7 @@ const topNavigation = document.querySelector<HTMLElement>("[data-top-navigation]
 
 if (
   !story ||
+  !storyStageElement ||
   !canvas ||
   !fallback ||
   !actionSection ||
@@ -650,6 +652,8 @@ let actionScrollDirection: ScrollDirection = 0;
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const CHAPTER_PROGRESS_GAP_PX = 12;
+let layoutViewportWidth = window.innerWidth;
+let layoutViewportHeight = getStableViewportHeight();
 const snapKeys = new Set([
   "ArrowDown",
   "ArrowUp",
@@ -659,6 +663,10 @@ const snapKeys = new Set([
   "End",
   " "
 ]);
+
+function getStableViewportHeight(): number {
+  return Math.max(1, storyStageElement!.clientHeight);
+}
 
 function getChapterPresentationProgresses(
   storyTop: number,
@@ -682,9 +690,10 @@ function getChapterPresentationProgresses(
 function getNodeStatePoints(): number[] {
   const storyRect = story!.getBoundingClientRect();
   const actionRect = actionSection!.getBoundingClientRect();
+  const viewportHeight = getStableViewportHeight();
   const storyTop = window.scrollY + storyRect.top;
-  const storyDistance = Math.max(1, storyRect.height - window.innerHeight);
-  const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  const storyDistance = Math.max(1, storyRect.height - viewportHeight);
+  const maxScroll = Math.max(0, document.documentElement.scrollHeight - viewportHeight);
   const chapterPoints = getChapterPresentationProgresses(storyTop, storyDistance)
     .map((progress) => storyTop + storyDistance * progress);
 
@@ -782,8 +791,9 @@ function settleDirectionalScroll(): void {
     return;
   }
 
+  const viewportHeight = getStableViewportHeight();
   const triggerDistance =
-    window.innerHeight * (scrollDirection > 0 ? 0.26 : 0.38);
+    viewportHeight * (scrollDirection > 0 ? 0.26 : 0.38);
   const nodeStatePoints = getNodeStatePoints();
   const target = directionalSnapTarget(
     window.scrollY,
@@ -791,7 +801,7 @@ function settleDirectionalScroll(): void {
     scrollDirection,
     directionOriginIndex,
     triggerDistance,
-    window.innerHeight * 0.08
+    viewportHeight * 0.08
   );
 
   if (target === null) {
@@ -855,15 +865,16 @@ async function ensureScene(): Promise<void> {
 function updateStory(): void {
   updateFrame = 0;
   const rect = story!.getBoundingClientRect();
-  const rawProgress = storyProgressFromGeometry(rect.top, rect.height, window.innerHeight);
+  const viewportHeight = getStableViewportHeight();
+  const rawProgress = storyProgressFromGeometry(rect.top, rect.height, viewportHeight);
   const storyTop = window.scrollY + rect.top;
-  const storyDistance = Math.max(1, rect.height - window.innerHeight);
+  const storyDistance = Math.max(1, rect.height - viewportHeight);
   const progress = storyPresentationProgress(
     rawProgress,
     getChapterPresentationProgresses(storyTop, storyDistance)
   );
-  const entranceProgress = storyEntranceProgressFromGeometry(rect.top, window.innerHeight);
-  const entranceOffset = (1 - entranceProgress) * window.innerHeight * -0.4;
+  const entranceProgress = storyEntranceProgressFromGeometry(rect.top, viewportHeight);
+  const entranceOffset = (1 - entranceProgress) * viewportHeight * -0.4;
   story!.style.setProperty("--scene-entry-offset", `${entranceOffset}px`);
   const stage = landingStageForProgress(progress);
   story!.dataset.stage = stage;
@@ -919,7 +930,7 @@ function updatePageProgress(
   storyProgress: number,
   storyStage: LandingStage
 ): void {
-  const viewportHeight = Math.max(1, window.innerHeight);
+  const viewportHeight = getStableViewportHeight();
   const storyTop = Math.max(1, window.scrollY + storyRect.top);
   const actionRect = actionSection!.getBoundingClientRect();
   let activeStage: LandingPageStage = "intro";
@@ -999,6 +1010,19 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener(
   "resize",
   () => {
+    const nextViewportWidth = window.innerWidth;
+    const nextViewportHeight = getStableViewportHeight();
+    const layoutChanged =
+      Math.abs(nextViewportWidth - layoutViewportWidth) > 1 ||
+      Math.abs(nextViewportHeight - layoutViewportHeight) > 1;
+
+    if (!layoutChanged) {
+      scheduleStoryUpdate();
+      return;
+    }
+
+    layoutViewportWidth = nextViewportWidth;
+    layoutViewportHeight = nextViewportHeight;
     sceneCalloutLabelSizes.clear();
     sceneCalloutDirections.clear();
     const nodeToRealign = alignedNodeIndex;

@@ -19,8 +19,11 @@ describe("renderTapCamTopbar", () => {
     expect(html).toContain('href="./verify/"');
     expect(html).toContain('data-copy="nav.verifier"');
     expect(html).toContain("landing-topbar__link--download");
+    expect(html).toContain("landing-topbar__link--docs");
     expect(html).toContain("验证器");
     expect(html).not.toContain('aria-current="page"');
+    expect(html.indexOf("data-nav-download")).toBeLessThan(html.indexOf("data-nav-tool"));
+    expect(html.indexOf("data-nav-tool")).toBeLessThan(html.indexOf("data-nav-doc"));
   });
 
   it("renders the same canonical buttons for the verifier", () => {

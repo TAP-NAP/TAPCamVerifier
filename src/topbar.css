@@ -95,24 +95,24 @@
 .landing-topbar__link--verify {
   padding-right: 1.1rem;
   padding-left: 1.1rem;
-  border: 1px solid var(--lime, #d9ff43);
+  border: 1px solid var(--coral, #ff5a4f);
   background: rgba(5, 5, 5, 0.68);
-  color: var(--lime, #d9ff43);
+  color: var(--coral, #ff5a4f);
 }
 
 .landing-topbar__link--verify:hover {
-  background: rgba(217, 255, 67, 0.1);
-  color: var(--lime, #d9ff43);
+  background: rgba(255, 90, 79, 0.1);
+  color: var(--coral, #ff5a4f);
   transform: translateY(-1px);
 }
 
 .landing-topbar__link--verify[aria-current="page"] {
-  background: var(--lime, #d9ff43);
+  background: var(--coral, #ff5a4f);
   color: var(--black, #050505);
 }
 
 .landing-topbar__link--verify[aria-current="page"]:hover {
-  background: #e4ff70;
+  background: #ff756c;
   color: var(--black, #050505);
   transform: translateY(-1px);
 }
@@ -120,11 +120,16 @@
 .landing-topbar__link--download,
 .landing-topbar__link--download:hover {
   background: transparent;
-  color: var(--coral, #ff5a4f);
+  color: var(--lime, #d9ff43);
 }
 
 .landing-topbar__link--download:hover {
   transform: translateY(-1px);
+}
+
+.landing-topbar__link--docs,
+.landing-topbar__link--docs:hover {
+  color: var(--cobalt, #5e78ff);
 }
 
 .landing-topbar__link:focus-visible,

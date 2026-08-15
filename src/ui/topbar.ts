@@ -31,9 +31,9 @@ export function renderTapCamTopbar(options: TapCamTopbarOptions): string {
         <strong data-nav-brand-text>TAPCam</strong>
       </a>
       <nav class="landing-topbar__nav" aria-label="${options.navAriaLabel}" data-top-navigation>
-        <a class="landing-topbar__link landing-topbar__link--verify" href="${options.verifyHref}" data-nav-tool${currentPageAttribute}${copyAttribute(options.copyKeys?.verify)}>${labels.verify}</a>
-        <a class="landing-topbar__link" href="https://github.com/TAP-NAP/TAPCamVerifier/blob/main/Docs/VerificationFlow.md" target="_blank" rel="noopener noreferrer" data-nav-doc${copyAttribute(options.copyKeys?.docs)}>${labels.docs}</a>
         <a class="landing-topbar__link landing-topbar__link--download" href="https://testflight.apple.com/join/bwcgjzNd" target="_blank" rel="noopener noreferrer" data-nav-download${copyAttribute(options.copyKeys?.download)}>${labels.download}</a>
+        <a class="landing-topbar__link landing-topbar__link--verify" href="${options.verifyHref}" data-nav-tool${currentPageAttribute}${copyAttribute(options.copyKeys?.verify)}>${labels.verify}</a>
+        <a class="landing-topbar__link landing-topbar__link--docs" href="https://github.com/TAP-NAP/TAPCamVerifier/blob/main/Docs/VerificationFlow.md" target="_blank" rel="noopener noreferrer" data-nav-doc${copyAttribute(options.copyKeys?.docs)}>${labels.docs}</a>
         <a class="landing-topbar__link" href="https://github.com/TAP-NAP" target="_blank" rel="noopener noreferrer" data-nav-github>${labels.github}</a>
         <button class="landing-topbar__lang" type="button" data-language-toggle data-nav-lang data-locale="${options.locale}" aria-label="${options.locale === "zh" ? "Switch to English" : "切换到中文"}">
           <span lang="zh-CN">中</span><i aria-hidden="true">/</i><span lang="en">EN</span>

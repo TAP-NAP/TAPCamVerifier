@@ -25,6 +25,8 @@ html {
   background: var(--black);
   scroll-behavior: smooth;
   scroll-padding-top: calc(var(--topbar-height) + var(--topbar-top) + 0.8rem);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -829,7 +831,18 @@ canvas {
   .landing-progress {
     bottom: 0;
     width: 100%;
+    height: calc(var(--progress-height) + env(safe-area-inset-bottom));
+    min-height: calc(var(--progress-height) + env(safe-area-inset-bottom));
     padding: 0.58rem 0.35rem calc(0.35rem + env(safe-area-inset-bottom));
+    /* Keep the page on the stable viewport. Let expanding browser chrome cover
+       the progress control instead of forcing the whole story to reflow. */
+    transform: translate(
+      -50%,
+      min(
+        calc(100lvh - 100dvh),
+        calc(var(--progress-height) + env(safe-area-inset-bottom))
+      )
+    );
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
@@ -969,15 +982,30 @@ canvas {
     background: transparent;
   }
 
-  .action-link .action-index,
-  .action-link .action-type,
-  .action-link:hover .action-index,
-  .action-link:hover .action-type,
   .action-link:hover > span:last-child,
-  .action-link:focus-visible .action-index,
-  .action-link:focus-visible .action-type,
   .action-link:focus-visible > span:last-child {
     color: var(--muted);
+  }
+
+  .action-link--download:hover .action-index,
+  .action-link--download:hover .action-type,
+  .action-link--download:focus-visible .action-index,
+  .action-link--download:focus-visible .action-type {
+    color: var(--lime);
+  }
+
+  .action-link--verify:hover .action-index,
+  .action-link--verify:hover .action-type,
+  .action-link--verify:focus-visible .action-index,
+  .action-link--verify:focus-visible .action-type {
+    color: var(--coral);
+  }
+
+  .action-link--docs:hover .action-index,
+  .action-link--docs:hover .action-type,
+  .action-link--docs:focus-visible .action-index,
+  .action-link--docs:focus-visible .action-type {
+    color: var(--cobalt);
   }
 
   .action-link[data-mobile-active="true"] {

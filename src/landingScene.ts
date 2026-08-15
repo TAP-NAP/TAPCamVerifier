@@ -19,6 +19,10 @@ const DESKTOP_MAX_FPS = 60;
 const MOBILE_MAX_FPS = 30;
 const CALLOUT_MAX_FPS = 20;
 const PROGRESS_DAMPING_PER_SECOND = 4.68;
+const SCENE_HORIZONTAL_FILL = 0.94;
+const CAPTURE_DESIGN_WIDTH = 8.3;
+const SIGNING_DESIGN_WIDTH = 3.4;
+const PRIVACY_DESIGN_WIDTH = 6.2;
 
 type FadableMaterial = THREE.Material & { opacity: number };
 
@@ -62,6 +66,9 @@ export class LandingScene {
   private calloutsVisible = false;
   private targetProgress = 0;
   private renderedProgress = 0;
+  private captureScale = 1;
+  private signingScale = 1;
+  private privacyScale = 1;
   private active = false;
   private disposed = false;
   private contextLost = false;
@@ -207,6 +214,27 @@ export class LandingScene {
     this.camera.fov = isMobile ? 49 : 38;
     this.camera.position.z = isMobile ? 15.8 : 10;
     this.camera.updateProjectionMatrix();
+    const verticalViewSize =
+      2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov * 0.5)) * this.camera.position.z;
+    const horizontalViewSize = verticalViewSize * this.camera.aspect;
+    this.captureScale = sceneScaleForHorizontalFill(
+      horizontalViewSize,
+      CAPTURE_DESIGN_WIDTH,
+      0.74,
+      1.35
+    );
+    this.signingScale = sceneScaleForHorizontalFill(
+      horizontalViewSize,
+      SIGNING_DESIGN_WIDTH,
+      1.75,
+      2.75
+    );
+    this.privacyScale = sceneScaleForHorizontalFill(
+      horizontalViewSize,
+      PRIVACY_DESIGN_WIDTH,
+      0.95,
+      1.65
+    );
   }
 
   private renderCaptureTextures(): void {
@@ -394,7 +422,7 @@ export class LandingScene {
     const captureProgress = smoothstep(
       rangeProgress(progress, 0, LANDING_PRESENTATION_PROGRESS.capture)
     );
-    const viewportAspect = window.innerWidth / Math.max(1, window.innerHeight);
+    const viewportAspect = this.camera.aspect;
     const captureLayoutFit = smoothstep(rangeProgress(viewportAspect, 1.05, 1.4));
     this.captureGroup.position.x = mix(0, -0.35 * captureLayoutFit, captureProgress);
     this.captureGroup.rotation.y = mix(-0.08, 0.12, captureProgress);
@@ -474,12 +502,9 @@ export class LandingScene {
     }
 
     const mobile = this.mobileViewport.matches;
-    const captureScale = mobile
-      ? 0.72
-      : Math.min(1, Math.max(0.68, viewportAspect / 1.32));
-    this.captureGroup.scale.setScalar(captureScale);
-    this.signingGroup.scale.setScalar(mobile ? 1.55 : 1);
-    this.privacyGroup.scale.setScalar(mobile ? 0.78 : 1);
+    this.captureGroup.scale.setScalar(this.captureScale);
+    this.signingGroup.scale.setScalar(this.signingScale);
+    this.privacyGroup.scale.setScalar(this.privacyScale);
     const verticalOffset = mobile ? 0.86 : 0.42;
     this.captureGroup.position.y = verticalOffset;
     this.signingGroup.position.y = verticalOffset;
@@ -656,6 +681,16 @@ function disposeObject(root: THREE.Object3D): void {
 
 function mix(from: number, to: number, progress: number): number {
   return from + (to - from) * progress;
+}
+
+function sceneScaleForHorizontalFill(
+  horizontalViewSize: number,
+  designWidth: number,
+  minimumScale: number,
+  maximumScale: number
+): number {
+  const fittedScale = horizontalViewSize * SCENE_HORIZONTAL_FILL / designWidth;
+  return Math.min(maximumScale, Math.max(minimumScale, fittedScale));
 }
 
 function pseudoRandom(seed: number): number {
