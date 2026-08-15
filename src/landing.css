@@ -563,62 +563,18 @@ canvas {
 }
 
 .scene-callout--rgb {
-  --leader-one: 4.25rem;
-  --leader-two: 5.6rem;
-  --leader-angle-one: -158deg;
-  --leader-angle-two: 180deg;
-  --elbow-x: -3.94rem;
-  --elbow-y: -1.59rem;
-  --label-x: -9.54rem;
-  --label-y: -1.59rem;
-  --label-transform: translate(-100%, -50%);
-  top: 31%;
-  left: 25%;
   color: var(--paper);
 }
 
 .scene-callout--depth {
-  --leader-one: 3.6rem;
-  --leader-two: 5.1rem;
-  --leader-angle-one: 156deg;
-  --leader-angle-two: 180deg;
-  --elbow-x: -3.29rem;
-  --elbow-y: 1.46rem;
-  --label-x: -8.39rem;
-  --label-y: 1.46rem;
-  --label-transform: translate(-100%, -50%);
-  top: 61%;
-  left: 24%;
   color: var(--lime);
 }
 
 .scene-callout--camera {
-  --leader-one: 3.9rem;
-  --leader-two: 4.8rem;
-  --leader-angle-one: -126deg;
-  --leader-angle-two: 180deg;
-  --elbow-x: -2.29rem;
-  --elbow-y: -3.16rem;
-  --label-x: -7.09rem;
-  --label-y: -3.16rem;
-  --label-transform: translate(-100%, -50%);
-  top: 37%;
-  left: 51%;
   color: var(--cobalt);
 }
 
 .scene-callout--subject {
-  --leader-one: 4.25rem;
-  --leader-two: 5.6rem;
-  --leader-angle-one: -22deg;
-  --leader-angle-two: 0deg;
-  --elbow-x: 3.94rem;
-  --elbow-y: -1.59rem;
-  --label-x: 9.54rem;
-  --label-y: -1.59rem;
-  --label-transform: translate(0, -50%);
-  top: 42%;
-  left: 77%;
   color: var(--coral);
 }
 
@@ -1122,54 +1078,6 @@ canvas {
 
   .scene-callouts {
     font-size: 0.48rem;
-  }
-
-  .scene-callout--rgb,
-  .scene-callout--depth {
-    --leader-two: 3.2rem;
-  }
-
-  .scene-callout--rgb {
-    --leader-one: 2.9rem;
-    --leader-angle-one: -22deg;
-    --leader-angle-two: 0deg;
-    --elbow-x: 2.69rem;
-    --elbow-y: -1.09rem;
-    --label-x: 5.89rem;
-    --label-y: -1.09rem;
-    --label-transform: translate(0, -50%);
-  }
-
-  .scene-callout--depth {
-    --leader-one: 2.7rem;
-    --leader-angle-one: 24deg;
-    --leader-angle-two: 0deg;
-    --elbow-x: 2.47rem;
-    --elbow-y: 1.1rem;
-    --label-x: 5.67rem;
-    --label-y: 1.1rem;
-    --label-transform: translate(0, -50%);
-  }
-
-  .scene-callout--camera {
-    --leader-one: 3.5rem;
-    --leader-two: 3rem;
-    --elbow-x: -2.06rem;
-    --elbow-y: -2.83rem;
-    --label-x: -5.06rem;
-    --label-y: -2.83rem;
-  }
-
-  .scene-callout--subject {
-    --leader-one: 2.9rem;
-    --leader-two: 3.2rem;
-    --leader-angle-one: -158deg;
-    --leader-angle-two: 180deg;
-    --elbow-x: -2.69rem;
-    --elbow-y: -1.09rem;
-    --label-x: -5.89rem;
-    --label-y: -1.09rem;
-    --label-transform: translate(-100%, -50%);
   }
 
   .scene-labels--sign,

@@ -216,12 +216,31 @@ const pageStatus = document.querySelector<HTMLElement>("[data-page-status]");
 const chapterCopies = Array.from(
   document.querySelectorAll<HTMLElement>("[data-chapter] .chapter-copy")
 );
-const sceneCallouts = new Map(
-  Array.from(document.querySelectorAll<HTMLElement>("[data-scene-callout]")).map((element) => [
-    element.dataset.sceneCallout,
-    element
-  ])
-);
+type SceneCalloutName = "rgb" | "depth" | "camera" | "subject";
+type CalloutPoint = { x: number; y: number };
+type PixelRect = { left: number; top: number; right: number; bottom: number };
+type CalloutDirection =
+  | "above"
+  | "aboveLeft"
+  | "aboveRight"
+  | "below"
+  | "belowLeft"
+  | "belowRight"
+  | "left"
+  | "right"
+  | "farAbove"
+  | "farBelow";
+
+const sceneCalloutNames: SceneCalloutName[] = ["rgb", "camera", "subject", "depth"];
+const sceneCallouts = new Map<SceneCalloutName, HTMLElement>();
+for (const element of document.querySelectorAll<HTMLElement>("[data-scene-callout]")) {
+  const name = element.dataset.sceneCallout as SceneCalloutName | undefined;
+  if (name) {
+    sceneCallouts.set(name, element);
+  }
+}
+const sceneCalloutLabelSizes = new Map<SceneCalloutName, { width: number; height: number }>();
+const sceneCalloutDirections = new Map<SceneCalloutName, CalloutDirection>();
 const languageButton = document.querySelector<HTMLButtonElement>("[data-language-toggle]");
 const topNavigation = document.querySelector<HTMLElement>("[data-top-navigation]");
 
@@ -311,6 +330,286 @@ languageButton.addEventListener("click", () => {
 });
 
 applyLandingLocale(currentLocale);
+
+const calloutDirectionPreferences: Record<SceneCalloutName, CalloutDirection[]> = {
+  rgb: ["aboveLeft", "above", "left", "farAbove", "belowLeft", "right", "farBelow"],
+  camera: ["above", "aboveLeft", "aboveRight", "farAbove", "left", "right", "below"],
+  subject: ["aboveRight", "above", "right", "farAbove", "aboveLeft", "belowRight", "left"],
+  depth: ["belowLeft", "below", "left", "farBelow", "aboveLeft", "right", "farAbove"]
+};
+
+function clampValue(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function rectAround(point: CalloutPoint, radiusX: number, radiusY: number): PixelRect {
+  return {
+    left: point.x - radiusX,
+    top: point.y - radiusY,
+    right: point.x + radiusX,
+    bottom: point.y + radiusY
+  };
+}
+
+function expandRect(rect: PixelRect, amount: number): PixelRect {
+  return {
+    left: rect.left - amount,
+    top: rect.top - amount,
+    right: rect.right + amount,
+    bottom: rect.bottom + amount
+  };
+}
+
+function overlapArea(first: PixelRect, second: PixelRect): number {
+  const width = Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left));
+  const height = Math.max(0, Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top));
+  return width * height;
+}
+
+function calloutLabelSize(name: SceneCalloutName): { width: number; height: number } {
+  const cached = sceneCalloutLabelSizes.get(name);
+  if (cached) {
+    return cached;
+  }
+
+  const text = sceneCallouts.get(name)?.querySelector<HTMLElement>(".scene-callout__text");
+  const rect = text?.getBoundingClientRect();
+  const size = {
+    width: Math.max(1, Math.ceil(rect?.width ?? 1)),
+    height: Math.max(1, Math.ceil(rect?.height ?? 1))
+  };
+  sceneCalloutLabelSizes.set(name, size);
+  return size;
+}
+
+function directionalLabelRect(
+  direction: CalloutDirection,
+  objectRect: PixelRect,
+  size: { width: number; height: number },
+  gap: number
+): PixelRect {
+  const centerX = (objectRect.left + objectRect.right) * 0.5;
+  const centerY = (objectRect.top + objectRect.bottom) * 0.5;
+  let left = centerX - size.width * 0.5;
+  let top = objectRect.top - gap - size.height;
+
+  switch (direction) {
+    case "aboveLeft":
+      left = objectRect.left;
+      break;
+    case "aboveRight":
+      left = objectRect.right - size.width;
+      break;
+    case "below":
+      top = objectRect.bottom + gap;
+      break;
+    case "belowLeft":
+      left = objectRect.left;
+      top = objectRect.bottom + gap;
+      break;
+    case "belowRight":
+      left = objectRect.right - size.width;
+      top = objectRect.bottom + gap;
+      break;
+    case "left":
+      left = objectRect.left - gap - size.width;
+      top = centerY - size.height * 0.5;
+      break;
+    case "right":
+      left = objectRect.right + gap;
+      top = centerY - size.height * 0.5;
+      break;
+    case "farAbove":
+      top = objectRect.top - gap * 3.25 - size.height;
+      break;
+    case "farBelow":
+      top = objectRect.bottom + gap * 3.25;
+      break;
+    case "above":
+      break;
+  }
+
+  return { left, top, right: left + size.width, bottom: top + size.height };
+}
+
+function clampLabelRect(rect: PixelRect, safeArea: PixelRect): PixelRect {
+  const width = rect.right - rect.left;
+  const height = rect.bottom - rect.top;
+  const left = clampValue(rect.left, safeArea.left, Math.max(safeArea.left, safeArea.right - width));
+  const top = clampValue(rect.top, safeArea.top, Math.max(safeArea.top, safeArea.bottom - height));
+  return { left, top, right: left + width, bottom: top + height };
+}
+
+function setCalloutLeader(
+  name: SceneCalloutName,
+  callout: HTMLElement,
+  anchor: CalloutPoint,
+  labelRect: PixelRect
+): void {
+  let connectionX = clampValue(anchor.x, labelRect.left, labelRect.right);
+  let connectionY = clampValue(anchor.y, labelRect.top, labelRect.bottom);
+
+  if (
+    connectionX === anchor.x &&
+    connectionY === anchor.y &&
+    anchor.x >= labelRect.left &&
+    anchor.x <= labelRect.right &&
+    anchor.y >= labelRect.top &&
+    anchor.y <= labelRect.bottom
+  ) {
+    const edges = [
+      { distance: anchor.x - labelRect.left, x: labelRect.left, y: anchor.y },
+      { distance: labelRect.right - anchor.x, x: labelRect.right, y: anchor.y },
+      { distance: anchor.y - labelRect.top, x: anchor.x, y: labelRect.top },
+      { distance: labelRect.bottom - anchor.y, x: anchor.x, y: labelRect.bottom }
+    ].sort((first, second) => first.distance - second.distance);
+    connectionX = edges[0].x;
+    connectionY = edges[0].y;
+  }
+
+  const deltaX = connectionX - anchor.x;
+  const deltaY = connectionY - anchor.y;
+  const distance = Math.max(1, Math.hypot(deltaX, deltaY));
+  const perpendicularX = -deltaY / distance;
+  const perpendicularY = deltaX / distance;
+  const bendDirection = name === "camera" || name === "depth" ? -1 : 1;
+  const bend = Math.min(11, distance * 0.12) * bendDirection;
+  const elbowX = deltaX * 0.64 + perpendicularX * bend;
+  const elbowY = deltaY * 0.64 + perpendicularY * bend;
+  const secondX = deltaX - elbowX;
+  const secondY = deltaY - elbowY;
+
+  callout.style.setProperty("--label-x", `${(labelRect.left - anchor.x).toFixed(2)}px`);
+  callout.style.setProperty("--label-y", `${(labelRect.top - anchor.y).toFixed(2)}px`);
+  callout.style.setProperty("--label-transform", "none");
+  callout.style.setProperty("--elbow-x", `${elbowX.toFixed(2)}px`);
+  callout.style.setProperty("--elbow-y", `${elbowY.toFixed(2)}px`);
+  callout.style.setProperty("--leader-one", `${Math.hypot(elbowX, elbowY).toFixed(2)}px`);
+  callout.style.setProperty(
+    "--leader-angle-one",
+    `${(Math.atan2(elbowY, elbowX) * 180 / Math.PI).toFixed(2)}deg`
+  );
+  callout.style.setProperty("--leader-two", `${Math.hypot(secondX, secondY).toFixed(2)}px`);
+  callout.style.setProperty(
+    "--leader-angle-two",
+    `${(Math.atan2(secondY, secondX) * 180 / Math.PI).toFixed(2)}deg`
+  );
+}
+
+function layoutSceneCallouts(
+  projectedPositions: Partial<Record<SceneCalloutName, CalloutPoint>>,
+  opacity: number
+): void {
+  const width = Math.max(1, canvas!.clientWidth);
+  const height = Math.max(1, canvas!.clientHeight);
+  const positions = {} as Record<SceneCalloutName, CalloutPoint>;
+
+  for (const name of sceneCalloutNames) {
+    const projected = projectedPositions[name];
+    if (!projected) {
+      return;
+    }
+    positions[name] = {
+      x: projected.x * width / 100,
+      y: projected.y * height / 100
+    };
+  }
+
+  const targetRects: Record<SceneCalloutName, PixelRect> = {
+    rgb: rectAround(
+      positions.rgb,
+      clampValue(width * 0.09, 54, 160),
+      clampValue(height * 0.06, 42, 100)
+    ),
+    depth: rectAround(
+      positions.depth,
+      clampValue(width * 0.09, 54, 160),
+      clampValue(height * 0.06, 42, 100)
+    ),
+    camera: rectAround(
+      positions.camera,
+      clampValue(width * 0.06, 35, 105),
+      clampValue(height * 0.1, 52, 145)
+    ),
+    subject: rectAround(
+      positions.subject,
+      clampValue(width * 0.17, 68, 260),
+      clampValue(height * 0.18, 76, 280)
+    )
+  };
+  const depthBloomRect: PixelRect = {
+    left: targetRects.depth.left,
+    top: targetRects.depth.top - clampValue(height * 0.015, 8, 22),
+    right: positions.depth.x + clampValue(width * 0.34, 140, 420),
+    bottom: targetRects.depth.bottom + clampValue(height * 0.015, 8, 22)
+  };
+  const occupiedRects = [
+    targetRects.rgb,
+    targetRects.camera,
+    targetRects.subject,
+    depthBloomRect
+  ].map((rect) => expandRect(rect, 7));
+  const horizontalInset = clampValue(width * 0.035, 16, 48);
+  const safeArea: PixelRect = {
+    left: horizontalInset,
+    top: clampValue(height * 0.11, 92, 132),
+    right: width - horizontalInset,
+    bottom: height * 0.61
+  };
+  const gap = clampValue(Math.min(width, height) * 0.025, 12, 28);
+  const placedRects: PixelRect[] = [];
+
+  for (const name of sceneCalloutNames) {
+    const callout = sceneCallouts.get(name);
+    if (!callout) {
+      continue;
+    }
+
+    const size = calloutLabelSize(name);
+    const candidates = calloutDirectionPreferences[name].map((direction, preferenceIndex) => {
+      const rawRect = directionalLabelRect(direction, targetRects[name], size, gap);
+      const rect = clampLabelRect(rawRect, safeArea);
+      const paddedRect = expandRect(rect, 5);
+      const boundaryAdjustment = Math.hypot(rect.left - rawRect.left, rect.top - rawRect.top);
+      const objectCollision = occupiedRects.reduce(
+        (total, occupiedRect) => total + overlapArea(paddedRect, occupiedRect),
+        0
+      );
+      const labelCollision = placedRects.reduce(
+        (total, placedRect) => total + overlapArea(paddedRect, placedRect),
+        0
+      );
+      const centerX = (rect.left + rect.right) * 0.5;
+      const centerY = (rect.top + rect.bottom) * 0.5;
+      const leaderDistance = Math.hypot(centerX - positions[name].x, centerY - positions[name].y);
+      return {
+        direction,
+        rect,
+        score:
+          objectCollision * 28 +
+          labelCollision * 44 +
+          boundaryAdjustment * 3 +
+          preferenceIndex * 260 +
+          leaderDistance * 0.12
+      };
+    });
+    candidates.sort((first, second) => first.score - second.score);
+
+    let selected = candidates[0];
+    const previousDirection = sceneCalloutDirections.get(name);
+    const previous = candidates.find((candidate) => candidate.direction === previousDirection);
+    if (previous && previous.score <= selected.score + 220) {
+      selected = previous;
+    }
+
+    sceneCalloutDirections.set(name, selected.direction);
+    placedRects.push(expandRect(selected.rect, 9));
+    callout.style.left = `${(positions[name].x / width * 100).toFixed(3)}%`;
+    callout.style.top = `${(positions[name].y / height * 100).toFixed(3)}%`;
+    callout.style.opacity = opacity.toFixed(3);
+    setCalloutLeader(name, callout, positions[name], selected.rect);
+  }
+}
 
 let scene: LandingScene | null = null;
 let sceneLoading: Promise<void> | null = null;
@@ -628,6 +927,8 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener(
   "resize",
   () => {
+    sceneCalloutLabelSizes.clear();
+    sceneCalloutDirections.clear();
     const nodeToRealign = alignedNodeIndex;
     cancelDirectionalSnap(false);
     window.clearTimeout(resizeAlignmentTimer);
@@ -654,18 +955,9 @@ canvas.addEventListener("tapcam:webgl-restored", () => {
 canvas.addEventListener("tapcam:callouts", (event) => {
   const detail = (event as CustomEvent<{
     opacity: number;
-    positions: Record<string, { x: number; y: number }>;
+    positions: Partial<Record<SceneCalloutName, CalloutPoint>>;
   }>).detail;
-
-  for (const [name, position] of Object.entries(detail.positions)) {
-    const callout = sceneCallouts.get(name);
-    if (!callout) {
-      continue;
-    }
-    callout.style.left = `${position.x.toFixed(3)}%`;
-    callout.style.top = `${position.y.toFixed(3)}%`;
-    callout.style.opacity = detail.opacity.toFixed(3);
-  }
+  layoutSceneCallouts(detail.positions, detail.opacity);
 });
 window.addEventListener("pagehide", (event) => {
   cancelDirectionalSnap();

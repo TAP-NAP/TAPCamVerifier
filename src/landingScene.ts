@@ -368,7 +368,9 @@ export class LandingScene {
     const captureProgress = smoothstep(
       rangeProgress(progress, 0, LANDING_PRESENTATION_PROGRESS.capture)
     );
-    this.captureGroup.position.x = mix(0, -0.35, captureProgress);
+    const viewportAspect = window.innerWidth / Math.max(1, window.innerHeight);
+    const captureLayoutFit = smoothstep(rangeProgress(viewportAspect, 1.05, 1.4));
+    this.captureGroup.position.x = mix(0, -0.35 * captureLayoutFit, captureProgress);
     this.captureGroup.rotation.y = mix(-0.08, 0.12, captureProgress);
     this.cameraRig.rotation.y = Math.sin(time * 0.35) * 0.035;
     this.subjectRig.rotation.set(time * 0.09, time * 0.16, Math.sin(time * 0.2) * 0.05);
@@ -438,7 +440,10 @@ export class LandingScene {
     this.privacyGroup.rotation.y = Math.sin(time * 0.12) * 0.08;
 
     const mobile = window.innerWidth < 700;
-    this.captureGroup.scale.setScalar(mobile ? 0.72 : 1);
+    const captureScale = mobile
+      ? 0.72
+      : Math.min(1, Math.max(0.68, viewportAspect / 1.32));
+    this.captureGroup.scale.setScalar(captureScale);
     this.signingGroup.scale.setScalar(mobile ? 1.15 : 1);
     this.privacyGroup.scale.setScalar(mobile ? 0.78 : 1);
     const verticalOffset = mobile ? 0.86 : 0.42;
