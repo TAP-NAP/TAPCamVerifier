@@ -9,6 +9,10 @@ export type LandingCopyKey =
   | "hero.body"
   | "capture.title"
   | "capture.body"
+  | "callout.rgb"
+  | "callout.depth"
+  | "callout.camera"
+  | "callout.subject"
   | "sign.title"
   | "sign.body"
   | "privacy.title"
@@ -33,9 +37,13 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "hero.title": "让媒体带着<br />拍摄凭证离开相机。",
     "hero.body":
       "媒体一旦离开拍摄设备，来源、完整性与空间上下文往往无法一起核验。TAPCam 将媒体内容、深度数据和由 App Attest 支持的采集凭证绑定在同一次捕获中，让原始文件仍能被独立检查。",
-    "capture.title": "画面在右，<br />照片与深度在左。",
+    "capture.title": "捕捉色彩，<br />记录纵深。",
     "capture.body":
-      "两个镜头构成 RGB 与深度捕获层的视觉意象：右侧是被摄对象，左侧同时形成照片和深度表达。",
+      "TAPCam 不仅仅是一台相机，更是一台空间相机。我们利用此技术来记录被拍摄的照片的环境。从而确保我们所拍摄的内容是取自一个真实场景。",
+    "callout.rgb": "RGB 图像",
+    "callout.depth": "深度数据",
+    "callout.camera": "空间相机",
+    "callout.subject": "被摄对象",
     "sign.title": "数据包，<br />在离开相机前被绑定。",
     "sign.body":
       "媒体、深度、清单与证明材料依次汇合；内容绑定与签名把这些资源固定在同一次捕获中。",
@@ -59,9 +67,13 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "hero.title": "Let media leave the camera<br />with its capture proof.",
     "hero.body":
       "Once media leaves the capture device, its origin, integrity, and spatial context rarely remain verifiable together. TAPCam binds media, depth data, and App Attest-backed capture evidence in one capture so the original file can still be independently inspected.",
-    "capture.title": "Subject on the right.<br />Photo and depth on the left.",
+    "capture.title": "Capture color. <br />Record depth.",
     "capture.body":
-      "Two lenses express the RGB and depth capture layers: the subject stays on the right while the photo and its depth representation form together on the left.",
+      "TAPCam is more than a camera—it is a spatial camera. We use this technology to record the environment around a captured photo, helping ensure that the content comes from a real scene.",
+    "callout.rgb": "RGB IMAGE",
+    "callout.depth": "DEPTH DATA",
+    "callout.camera": "SPATIAL CAMERA",
+    "callout.subject": "SUBJECT",
     "sign.title": "The package is bound<br />before it leaves the camera.",
     "sign.body":
       "Media, depth, manifest, and proof material converge in sequence. Content binding and signing fix those resources to the same capture.",

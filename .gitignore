@@ -4,6 +4,9 @@ dist/
 target/
 public/wasm/*.wasm
 
+# Local landing-page visual QA captures and reference comparisons.
+Docs/Assets/LandingQA/
+
 # Local real-device TAPCam samples. Keep README tracked, keep photos local.
 test/*
 !test/README.md

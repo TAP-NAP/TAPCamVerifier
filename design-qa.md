@@ -100,6 +100,10 @@ Final browser inspection covered all five node destinations, moving and settled 
 
 The annotated navigation and panel-stop refinements were checked against the supplied `900 × 998` browser evidence and at `393 × 852` mobile width. The top-bar mark is rounded, the Hero mark is removed, and the navigation now switches `验证器 / 文档 / 下载` with `VERIFIER / DOCS / DOWNLOAD`; the coral Download link remains background-free. All labels fit without horizontal overflow at 393px and 320px widths. The three chapter node destinations land within `0.2px` of the requested panel-bottom/progress-top alignment.
 
+### Pass 6 — passed
+
+Capture copy now uses the requested Chinese title and description, with an English counterpart. The RGB, depth, spatial-camera, and subject callouts each render only the active language, and their cached geometry is reset after a language switch so collision avoidance can remeasure the shorter labels. The process note now reads `DEEPTH PHOTO <- SPATIAL CAM <- REAL WORLD` with the requested reversed arrows. Browser checks at the supplied `900 × 998` viewport confirmed both languages, zero horizontal overflow, and a chapter-panel/progress alignment delta below `0.1px` before and after switching languages.
+
 ## Primary checks
 
 - Production routes: `/` 200; `/verify/` 200; `/wasm/tapcam_verifier_wasm.wasm` 200 with `application/wasm`.

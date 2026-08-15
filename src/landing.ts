@@ -101,22 +101,22 @@ landing.innerHTML = `
         <span class="scene-callout scene-callout--rgb" data-scene-callout="rgb">
           <i class="scene-callout__leader scene-callout__leader--one"></i>
           <i class="scene-callout__leader scene-callout__leader--two"></i>
-          <span class="scene-callout__text">RGB IMAGE / RGB 图像</span>
+          <span class="scene-callout__text" data-copy="callout.rgb">RGB 图像</span>
         </span>
         <span class="scene-callout scene-callout--depth" data-scene-callout="depth">
           <i class="scene-callout__leader scene-callout__leader--one"></i>
           <i class="scene-callout__leader scene-callout__leader--two"></i>
-          <span class="scene-callout__text">DEPTH DATA / 深度数据</span>
+          <span class="scene-callout__text" data-copy="callout.depth">深度数据</span>
         </span>
         <span class="scene-callout scene-callout--camera" data-scene-callout="camera">
           <i class="scene-callout__leader scene-callout__leader--one"></i>
           <i class="scene-callout__leader scene-callout__leader--two"></i>
-          <span class="scene-callout__text">SPATIAL CAMERA / 空间相机</span>
+          <span class="scene-callout__text" data-copy="callout.camera">空间相机</span>
         </span>
         <span class="scene-callout scene-callout--subject" data-scene-callout="subject">
           <i class="scene-callout__leader scene-callout__leader--one"></i>
           <i class="scene-callout__leader scene-callout__leader--two"></i>
-          <span class="scene-callout__text">SUBJECT / REAL WORLD</span>
+          <span class="scene-callout__text" data-copy="callout.subject">被摄对象</span>
         </span>
       </div>
       <div class="scene-labels scene-labels--sign">
@@ -131,11 +131,11 @@ landing.innerHTML = `
       <article class="story-chapter story-chapter--capture" id="capture" data-chapter="capture">
         <div class="chapter-copy chapter-copy--left">
           <p class="chapter-number">01 / CAPTURE</p>
-          <h2 data-copy-html="capture.title">画面在右，<br />照片与深度在左。</h2>
+          <h2 data-copy-html="capture.title">捕捉色彩，<br />记录纵深。</h2>
           <p data-copy="capture.body">
-            两个镜头构成 RGB 与深度捕获层的视觉意象：右侧是被摄对象，左侧同时形成照片和深度表达。
+            TAPCam 不仅仅是一台相机，更是一台空间相机。我们利用此技术来记录被拍摄的照片的环境。从而确保我们所拍摄的内容是取自一个真实场景。
           </p>
-          <p class="chapter-note">PHOTO → DEPTH → RELATIVE 3D</p>
+          <p class="chapter-note">DEEPTH PHOTO &lt;- SPATIAL CAM &lt;- REAL WORLD</p>
         </div>
       </article>
 
@@ -303,6 +303,9 @@ function applyLandingLocale(locale: LandingLocale): void {
     element.innerHTML = landingCopy(locale, element.dataset.copyHtml as LandingCopyKey);
   });
 
+  sceneCalloutLabelSizes.clear();
+  sceneCalloutDirections.clear();
+
   document
     .querySelector<HTMLMetaElement>('meta[name="description"]')
     ?.setAttribute(
@@ -324,9 +327,20 @@ function applyLandingLocale(locale: LandingLocale): void {
 }
 
 languageButton.addEventListener("click", () => {
+  const nodeToRealign = getNodeStatePoints().findIndex(
+    (point) => Math.abs(point - window.scrollY) <= 4
+  );
   const nextLocale: LandingLocale = currentLocale === "zh" ? "en" : "zh";
   saveLandingLocale(nextLocale);
   applyLandingLocale(nextLocale);
+  window.requestAnimationFrame(() => {
+    if (nodeToRealign >= 0) {
+      alignedNodeIndex = nodeToRealign;
+      animateScrollTo(getNodeStatePoints()[nodeToRealign], reducedMotion.matches ? 1 : 220);
+    } else {
+      scheduleStoryUpdate();
+    }
+  });
 });
 
 applyLandingLocale(currentLocale);

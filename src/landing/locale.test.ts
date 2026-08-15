@@ -16,4 +16,20 @@ describe("landing locale", () => {
     expect(landingCopy("zh", "privacy.body")).toContain("研发方向");
     expect(landingCopy("en", "privacy.body")).toContain("R&D");
   });
+
+  it("switches capture copy and callouts as single-language strings", () => {
+    expect(landingCopy("zh", "capture.title")).toBe("捕捉色彩，<br />记录纵深。");
+    expect(landingCopy("zh", "capture.body")).toContain("更是一台空间相机");
+    expect(landingCopy("zh", "callout.rgb")).toBe("RGB 图像");
+    expect(landingCopy("zh", "callout.depth")).toBe("深度数据");
+    expect(landingCopy("zh", "callout.camera")).toBe("空间相机");
+    expect(landingCopy("zh", "callout.subject")).toBe("被摄对象");
+
+    expect(landingCopy("en", "capture.title")).toBe("Capture color. <br />Record depth.");
+    expect(landingCopy("en", "capture.body")).toContain("it is a spatial camera");
+    expect(landingCopy("en", "callout.rgb")).toBe("RGB IMAGE");
+    expect(landingCopy("en", "callout.depth")).toBe("DEPTH DATA");
+    expect(landingCopy("en", "callout.camera")).toBe("SPATIAL CAMERA");
+    expect(landingCopy("en", "callout.subject")).toBe("SUBJECT");
+  });
 });
