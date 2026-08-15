@@ -105,9 +105,11 @@ landing.innerHTML = `
           </span>
         </span>
       </h1>
-      <p data-copy="hero.body">
-        媒体一旦离开拍摄设备，来源、完整性与空间上下文往往无法一起核验。TAPCam 将媒体内容、
-        深度数据和由 App Attest 支持的采集凭证绑定在同一次捕获中，让原始文件仍能被独立检查。
+      <p data-copy-html="hero.body">
+        AI 时代下，摄影还有价值吗？<br />
+        在充斥着 AI 内容的当下，我们如何让真实的内容被看见？<br />
+        正如摄影不会替代绘画，而 AI 生图也无法取代摄影。<br />
+        TAPCam 就是这样一款帮助你记录的摄影软件，让你的感受、表达在 AI 时代也能被看见。
       </p>
     </div>
   </section>
@@ -145,7 +147,7 @@ landing.innerHTML = `
         <span>MEDIA</span><span>DEPTH</span><span>ATTESTATION</span><span>SIGNATURE</span>
       </div>
       <div class="scene-labels scene-labels--privacy">
-        <span>LOCAL CHECK</span><span>PUBLIC VERIFIER</span><span>ZK / R&amp;D</span>
+        <span>LOCAL FIRST</span><span>OPEN SOURCE</span><span>ZKP (COMING SOON)</span>
       </div>
     </div>
 
@@ -175,14 +177,14 @@ landing.innerHTML = `
       <article class="story-chapter story-chapter--privacy" id="open-verification" data-chapter="privacy">
         <div class="chapter-copy chapter-copy--left">
           <p class="chapter-number">03 / OPEN VERIFICATION</p>
-          <h2 data-copy-html="privacy.title">验证属于每个人，<br />隐私仍属于你。</h2>
+          <h2 data-copy-html="privacy.title">证明及验证，<br />是基本权利。</h2>
           <p data-copy="privacy.body">
-            浏览器先执行本地内容绑定检查，再把证明材料交给明确的服务器验证边界。去中心化验证与零知识隐私证明是下一阶段研发方向。
+            软件完全开源（在正式版上架后），因为我们认为，在 AI 时代下，证明自己是作者本人是一项基本权利。同时，我们欢迎更多人加入来进行维护。未来会引入 ZKP 技术，以提供更好的匿名性。
           </p>
-          <div class="research-tags" aria-label="当前能力与未来方向">
-            <span>LOCAL CONTENT CHECKS</span>
-            <span>PUBLIC VERIFIER</span>
-            <span>PRIVATE PROOFS — ZK / R&amp;D</span>
+          <div class="research-tags" data-copy-aria-label="privacy.tagsLabel" aria-label="验证原则与后续能力">
+            <span>LOCAL FIRST</span>
+            <span>OPEN SOURCE</span>
+            <span>ZKP (COMING SOON)</span>
           </div>
         </div>
       </article>
@@ -365,6 +367,12 @@ function applyLandingLocale(locale: LandingLocale): void {
   });
   document.querySelectorAll<HTMLElement>("[data-copy-html]").forEach((element) => {
     element.innerHTML = landingCopy(locale, element.dataset.copyHtml as LandingCopyKey);
+  });
+  document.querySelectorAll<HTMLElement>("[data-copy-aria-label]").forEach((element) => {
+    element.setAttribute(
+      "aria-label",
+      landingCopy(locale, element.dataset.copyAriaLabel as LandingCopyKey)
+    );
   });
 
   const localizedHero = landingHeroCopy(locale);
@@ -1001,6 +1009,7 @@ function updateStory(): void {
   const entranceProgress = storyEntranceProgressFromGeometry(rect.top, viewportHeight);
   const entranceOffset = (1 - entranceProgress) * viewportHeight * -0.4;
   story!.style.setProperty("--scene-entry-offset", `${entranceOffset}px`);
+  story!.dataset.stagePinned = rect.top <= 0 ? "true" : "false";
   const stage = landingStageForProgress(progress);
   story!.dataset.stage = stage;
   updatePageProgress(rect, progress, stage);

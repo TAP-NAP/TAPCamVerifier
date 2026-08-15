@@ -424,6 +424,7 @@ canvas {
   color: var(--muted);
   font-size: clamp(0.56rem, 0.68vw, 0.7rem);
   font-weight: 720;
+  visibility: hidden;
   opacity: 0;
   transition: opacity 240ms ease;
   pointer-events: none;
@@ -550,10 +551,14 @@ canvas {
   color: var(--coral);
 }
 
-.story[data-stage="capture"] .scene-callouts--capture,
+.story[data-stage="capture"][data-stage-pinned="true"] .scene-callouts--capture,
 .story[data-stage="sign"] .scene-labels--sign,
 .story[data-stage="privacy"] .scene-labels--privacy {
   opacity: 1;
+}
+
+.story[data-stage="capture"][data-stage-pinned="true"] .scene-callouts--capture {
+  visibility: visible;
 }
 
 .story-chapters {
@@ -609,6 +614,10 @@ canvas {
   letter-spacing: -0.052em;
 }
 
+.story-chapter--privacy .chapter-copy h2 br {
+  display: block;
+}
+
 .chapter-copy > p:not(.chapter-number, .chapter-note) {
   max-width: 510px;
   margin: 1.3rem 0 0;
@@ -632,20 +641,20 @@ canvas {
   margin-top: 1.35rem;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  align-items: center;
 }
 
 .research-tags span {
-  padding: 0.52rem 0.62rem;
-  border: 1px solid #4a4d54;
-  color: #c2c3c7;
-  font: 700 0.65rem/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
-  letter-spacing: 0.045em;
+  color: var(--cobalt);
+  font: 700 0.64rem/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  letter-spacing: normal;
 }
 
-.research-tags span:last-child {
-  border-color: var(--lime);
-  color: var(--lime);
+.research-tags span + span::before {
+  margin: 0 0.7rem;
+  color: #4a4d54;
+  content: "|";
+  -webkit-text-stroke: 0;
 }
 
 .action-section {
