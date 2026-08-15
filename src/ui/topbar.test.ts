@@ -40,7 +40,8 @@ describe("renderTapCamTopbar", () => {
     expect(html).toContain(">VERIFIER</a>");
     expect(html).toContain('data-nav-doc>DOCS</a>');
     expect(html).toContain('data-nav-download>DOWNLOAD</a>');
-    expect(html).toContain('data-nav-github>GITHUB</a>');
+    expect(html).toContain('data-nav-github aria-label="GitHub"');
+    expect(html).toContain("<svg");
     expect(html).toContain('aria-current="page"');
   });
 });

@@ -1,15 +1,9 @@
 import type { Lang, LangChangeListener } from "./types";
+import { getPreferredLanguage, saveLanguagePreference } from "./languagePreference";
 import { translations } from "./translations";
 
 function detectLang(): Lang {
-  if (typeof navigator === "undefined") return "en";
-  const langs = navigator.languages || [navigator.language || "en"];
-  for (const lang of langs) {
-    if (lang.toLowerCase().startsWith("zh")) {
-      return "zh";
-    }
-  }
-  return "en";
+  return getPreferredLanguage();
 }
 
 let currentLang: Lang = detectLang();
@@ -20,6 +14,7 @@ export function getLang(): Lang {
 }
 
 export function setLang(lang: Lang): void {
+  saveLanguagePreference(lang);
   if (currentLang === lang) return;
   currentLang = lang;
   listeners.forEach((fn) => fn(lang));

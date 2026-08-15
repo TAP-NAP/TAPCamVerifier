@@ -1,3 +1,9 @@
+import {
+  getPreferredLanguage,
+  resolveLanguagePreference,
+  saveLanguagePreference
+} from "../i18n/languagePreference";
+
 export type LandingLocale = "zh" | "en";
 
 export type LandingHeroCopy = {
@@ -30,10 +36,7 @@ export type LandingCopyKey =
   | "action.verify.title"
   | "action.verify.body"
   | "action.docs.title"
-  | "action.docs.body"
-  | "scrollCue";
-
-const LANDING_LANGUAGE_STORAGE_KEY = "tapcam.landing.lang";
+  | "action.docs.body";
 
 const zhHeroPhrases = ["我们的", "真实的", "不可篡改的", "可验的"].flatMap((descriptor) =>
   ["生活", "影像", "新闻", "回忆", "瞬间"].map((subject) => `${descriptor}${subject}`)
@@ -84,12 +87,11 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "privacy.tagsLabel": "验证原则与后续能力",
     "action.title": "拍摄、验证，或者继续读下去。",
     "action.download.title": "下载 TAPCam",
-    "action.download.body": "通过 TestFlight 体验捕获流程",
+    "action.download.body": "现在参与 TestFlight 进行测试",
     "action.verify.title": "打开验证器",
-    "action.verify.body": "验证原始 TAPCam 照片与视频",
+    "action.verify.body": "验证照片与视频是否使用了 TAPCam 进行创作",
     "action.docs.title": "阅读技术文档",
-    "action.docs.body": "了解协议、数据边界与验证流程",
-    scrollCue: "继续向下探索"
+    "action.docs.body": "了解协议、数据边界与验证流程"
   },
   en: {
     skip: "Skip to how TAPCam works",
@@ -115,12 +117,11 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "privacy.tagsLabel": "Verification principles and upcoming capability",
     "action.title": "Capture, verify, or keep reading.",
     "action.download.title": "Download TAPCam",
-    "action.download.body": "Experience the capture flow through TestFlight",
+    "action.download.body": "Join the TestFlight beta now",
     "action.verify.title": "Open the verifier",
-    "action.verify.body": "Verify original TAPCam photos and videos",
+    "action.verify.body": "Verify whether photos and videos were created with TAPCam",
     "action.docs.title": "Read the technology docs",
-    "action.docs.body": "Understand the protocol, data boundaries, and verification flow",
-    scrollCue: "Scroll to explore"
+    "action.docs.body": "Understand the protocol, data boundaries, and verification flow"
   }
 };
 
@@ -128,32 +129,15 @@ export function resolveLandingLocale(
   storedLocale: string | null,
   browserLanguages: readonly string[]
 ): LandingLocale {
-  if (storedLocale === "zh" || storedLocale === "en") {
-    return storedLocale;
-  }
-
-  return browserLanguages.some((language) => language.toLowerCase().startsWith("zh"))
-    ? "zh"
-    : "en";
+  return resolveLanguagePreference(storedLocale, browserLanguages);
 }
 
 export function getInitialLandingLocale(): LandingLocale {
-  let storedLocale: string | null = null;
-  try {
-    storedLocale = window.localStorage.getItem(LANDING_LANGUAGE_STORAGE_KEY);
-  } catch {
-    // Storage can be unavailable in hardened or private browsing contexts.
-  }
-
-  return resolveLandingLocale(storedLocale, navigator.languages ?? [navigator.language]);
+  return getPreferredLanguage();
 }
 
 export function saveLandingLocale(locale: LandingLocale): void {
-  try {
-    window.localStorage.setItem(LANDING_LANGUAGE_STORAGE_KEY, locale);
-  } catch {
-    // The language still changes for this page even when persistence is unavailable.
-  }
+  saveLanguagePreference(locale);
 }
 
 export function landingCopy(locale: LandingLocale, key: LandingCopyKey): string {
