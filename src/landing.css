@@ -330,13 +330,17 @@ canvas {
 
 .hero-title__value {
   min-width: 7em;
-  display: inline-flex;
-  align-items: baseline;
+  display: inline-block;
   color: var(--lime);
   font-variant-ligatures: none;
 }
 
-.hero-title__glyph {
+.hero-title__value[data-scrambling="true"] {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.hero-title__value[data-scrambling="true"] .hero-title__glyph {
   min-width: 0.86em;
   display: inline-block;
   text-align: center;

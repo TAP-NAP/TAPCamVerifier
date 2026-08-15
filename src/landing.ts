@@ -339,12 +339,7 @@ function renderHeroPhrase(glyphs: readonly HeroScrambleGlyph[]): void {
 }
 
 function renderResolvedHeroPhrase(phrase: string): void {
-  renderHeroPhrase(
-    Array.from(phrase, (character) => ({
-      character,
-      state: "resolved" as const
-    }))
-  );
+  heroValue!.textContent = phrase;
   heroValue!.dataset.scrambling = "false";
 }
 
