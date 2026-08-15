@@ -1,5 +1,9 @@
 import * as THREE from "three";
-import { rangeProgress, smoothstep } from "./landing/progress";
+import {
+  LANDING_PRESENTATION_PROGRESS,
+  rangeProgress,
+  smoothstep
+} from "./landing/progress";
 
 const COLORS = {
   black: 0x050505,
@@ -22,6 +26,9 @@ export class LandingScene {
   private readonly cameraRig = new THREE.Group();
   private readonly outputRig = new THREE.Group();
   private readonly subjectRig = new THREE.Group();
+  private readonly cameraCalloutTarget = new THREE.Object3D();
+  private photoCalloutTarget: THREE.Object3D | null = null;
+  private depthCalloutTarget: THREE.Object3D | null = null;
   private readonly packageLayers: THREE.Object3D[] = [];
   private readonly networkNodes: THREE.Object3D[] = [];
   private readonly depthBloom = makePoints(
@@ -84,7 +91,12 @@ export class LandingScene {
   setProgress(progress: number): void {
     this.targetProgress = Math.min(1, Math.max(0, progress));
     if (this.reducedMotion) {
-      this.renderedProgress = this.targetProgress < 0.34 ? 0.18 : this.targetProgress < 0.68 ? 0.5 : 0.86;
+      this.renderedProgress =
+        this.targetProgress < 0.34
+          ? LANDING_PRESENTATION_PROGRESS.capture
+          : this.targetProgress < 0.68
+            ? LANDING_PRESENTATION_PROGRESS.sign
+            : LANDING_PRESENTATION_PROGRESS.privacy;
       this.updateScene(this.renderedProgress, performance.now() * 0.001);
       this.renderer.render(this.scene, this.camera);
     }
@@ -240,6 +252,10 @@ export class LandingScene {
     depthPlane.userData.baseY = -0.82;
     this.depthBloom.position.set(-2.2, -0.7, 0.18);
     this.depthBloom.scale.set(0.05, 0.05, 0.001);
+    this.photoCalloutTarget = photoPlane;
+    this.depthCalloutTarget = depthPlane;
+    this.cameraCalloutTarget.position.set(0.34, 0.72, 0);
+    this.cameraRig.add(this.cameraCalloutTarget);
     this.outputRig.add(photoPlane, depthPlane, this.depthBloom);
 
     this.captureGroup.add(this.outputRig, this.cameraRig, this.subjectRig);
@@ -346,7 +362,12 @@ export class LandingScene {
     setGroupOpacity(this.signingGroup, signEnter * (1 - signExit));
     setGroupOpacity(this.privacyGroup, privacyEnter);
 
-    const captureProgress = smoothstep(rangeProgress(progress, 0, 0.34));
+    // The Capture node represents the presented state: the intro has finished,
+    // the objects are settled, and the explanatory copy/callouts are readable.
+    // Hold that state until the capture group starts leaving at 0.26.
+    const captureProgress = smoothstep(
+      rangeProgress(progress, 0, LANDING_PRESENTATION_PROGRESS.capture)
+    );
     this.captureGroup.position.x = mix(0, -0.35, captureProgress);
     this.captureGroup.rotation.y = mix(-0.08, 0.12, captureProgress);
     this.cameraRig.rotation.y = Math.sin(time * 0.35) * 0.035;
@@ -370,7 +391,9 @@ export class LandingScene {
     this.depthBloom.rotation.set(time * 0.05, mix(-0.45, 0.42, bloomProgress), time * 0.08);
     this.depthBloom.position.x = mix(-3.1, -2.1, bloomProgress);
 
-    const signingProgress = smoothstep(rangeProgress(progress, 0.3, 0.58));
+    const signingProgress = smoothstep(
+      rangeProgress(progress, 0.3, LANDING_PRESENTATION_PROGRESS.sign)
+    );
     for (const [index, layer] of this.packageLayers.entries()) {
       const baseX = Number(layer.userData.baseX);
       const baseZ = Number(layer.userData.baseZ);
@@ -422,6 +445,41 @@ export class LandingScene {
     this.captureGroup.position.y = verticalOffset;
     this.signingGroup.position.y = verticalOffset;
     this.privacyGroup.position.y = verticalOffset;
+
+    const calloutOpacity =
+      smoothstep(rangeProgress(progress, 0.04, LANDING_PRESENTATION_PROGRESS.capture)) *
+      (1 - smoothstep(rangeProgress(progress, 0.26, 0.34)));
+    this.emitCalloutPositions(calloutOpacity);
+  }
+
+  private emitCalloutPositions(opacity: number): void {
+    if (!this.photoCalloutTarget || !this.depthCalloutTarget) {
+      return;
+    }
+
+    this.scene.updateMatrixWorld(true);
+    this.camera.updateMatrixWorld(true);
+    const project = (target: THREE.Object3D): { x: number; y: number } => {
+      const point = target.getWorldPosition(new THREE.Vector3()).project(this.camera);
+      return {
+        x: Math.min(100, Math.max(0, (point.x * 0.5 + 0.5) * 100)),
+        y: Math.min(100, Math.max(0, (-point.y * 0.5 + 0.5) * 100))
+      };
+    };
+
+    this.canvas.dispatchEvent(
+      new CustomEvent("tapcam:callouts", {
+        detail: {
+          opacity,
+          positions: {
+            rgb: project(this.photoCalloutTarget),
+            depth: project(this.depthCalloutTarget),
+            camera: project(this.cameraCalloutTarget),
+            subject: project(this.subjectRig)
+          }
+        }
+      })
+    );
   }
 }
 

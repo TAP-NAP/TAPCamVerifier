@@ -1,9 +1,22 @@
 import "./landing.css";
 import {
+  clamp01,
+  directionalSnapTarget,
+  LANDING_PRESENTATION_PROGRESS,
   landingStageForProgress,
+  presentationTopForCopy,
+  progressForActiveStep,
   storyProgressFromGeometry,
-  type LandingStage
+  type LandingStage,
+  type ScrollDirection
 } from "./landing/progress";
+import {
+  getInitialLandingLocale,
+  landingCopy,
+  saveLandingLocale,
+  type LandingCopyKey,
+  type LandingLocale
+} from "./landing/locale";
 import type { LandingScene } from "./landingScene";
 
 const landing = document.querySelector<HTMLElement>("#landing");
@@ -13,17 +26,64 @@ if (!landing) {
 }
 
 landing.innerHTML = `
-  <a class="skip-link" href="#capture-story">跳到产品原理</a>
+  <a class="skip-link" href="#capture-story" data-copy="skip">跳到产品原理</a>
 
-  <section class="landing-hero" aria-labelledby="landing-title">
+  <header class="landing-topbar">
+    <a class="landing-topbar__brand" href="#intro" aria-label="TAPCam home">
+      <img src="./launch_logo.png" alt="" width="34" height="34" />
+      <strong>TAPCam</strong>
+    </a>
+    <nav class="landing-topbar__nav" aria-label="TAPCam navigation" data-top-navigation>
+      <a class="landing-topbar__link landing-topbar__link--verify" href="./verify/">VERIFY</a>
+      <a class="landing-topbar__link" href="https://github.com/TAP-NAP/TAPCamVerifier/blob/main/Docs/VerificationFlow.md" target="_blank" rel="noopener noreferrer">DOCS</a>
+      <a class="landing-topbar__link" href="https://github.com/TAP-NAP" target="_blank" rel="noopener noreferrer">GITHUB</a>
+      <button class="landing-topbar__lang" type="button" data-language-toggle aria-label="Switch to English">
+        <span lang="zh-CN">中</span><i aria-hidden="true">/</i><span lang="en">EN</span>
+      </button>
+    </nav>
+  </header>
+
+  <div class="scroll-cue" aria-hidden="true">
+    <span data-copy="scrollCue">继续向下探索</span>
+    <i></i>
+  </div>
+
+  <nav class="landing-progress" aria-label="页面章节" data-page-progress>
+    <span class="landing-progress__rail" aria-hidden="true"><i data-page-progress-line></i></span>
+    <div class="landing-progress__steps">
+      <a href="#intro" data-progress-step="intro" aria-label="00 INTRO" aria-current="step">
+        <span class="landing-progress__dot" aria-hidden="true"></span>
+        <span><b>00</b><small><span class="progress-label--full">INTRO</span><span class="progress-label--compact" aria-hidden="true">INTRO</span></small></span>
+      </a>
+      <a href="#capture" data-progress-step="capture" aria-label="01 CAPTURE">
+        <span class="landing-progress__dot" aria-hidden="true"></span>
+        <span><b>01</b><small><span class="progress-label--full">CAPTURE</span><span class="progress-label--compact" aria-hidden="true">CAPTURE</span></small></span>
+      </a>
+      <a href="#bind-sign" data-progress-step="sign" aria-label="02 BIND &amp; SIGN">
+        <span class="landing-progress__dot" aria-hidden="true"></span>
+        <span><b>02</b><small><span class="progress-label--full">BIND &amp; SIGN</span><span class="progress-label--compact" aria-hidden="true">SIGN</span></small></span>
+      </a>
+      <a href="#open-verification" data-progress-step="privacy" aria-label="03 OPEN VERIFICATION">
+        <span class="landing-progress__dot" aria-hidden="true"></span>
+        <span><b>03</b><small><span class="progress-label--full">OPEN VERIFICATION</span><span class="progress-label--compact" aria-hidden="true">VERIFY</span></small></span>
+      </a>
+      <a href="#next" data-progress-step="next" aria-label="04 NEXT">
+        <span class="landing-progress__dot" aria-hidden="true"></span>
+        <span><b>04</b><small><span class="progress-label--full">NEXT</span><span class="progress-label--compact" aria-hidden="true">NEXT</span></small></span>
+      </a>
+    </div>
+  </nav>
+  <p class="visually-hidden" role="status" aria-live="polite" data-page-status></p>
+
+  <section class="landing-hero" id="intro" aria-labelledby="landing-title">
     <div class="hero-lockup">
       <img class="hero-mark" src="./launch_logo.png" alt="" width="152" height="152" />
       <span class="hero-wordmark" aria-label="TAPCam">TAPCam</span>
     </div>
     <div class="hero-copy">
       <p class="hero-kicker">VERIFIABLE CAPTURE / SPATIAL MEDIA</p>
-      <h1 id="landing-title">让媒体带着<br />拍摄凭证离开相机。</h1>
-      <p>
+      <h1 id="landing-title" data-copy-html="hero.title">让媒体带着<br />拍摄凭证离开相机。</h1>
+      <p data-copy="hero.body">
         媒体一旦离开拍摄设备，来源、完整性与空间上下文往往无法一起核验。TAPCam 将媒体内容、
         深度数据和由 App Attest 支持的采集凭证绑定在同一次捕获中，让原始文件仍能被独立检查。
       </p>
@@ -37,10 +97,27 @@ landing.innerHTML = `
         <span>TAPCam</span>
         <small>RGB · DEPTH · APP ATTEST · CONTENT BINDING</small>
       </div>
-      <div class="scene-labels scene-labels--capture">
-        <span class="scene-label scene-label--output">PHOTO + DEPTH</span>
-        <span class="scene-label scene-label--camera">RGB / DEPTH CAPTURE</span>
-        <span class="scene-label scene-label--subject">SUBJECT</span>
+      <div class="scene-callouts scene-callouts--capture">
+        <span class="scene-callout scene-callout--rgb" data-scene-callout="rgb">
+          <i class="scene-callout__leader scene-callout__leader--one"></i>
+          <i class="scene-callout__leader scene-callout__leader--two"></i>
+          <span class="scene-callout__text">RGB IMAGE / RGB 图像</span>
+        </span>
+        <span class="scene-callout scene-callout--depth" data-scene-callout="depth">
+          <i class="scene-callout__leader scene-callout__leader--one"></i>
+          <i class="scene-callout__leader scene-callout__leader--two"></i>
+          <span class="scene-callout__text">DEPTH DATA / 深度数据</span>
+        </span>
+        <span class="scene-callout scene-callout--camera" data-scene-callout="camera">
+          <i class="scene-callout__leader scene-callout__leader--one"></i>
+          <i class="scene-callout__leader scene-callout__leader--two"></i>
+          <span class="scene-callout__text">SPATIAL CAMERA / 空间相机</span>
+        </span>
+        <span class="scene-callout scene-callout--subject" data-scene-callout="subject">
+          <i class="scene-callout__leader scene-callout__leader--one"></i>
+          <i class="scene-callout__leader scene-callout__leader--two"></i>
+          <span class="scene-callout__text">SUBJECT / REAL WORLD</span>
+        </span>
       </div>
       <div class="scene-labels scene-labels--sign">
         <span>MEDIA</span><span>DEPTH</span><span>ATTESTATION</span><span>SIGNATURE</span>
@@ -48,40 +125,36 @@ landing.innerHTML = `
       <div class="scene-labels scene-labels--privacy">
         <span>LOCAL CHECK</span><span>PUBLIC VERIFIER</span><span>ZK / R&amp;D</span>
       </div>
-      <div class="story-progress" aria-hidden="true">
-        <span class="story-progress__line"><i data-progress-line></i></span>
-        <span data-progress-label>01 / CAPTURE</span>
-      </div>
     </div>
 
     <div class="story-chapters">
-      <article class="story-chapter story-chapter--capture" data-chapter="capture">
+      <article class="story-chapter story-chapter--capture" id="capture" data-chapter="capture">
         <div class="chapter-copy chapter-copy--left">
           <p class="chapter-number">01 / CAPTURE</p>
-          <h2>画面在右，<br />照片与深度在左。</h2>
-          <p>
+          <h2 data-copy-html="capture.title">画面在右，<br />照片与深度在左。</h2>
+          <p data-copy="capture.body">
             两个镜头构成 RGB 与深度捕获层的视觉意象：右侧是被摄对象，左侧同时形成照片和深度表达。
           </p>
           <p class="chapter-note">PHOTO → DEPTH → RELATIVE 3D</p>
         </div>
       </article>
 
-      <article class="story-chapter story-chapter--sign" data-chapter="sign">
+      <article class="story-chapter story-chapter--sign" id="bind-sign" data-chapter="sign">
         <div class="chapter-copy chapter-copy--right">
           <p class="chapter-number">02 / BIND &amp; SIGN</p>
-          <h2>数据包，<br />在离开相机前被绑定。</h2>
-          <p>
+          <h2 data-copy-html="sign.title">数据包，<br />在离开相机前被绑定。</h2>
+          <p data-copy="sign.body">
             媒体、深度、清单与证明材料依次汇合；内容绑定与签名把这些资源固定在同一次捕获中。
           </p>
           <p class="chapter-note">MEDIA · DEPTH · MANIFEST · APP ATTEST</p>
         </div>
       </article>
 
-      <article class="story-chapter story-chapter--privacy" data-chapter="privacy">
+      <article class="story-chapter story-chapter--privacy" id="open-verification" data-chapter="privacy">
         <div class="chapter-copy chapter-copy--left">
           <p class="chapter-number">03 / OPEN VERIFICATION</p>
-          <h2>验证属于每个人，<br />隐私仍属于你。</h2>
-          <p>
+          <h2 data-copy-html="privacy.title">验证属于每个人，<br />隐私仍属于你。</h2>
+          <p data-copy="privacy.body">
             浏览器先执行本地内容绑定检查，再把证明材料交给明确的服务器验证边界。去中心化验证与零知识隐私证明是下一阶段研发方向。
           </p>
           <div class="research-tags" aria-label="当前能力与未来方向">
@@ -94,29 +167,29 @@ landing.innerHTML = `
     </div>
   </section>
 
-  <section class="action-section" aria-labelledby="action-title">
+  <section class="action-section" id="next" aria-labelledby="action-title">
     <div class="action-heading">
       <p>04 / NEXT</p>
-      <h2 id="action-title">拍摄、验证，或者继续读下去。</h2>
+      <h2 id="action-title" data-copy="action.title">拍摄、验证，或者继续读下去。</h2>
     </div>
     <div class="action-grid">
       <a class="action-link action-link--download" href="https://testflight.apple.com/join/bwcgjzNd" target="_blank" rel="noopener noreferrer">
         <span class="action-index">01</span>
         <span class="action-type">DOWNLOAD</span>
-        <strong>下载 TAPCam</strong>
-        <span>通过 TestFlight 体验捕获流程</span>
+        <strong data-copy="action.download.title">下载 TAPCam</strong>
+        <span data-copy="action.download.body">通过 TestFlight 体验捕获流程</span>
       </a>
       <a class="action-link action-link--verify" href="./verify/">
         <span class="action-index">02</span>
         <span class="action-type">VERIFY</span>
-        <strong>打开验证器</strong>
-        <span>验证原始 TAPCam 照片与视频</span>
+        <strong data-copy="action.verify.title">打开验证器</strong>
+        <span data-copy="action.verify.body">验证原始 TAPCam 照片与视频</span>
       </a>
       <a class="action-link action-link--docs" href="https://github.com/TAP-NAP/TAPCamVerifier/blob/main/Docs/VerificationFlow.md" target="_blank" rel="noopener noreferrer">
         <span class="action-index">03</span>
         <span class="action-type">TECHNOLOGY</span>
-        <strong>阅读技术文档</strong>
-        <span>了解协议、数据边界与验证流程</span>
+        <strong data-copy="action.docs.title">阅读技术文档</strong>
+        <span data-copy="action.docs.body">了解协议、数据边界与验证流程</span>
       </a>
     </div>
     <footer class="landing-footer">
@@ -133,23 +206,312 @@ landing.innerHTML = `
 const story = document.querySelector<HTMLElement>("[data-story]");
 const canvas = document.querySelector<HTMLCanvasElement>("[data-story-canvas]");
 const fallback = document.querySelector<HTMLElement>("[data-story-fallback]");
-const progressLine = document.querySelector<HTMLElement>("[data-progress-line]");
-const progressLabel = document.querySelector<HTMLElement>("[data-progress-label]");
+const actionSection = document.querySelector<HTMLElement>("#next");
+const pageProgress = document.querySelector<HTMLElement>("[data-page-progress]");
+const pageProgressLine = document.querySelector<HTMLElement>("[data-page-progress-line]");
+const pageProgressLinks = Array.from(
+  document.querySelectorAll<HTMLAnchorElement>("[data-progress-step]")
+);
+const pageStatus = document.querySelector<HTMLElement>("[data-page-status]");
+const chapterCopies = Array.from(
+  document.querySelectorAll<HTMLElement>("[data-chapter] .chapter-copy")
+);
+const sceneCallouts = new Map(
+  Array.from(document.querySelectorAll<HTMLElement>("[data-scene-callout]")).map((element) => [
+    element.dataset.sceneCallout,
+    element
+  ])
+);
+const languageButton = document.querySelector<HTMLButtonElement>("[data-language-toggle]");
+const topNavigation = document.querySelector<HTMLElement>("[data-top-navigation]");
 
-if (!story || !canvas || !fallback || !progressLine || !progressLabel) {
+if (
+  !story ||
+  !canvas ||
+  !fallback ||
+  !actionSection ||
+  !pageProgress ||
+  !pageProgressLine ||
+  pageProgressLinks.length !== 5 ||
+  !pageStatus ||
+  chapterCopies.length !== 3 ||
+  !languageButton ||
+  !topNavigation
+) {
   throw new Error("Landing story did not mount.");
 }
+
+type LandingPageStage = "intro" | LandingStage | "next";
+
+const pageStageIndex: Record<LandingPageStage, number> = {
+  intro: 0,
+  capture: 1,
+  sign: 2,
+  privacy: 3,
+  next: 4
+};
+
+const pageStageAnnouncements: Record<LandingLocale, Record<LandingPageStage, string>> = {
+  zh: {
+    intro: "介绍",
+    capture: "捕获",
+    sign: "绑定与签名",
+    privacy: "开放验证",
+    next: "下一步"
+  },
+  en: {
+    intro: "Introduction",
+    capture: "Capture",
+    sign: "Bind and sign",
+    privacy: "Open verification",
+    next: "Next"
+  }
+};
+
+let currentLocale = getInitialLandingLocale();
+let currentPageStage: LandingPageStage = "intro";
+
+function applyLandingLocale(locale: LandingLocale): void {
+  currentLocale = locale;
+  landing!.dataset.locale = locale;
+  document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+  document.title = locale === "zh" ? "TAPCam — 可验证捕获" : "TAPCam — Verifiable Capture";
+
+  document.querySelectorAll<HTMLElement>("[data-copy]").forEach((element) => {
+    element.textContent = landingCopy(locale, element.dataset.copy as LandingCopyKey);
+  });
+  document.querySelectorAll<HTMLElement>("[data-copy-html]").forEach((element) => {
+    element.innerHTML = landingCopy(locale, element.dataset.copyHtml as LandingCopyKey);
+  });
+
+  document
+    .querySelector<HTMLMetaElement>('meta[name="description"]')
+    ?.setAttribute(
+      "content",
+      locale === "zh"
+        ? "TAPCam 将媒体、深度数据与采集凭证绑定在同一次捕获中，让原始文件离开相机后仍能被独立检查。"
+        : "TAPCam binds media, depth data, and capture evidence in one capture so original files remain independently inspectable after leaving the camera."
+    );
+
+  languageButton!.dataset.locale = locale;
+  languageButton!.setAttribute(
+    "aria-label",
+    locale === "zh" ? "Switch to English" : "切换到中文"
+  );
+  topNavigation!.setAttribute("aria-label", locale === "zh" ? "TAPCam 主导航" : "TAPCam navigation");
+  pageProgress!.setAttribute("aria-label", locale === "zh" ? "页面章节" : "Page chapters");
+  story!.setAttribute("aria-label", locale === "zh" ? "TAPCam 工作原理" : "How TAPCam works");
+  pageStatus!.textContent = pageStageAnnouncements[locale][currentPageStage];
+}
+
+languageButton.addEventListener("click", () => {
+  const nextLocale: LandingLocale = currentLocale === "zh" ? "en" : "zh";
+  saveLandingLocale(nextLocale);
+  applyLandingLocale(nextLocale);
+});
+
+applyLandingLocale(currentLocale);
 
 let scene: LandingScene | null = null;
 let sceneLoading: Promise<void> | null = null;
 let storyIsVisible = false;
 let updateFrame = 0;
+let scrollIdleTimer = 0;
+let resizeAlignmentTimer = 0;
+let snapAnimationFrame = 0;
+let snapIsRunning = false;
+let savedInlineScrollBehavior: string | null = null;
+let alignedNodeIndex: number | null = null;
+let lastScrollY = window.scrollY;
+let scrollDirection: ScrollDirection = 0;
+let directionOriginIndex = 0;
 
-const stageLabels: Record<LandingStage, string> = {
-  capture: "01 / CAPTURE",
-  sign: "02 / BIND & SIGN",
-  privacy: "03 / OPEN VERIFICATION"
-};
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const snapKeys = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "PageDown",
+  "PageUp",
+  "Home",
+  "End",
+  " "
+]);
+
+const chapterIntroRanges = [
+  { min: LANDING_PRESENTATION_PROGRESS.capture, max: 0.26 },
+  { min: LANDING_PRESENTATION_PROGRESS.sign, max: 0.62 },
+  { min: 0.86, max: LANDING_PRESENTATION_PROGRESS.privacy }
+] as const;
+
+function getNodeStatePoints(): number[] {
+  const storyRect = story!.getBoundingClientRect();
+  const actionRect = actionSection!.getBoundingClientRect();
+  const storyTop = window.scrollY + storyRect.top;
+  const storyDistance = Math.max(1, storyRect.height - window.innerHeight);
+  const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  const progressHeight = pageProgress!.getBoundingClientRect().height;
+
+  const chapterPoints = chapterCopies.map((copy, index) => {
+    const copyRect = copy.getBoundingClientRect();
+    const copyTop = window.scrollY + copyRect.top;
+    const desiredTop = presentationTopForCopy(
+      window.innerHeight,
+      progressHeight,
+      copyRect.height
+    );
+    const visibilityProgress = (copyTop - desiredTop - storyTop) / storyDistance;
+    const range = chapterIntroRanges[index];
+    const presentationProgress = Math.min(
+      range.max,
+      Math.max(range.min, visibilityProgress)
+    );
+
+    return storyTop + storyDistance * presentationProgress;
+  });
+
+  return [
+    0,
+    ...chapterPoints,
+    window.scrollY + actionRect.top
+  ].map((point) => Math.min(maxScroll, Math.max(0, point)));
+}
+
+function restoreScrollBehavior(): void {
+  if (savedInlineScrollBehavior === null) {
+    return;
+  }
+  document.documentElement.style.scrollBehavior = savedInlineScrollBehavior;
+  savedInlineScrollBehavior = null;
+}
+
+function useInstantProgrammaticScroll(): void {
+  if (savedInlineScrollBehavior !== null) {
+    return;
+  }
+  savedInlineScrollBehavior = document.documentElement.style.scrollBehavior;
+  document.documentElement.style.scrollBehavior = "auto";
+}
+
+function stopSnapAnimation(): void {
+  if (snapAnimationFrame) {
+    window.cancelAnimationFrame(snapAnimationFrame);
+    snapAnimationFrame = 0;
+  }
+  snapIsRunning = false;
+  restoreScrollBehavior();
+}
+
+function cancelDirectionalSnap(clearAlignment = true): void {
+  stopSnapAnimation();
+  window.clearTimeout(scrollIdleTimer);
+  window.clearTimeout(resizeAlignmentTimer);
+  scrollIdleTimer = 0;
+  resizeAlignmentTimer = 0;
+  if (clearAlignment) {
+    alignedNodeIndex = null;
+  }
+  scrollDirection = 0;
+  lastScrollY = window.scrollY;
+}
+
+function animateScrollTo(targetY: number, duration: number): void {
+  stopSnapAnimation();
+  const startY = window.scrollY;
+  const distance = targetY - startY;
+  useInstantProgrammaticScroll();
+
+  if (Math.abs(distance) <= 2 || reducedMotion.matches) {
+    window.scrollTo(0, targetY);
+    restoreScrollBehavior();
+    scrollDirection = 0;
+    lastScrollY = window.scrollY;
+    scheduleStoryUpdate();
+    return;
+  }
+
+  const startedAt = performance.now();
+  snapIsRunning = true;
+
+  const step = (now: number): void => {
+    if (!snapIsRunning) {
+      return;
+    }
+
+    const time = clamp01((now - startedAt) / duration);
+    const eased = 1 - Math.pow(1 - time, 3);
+    window.scrollTo(0, startY + distance * eased);
+
+    if (time < 1) {
+      snapAnimationFrame = window.requestAnimationFrame(step);
+      return;
+    }
+
+    snapAnimationFrame = 0;
+    snapIsRunning = false;
+    restoreScrollBehavior();
+    scrollDirection = 0;
+    lastScrollY = window.scrollY;
+    scheduleStoryUpdate();
+  };
+
+  snapAnimationFrame = window.requestAnimationFrame(step);
+}
+
+function settleDirectionalScroll(): void {
+  scrollIdleTimer = 0;
+  if (snapIsRunning || reducedMotion.matches || scrollDirection === 0) {
+    return;
+  }
+
+  const triggerDistance =
+    window.innerHeight * (scrollDirection > 0 ? 0.26 : 0.38);
+  const nodeStatePoints = getNodeStatePoints();
+  const target = directionalSnapTarget(
+    window.scrollY,
+    nodeStatePoints,
+    scrollDirection,
+    directionOriginIndex,
+    triggerDistance,
+    window.innerHeight * 0.08
+  );
+
+  if (target === null) {
+    directionOriginIndex = pageStageIndex[currentPageStage];
+    return;
+  }
+
+  const targetIndex = nodeStatePoints.findIndex((point) => Math.abs(point - target) <= 2);
+  alignedNodeIndex = targetIndex >= 0 ? targetIndex : null;
+  animateScrollTo(target, scrollDirection > 0 ? 380 : 520);
+}
+
+function handleScroll(): void {
+  const nextScrollY = window.scrollY;
+  const delta = nextScrollY - lastScrollY;
+
+  if (!snapIsRunning && Math.abs(delta) > 1) {
+    const nextDirection: ScrollDirection = delta > 0 ? 1 : -1;
+    if (nextDirection !== scrollDirection) {
+      scrollDirection = nextDirection;
+      directionOriginIndex = pageStageIndex[currentPageStage];
+    }
+    window.clearTimeout(scrollIdleTimer);
+    scrollIdleTimer = window.setTimeout(settleDirectionalScroll, 120);
+  }
+
+  lastScrollY = nextScrollY;
+  scheduleStoryUpdate();
+}
+
+pageProgressLinks.forEach((link, index) => {
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    cancelDirectionalSnap();
+    alignedNodeIndex = index;
+    animateScrollTo(getNodeStatePoints()[index], 460);
+    window.history.replaceState(null, "", link.hash);
+  });
+});
 
 async function ensureScene(): Promise<void> {
   if (scene || sceneLoading) {
@@ -177,9 +539,56 @@ function updateStory(): void {
   const progress = storyProgressFromGeometry(rect.top, rect.height, window.innerHeight);
   const stage = landingStageForProgress(progress);
   story!.dataset.stage = stage;
-  progressLine!.style.transform = `scaleX(${progress.toFixed(4)})`;
-  progressLabel!.textContent = stageLabels[stage];
+  updatePageProgress(rect, progress, stage);
   scene?.setProgress(progress);
+}
+
+function updatePageProgress(
+  storyRect: DOMRect,
+  storyProgress: number,
+  storyStage: LandingStage
+): void {
+  const viewportHeight = Math.max(1, window.innerHeight);
+  const storyTop = Math.max(1, window.scrollY + storyRect.top);
+  const actionRect = actionSection!.getBoundingClientRect();
+  let activeStage: LandingPageStage = "intro";
+  let scrollCueProgress = clamp01(window.scrollY / storyTop) * 0.25;
+
+  if (storyRect.top <= 0) {
+    activeStage = storyStage;
+    scrollCueProgress = 0.25 + storyProgress * 0.69;
+  }
+
+  if (actionRect.top < viewportHeight) {
+    const actionApproach = clamp01(
+      (viewportHeight - actionRect.top) / Math.max(1, viewportHeight * 0.55)
+    );
+    scrollCueProgress = Math.max(scrollCueProgress, 0.94 + actionApproach * 0.06);
+  }
+
+  if (actionRect.top <= viewportHeight * 0.48) {
+    activeStage = "next";
+  }
+
+  const activeIndex = pageStageIndex[activeStage];
+  if (activeStage !== currentPageStage) {
+    pageStatus!.textContent = pageStageAnnouncements[currentLocale][activeStage];
+  }
+  currentPageStage = activeStage;
+  landing!.dataset.activeSection = activeStage;
+  landing!.dataset.scrollCue = scrollCueProgress < 0.075 ? "visible" : "hidden";
+  landing!.dataset.scrolled = window.scrollY > 12 ? "true" : "false";
+  pageProgressLine!.style.transform = `scaleX(${progressForActiveStep(activeIndex, pageProgressLinks.length).toFixed(4)})`;
+
+  pageProgressLinks.forEach((link, index) => {
+    link.dataset.state =
+      index < activeIndex ? "complete" : index === activeIndex ? "active" : "upcoming";
+    if (index === activeIndex) {
+      link.setAttribute("aria-current", "step");
+    } else {
+      link.removeAttribute("aria-current");
+    }
+  });
 }
 
 function scheduleStoryUpdate(): void {
@@ -207,8 +616,31 @@ const sceneVisibilityObserver = new IntersectionObserver(
 
 scenePreloadObserver.observe(story);
 sceneVisibilityObserver.observe(story);
-window.addEventListener("scroll", scheduleStoryUpdate, { passive: true });
-window.addEventListener("resize", scheduleStoryUpdate, { passive: true });
+window.addEventListener("scroll", handleScroll, { passive: true });
+window.addEventListener("wheel", () => cancelDirectionalSnap(), { passive: true });
+window.addEventListener("touchstart", () => cancelDirectionalSnap(), { passive: true });
+window.addEventListener("pointerdown", () => cancelDirectionalSnap(), { passive: true });
+window.addEventListener("keydown", (event) => {
+  if (snapKeys.has(event.key)) {
+    cancelDirectionalSnap();
+  }
+});
+window.addEventListener(
+  "resize",
+  () => {
+    const nodeToRealign = alignedNodeIndex;
+    cancelDirectionalSnap(false);
+    window.clearTimeout(resizeAlignmentTimer);
+    if (nodeToRealign !== null) {
+      resizeAlignmentTimer = window.setTimeout(() => {
+        resizeAlignmentTimer = 0;
+        animateScrollTo(getNodeStatePoints()[nodeToRealign], reducedMotion.matches ? 1 : 220);
+      }, 80);
+    }
+    scheduleStoryUpdate();
+  },
+  { passive: true }
+);
 document.addEventListener("visibilitychange", () => {
   scene?.setActive(storyIsVisible && !document.hidden);
 });
@@ -219,7 +651,24 @@ canvas.addEventListener("tapcam:webgl-restored", () => {
   fallback.hidden = true;
   canvas.hidden = false;
 });
+canvas.addEventListener("tapcam:callouts", (event) => {
+  const detail = (event as CustomEvent<{
+    opacity: number;
+    positions: Record<string, { x: number; y: number }>;
+  }>).detail;
+
+  for (const [name, position] of Object.entries(detail.positions)) {
+    const callout = sceneCallouts.get(name);
+    if (!callout) {
+      continue;
+    }
+    callout.style.left = `${position.x.toFixed(3)}%`;
+    callout.style.top = `${position.y.toFixed(3)}%`;
+    callout.style.opacity = detail.opacity.toFixed(3);
+  }
+});
 window.addEventListener("pagehide", (event) => {
+  cancelDirectionalSnap();
   if (event.persisted) {
     scene?.setActive(false);
     return;
@@ -236,3 +685,31 @@ window.addEventListener("pageshow", (event) => {
 });
 
 updateStory();
+
+function alignHashToNode(duration: number): void {
+  const nodeIndex = pageProgressLinks.findIndex((link) => link.hash === window.location.hash);
+  if (nodeIndex < 0) {
+    alignedNodeIndex = null;
+    return;
+  }
+
+  cancelDirectionalSnap();
+  alignedNodeIndex = nodeIndex;
+  animateScrollTo(getNodeStatePoints()[nodeIndex], duration);
+}
+
+window.addEventListener("hashchange", () => alignHashToNode(460));
+
+if (pageProgressLinks.some((link) => link.hash === window.location.hash)) {
+  const alignInitialHash = (): void => {
+    window.setTimeout(() => {
+      window.requestAnimationFrame(() => alignHashToNode(1));
+    }, 120);
+  };
+
+  if (document.readyState === "complete") {
+    alignInitialHash();
+  } else {
+    window.addEventListener("load", alignInitialHash, { once: true });
+  }
+}
