@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   HERO_SCRAMBLE_HOLD_MS,
   heroPhraseFitScale,
+  heroSafeGlyphCapacity,
   heroScrambleFrame
 } from "./heroScramble";
 
@@ -14,6 +15,12 @@ describe("hero scramble frames", () => {
     expect(heroPhraseFitScale(320, 400)).toBe(0.8);
     expect(heroPhraseFitScale(320, 240)).toBe(1);
     expect(heroPhraseFitScale(0, 400)).toBe(1);
+  });
+
+  it("reserves one glyph of breathing room at the safe line boundary", () => {
+    expect(heroSafeGlyphCapacity(320, 32)).toBe(9);
+    expect(heroSafeGlyphCapacity(320, 32, 2)).toBe(8);
+    expect(heroSafeGlyphCapacity(0, 32)).toBe(1);
   });
 
   it("keeps the source and target phrases intact at the animation boundaries", () => {

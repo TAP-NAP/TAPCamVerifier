@@ -72,7 +72,7 @@ app.innerHTML = `
         </div>
         <button class="file-summary__select" type="button" data-file-select>${t("dropzone.replacePhoto")}</button>
       </div>
-      <ol class="verification-progress" data-verification-progress style="--verification-progress-scale: 0">
+      <ol class="verification-progress" data-verification-progress style="--verification-progress-scale: 0" hidden>
         <li data-progress-step="0">
           <span class="verification-progress__node" aria-hidden="true"></span>
           <strong>${t("progress.file")}</strong>
@@ -95,7 +95,7 @@ app.innerHTML = `
         </li>
         <li data-progress-step="4">
           <span class="verification-progress__node" aria-hidden="true"></span>
-          <strong>${t("progress.result")}</strong>
+          <strong data-compact-label="${t("progress.resultCompact")}">${t("progress.result")}</strong>
           <span data-progress-detail>${t("progress.waiting")}</span>
         </li>
       </ol>
@@ -272,6 +272,7 @@ function setVerificationProgress(
 
 function syncProgressUI(): void {
   const steps = Array.from(progressEl!.querySelectorAll<HTMLElement>("[data-progress-step]"));
+  progressEl!.hidden = currentProgressStatus === "idle" && !currentFile;
   const progressScale = currentProgressPhase <= 0 ? 0 : currentProgressPhase / 4;
   progressEl!.style.setProperty("--verification-progress-scale", String(progressScale));
   progressEl!.setAttribute("aria-label", t("progress.ariaLabel"));
@@ -296,6 +297,9 @@ function syncProgressUI(): void {
     step.classList.toggle("is-invalid", active && currentProgressStatus === "invalid");
     if (title) {
       title.textContent = t(labelKeys[index]);
+      if (index === 4) {
+        title.dataset.compactLabel = t("progress.resultCompact");
+      }
     }
     if (detail) {
       detail.textContent = progressDetailForStep(index);

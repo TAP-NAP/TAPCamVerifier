@@ -6,6 +6,7 @@ import {
   captureStageOpacity,
   chapterNaturalTop,
   chapterPanelBoundary,
+  chapterPanelEntryOpacity,
   chapterPanelOpacity,
   directionalSnapTarget,
   landingStageForProgress,
@@ -51,6 +52,13 @@ describe("landing scroll progress", () => {
     expect(chapterPanelOpacity(fadeStart, settledAt, exitsAt)).toBe(1);
     expect(chapterPanelOpacity((fadeStart + exitsAt) / 2, settledAt, exitsAt)).toBeCloseTo(0.5);
     expect(chapterPanelOpacity(exitsAt, settledAt, exitsAt)).toBe(0);
+  });
+
+  it("keeps the incoming panel hidden until the previous stage has fully exited", () => {
+    expect(chapterPanelEntryOpacity(0.339, 0.34, 0.5)).toBe(0);
+    expect(chapterPanelEntryOpacity(0.34, 0.34, 0.5)).toBe(0);
+    expect(chapterPanelEntryOpacity(0.36, 0.34, 0.5)).toBeCloseTo(0.5);
+    expect(chapterPanelEntryOpacity(0.38, 0.34, 0.5)).toBe(1);
   });
 
   it("normalizes and eases a local animation range", () => {

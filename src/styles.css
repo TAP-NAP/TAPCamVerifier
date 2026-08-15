@@ -1528,6 +1528,10 @@ summary {
   list-style: none;
 }
 
+.verification-progress[hidden] {
+  display: none;
+}
+
 .verification-progress::before,
 .verification-progress::after {
   position: absolute;
@@ -2374,6 +2378,15 @@ summary {
   }
 
   .verification-progress strong {
+    font-size: 0.54rem;
+  }
+
+  .verification-progress li:last-child strong {
+    font-size: 0;
+  }
+
+  .verification-progress li:last-child strong::after {
+    content: attr(data-compact-label);
     font-size: 0.54rem;
   }
 

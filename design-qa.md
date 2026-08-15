@@ -76,6 +76,62 @@ final result: passed
 
 ---
 
+# Landing and verifier annotations round 3 design QA
+
+## Source and implementation evidence
+
+- Source Hero: `/Users/harold/TAPCamVerifier/artifacts/design-qa/round-3-source-hero-en-393x852.png`.
+- Implementation Hero: `/Users/harold/TAPCamVerifier/artifacts/design-qa/round-3-implementation-hero-en-393x852.png`.
+- Source verifier empty state: `/Users/harold/TAPCamVerifier/artifacts/design-qa/round-3-source-verify-en-393x852.png`.
+- Implementation verifier empty state: `/Users/harold/TAPCamVerifier/artifacts/design-qa/round-3-implementation-verify-en-393x852.png`.
+- Additional implementation states: `/Users/harold/TAPCamVerifier/artifacts/design-qa/round-3-implementation-capture-393x852.png` and `/Users/harold/TAPCamVerifier/artifacts/design-qa/round-3-implementation-action-docs-393x852.png`.
+- All captures are `393 x 852` CSS pixels and `393 x 852` PNG pixels in the in-app browser. Hero source and implementation were compared at the same English `VERIFIABLE MOMENTS` resolved state; verifier source and implementation were compared at the same empty English state. Both pairs were emitted together in one comparison input.
+
+## Required fidelity surfaces
+
+- Fonts and typography: the established display and monospaced stacks, weights, tracking, line breaks, and uppercase treatment are unchanged. During the live scramble, the measured safe capacity was ten glyphs at a `353px` line width; the document stayed exactly `393px` wide.
+- Spacing and layout rhythm: the empty verifier progress rail now contributes no height. In the loaded state, the compact `RESULT` label ends after the server label with a measured gap and no overlap. The Capture panel ends `11.72px` above the stable progress-band top.
+- Colors and visual tokens: Hero particles reuse the verifier's muted olive/warm-white field and lime hover highlight. Action cards preserve lime, coral, and cobalt while interpolating fill, text, index, and arrow colors over `320ms` with the same easing.
+- Image quality and asset fidelity: no raster placeholder was introduced. The Hero uses the existing WebGL particle language; two low-opacity particle cats periodically resolve and brighten locally under pointer or touch proximity.
+- Copy and content: no product copy was changed in this round. The mobile verifier visually shortens only the last progress label to `RESULT` or `结果`; the full localized text remains in the DOM and accessibility tree.
+- Interaction and accessibility: the scramble layer is absolutely positioned inside a strict contained row, so intermediate glyphs cannot resize ancestors. Reduced motion remains honored. The empty progress rail is hidden with the native `hidden` state. Pointer and touch events reveal the particle easter eggs without capturing input.
+
+## Comparison history
+
+### Iteration 1 — needs changes
+
+- [P1] The English scramble could exceed its line and change the document width during a transition.
+- [P1] Capture and Sign panels had independent opacity timelines, allowing Sign to become fixed before Capture had fully released on iPhone.
+- [P1] The progress rail followed Safari's changing visual viewport, causing panel-top jitter and repeated boundary calculations.
+- [P2] The verifier showed a progress rail before any file was selected, and its final two mobile labels overlapped.
+- [P2] Action-card fill and text colors snapped rather than interpolating.
+
+Fixes: isolated the Hero value in a strict fixed-size row, measured the widest scramble glyph and capped the live frame with one-glyph reserve, added an explicit mutually exclusive entry gate for each incoming chapter, anchored the mobile progress rail to the stable `svh/lvh` Safari band and aligned panels to its rendered top, hid idle verification progress, supplied a compact final label, and unified card color transitions.
+
+### Iteration 2 — passed
+
+- Same-state Hero comparison preserves the exact typography and spacing while adding only the requested particle layer.
+- Live scramble evidence measured `glyphCount = 10`, `scrollWidth = innerWidth = 393`, and no width jump.
+- Capture-to-Sign sampling found zero simultaneously visible panels and zero geometric overlaps.
+- The mobile progress band measured `790.40px` from the top and `61.59px` high in the fallback viewport, ending exactly at `852px`; the Capture panel retained its `12px` design gap.
+- Empty verifier comparison confirms the rail is absent. Loaded-state metrics show `RESULT` at `31.21px` wide with no overlap against `SERVER BOUNDARY`.
+- The active Docs card uses cobalt fill and black foreground; computed transition duration is `0.32s` for background, foreground, and border.
+- No actionable P0, P1, or P2 findings remain.
+
+## Validation
+
+- `npm test`: 48 Rust tests and 102 Vitest tests passed.
+- `npm run build`: TypeScript and Vite production build passed.
+- `git diff --check`: passed.
+
+## Follow-up acceptance boundary
+
+- [P3] The `svh/lvh` band intentionally allows expanded Safari chrome to cover the progress rail. The in-app browser verifies fallback geometry and stable panel alignment; final physical-Safari toolbar acceptance remains a device check.
+
+final result: passed
+
+---
+
 # Landing annotations round 2 design QA
 
 ## Source and implementation evidence

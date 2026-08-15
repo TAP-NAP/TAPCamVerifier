@@ -260,12 +260,35 @@ canvas {
 }
 
 .landing-hero {
+  position: relative;
+  isolation: isolate;
   min-height: 100svh;
   max-width: 1600px;
   margin: 0 auto;
   padding: clamp(7rem, 9vw, 9rem) clamp(1.5rem, 3.5vw, 4rem) clamp(1.5rem, 3.5vw, 4rem);
   display: grid;
   grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+
+.hero-particles {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.hero-particle-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hero-lockup,
+.hero-copy {
+  position: relative;
+  z-index: 1;
 }
 
 .hero-lockup {
@@ -321,22 +344,28 @@ canvas {
 }
 
 .hero-title__decode {
+  position: relative;
   width: 100%;
   height: 1em;
   margin-top: 0.06em;
   display: block;
-  overflow: hidden;
+  overflow: clip;
   white-space: nowrap;
-  contain: layout paint;
+  contain: strict;
+  isolation: isolate;
 }
 
 .hero-title__value {
+  position: absolute;
+  top: 0;
+  left: 0;
   min-width: 7em;
   display: inline-block;
   color: var(--lime);
   font-variant-ligatures: none;
   transform: scaleX(var(--hero-phrase-scale, 1));
   transform-origin: left center;
+  will-change: contents, transform;
 }
 
 .hero-title__value[data-scrambling="true"] {
@@ -613,6 +642,10 @@ canvas {
   will-change: opacity;
 }
 
+.chapter-copy[data-panel-state="hidden"] {
+  visibility: hidden;
+}
+
 .chapter-copy[data-panel-position="fixed"] {
   position: fixed;
   z-index: 5;
@@ -736,6 +769,7 @@ canvas {
 }
 
 .action-link {
+  --action-accent: var(--paper);
   position: relative;
   min-height: clamp(16rem, 28vw, 28rem);
   padding: clamp(1.25rem, 2.6vw, 2.75rem);
@@ -743,8 +777,9 @@ canvas {
   flex-direction: column;
   border-right: 1px solid #46484e;
   transition:
-    color 160ms ease,
-    background-color 160ms ease;
+    color 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .action-link:last-child {
@@ -757,6 +792,7 @@ canvas {
   right: clamp(1.25rem, 2.6vw, 2.75rem);
   font: 500 clamp(1.4rem, 2.3vw, 2.2rem)/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
   content: "↗";
+  transition: color 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .action-index {
@@ -769,14 +805,26 @@ canvas {
   color: var(--lime);
 }
 
+.action-link--download {
+  --action-accent: var(--lime);
+}
+
 .action-link--verify .action-index,
 .action-link--verify .action-type {
   color: var(--coral);
 }
 
+.action-link--verify {
+  --action-accent: var(--coral);
+}
+
 .action-link--docs .action-index,
 .action-link--docs .action-type {
   color: var(--cobalt);
+}
+
+.action-link--docs {
+  --action-accent: var(--cobalt);
 }
 
 .action-type {
@@ -799,25 +847,22 @@ canvas {
   line-height: 1.5;
 }
 
+.action-link .action-index,
+.action-link .action-type,
+.action-link strong,
+.action-link > span:last-child {
+  transition: color 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .action-link:hover,
 .action-link:focus-visible {
   outline: none;
   color: var(--black);
 }
 
-.action-link--download:hover,
-.action-link--download:focus-visible {
-  background: var(--lime);
-}
-
-.action-link--verify:hover,
-.action-link--verify:focus-visible {
-  background: var(--coral);
-}
-
-.action-link--docs:hover,
-.action-link--docs:focus-visible {
-  background: var(--cobalt);
+.action-link:hover,
+.action-link:focus-visible {
+  background-color: var(--action-accent);
 }
 
 .action-link:hover .action-index,
@@ -898,20 +943,19 @@ canvas {
     backdrop-filter: none;
   }
   .landing-progress {
-    bottom: 0;
-    width: 100%;
-    height: calc(var(--progress-height) + env(safe-area-inset-bottom));
-    min-height: calc(var(--progress-height) + env(safe-area-inset-bottom));
-    padding: 0.58rem 0.35rem calc(0.35rem + env(safe-area-inset-bottom));
-    /* Keep the page on the stable viewport. Let expanding browser chrome cover
-       the progress control instead of forcing the whole story to reflow. */
-    transform: translate(
-      -50%,
-      min(
-        calc(100lvh - 100dvh),
-        calc(var(--progress-height) + env(safe-area-inset-bottom))
-      )
+    --safari-progress-band: max(
+      calc(var(--progress-height) + env(safe-area-inset-bottom)),
+      calc(100lvh - 100svh)
     );
+    top: calc(100lvh - var(--safari-progress-band));
+    bottom: auto;
+    width: 100%;
+    height: var(--safari-progress-band);
+    min-height: var(--safari-progress-band);
+    padding: 0.58rem 0.35rem calc(0.35rem + env(safe-area-inset-bottom));
+    /* Occupy the stable band between Safari's expanded and collapsed chrome.
+       Browser chrome may cover this band; the story always aligns to its top. */
+    transform: translateX(-50%);
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
@@ -1108,15 +1152,15 @@ canvas {
   }
 
   .action-link--download[data-mobile-active="true"] {
-    background: var(--lime);
+    background-color: var(--lime);
   }
 
   .action-link--verify[data-mobile-active="true"] {
-    background: var(--coral);
+    background-color: var(--coral);
   }
 
   .action-link--docs[data-mobile-active="true"] {
-    background: var(--cobalt);
+    background-color: var(--cobalt);
   }
 
   .action-link[data-mobile-active="true"] .action-index,

@@ -3,7 +3,7 @@ export type HeroScrambleGlyph = {
   state: "resolved" | "scrambled";
 };
 
-const SCRAMBLE_CHARACTERS = Array.from("#7%/□01+×△◇");
+export const HERO_SCRAMBLE_CHARACTERS = Array.from("#7%/□01+×△◇");
 const SCRAMBLE_PEAK = 0.38;
 
 export const HERO_SCRAMBLE_HOLD_MS = 4400;
@@ -13,6 +13,19 @@ export function heroPhraseFitScale(availableWidth: number, phraseWidth: number):
     return 1;
   }
   return Math.min(1, availableWidth / phraseWidth);
+}
+
+export function heroSafeGlyphCapacity(
+  availableWidth: number,
+  widestGlyphWidth: number,
+  safetyReserve = 1
+): number {
+  if (availableWidth <= 0 || widestGlyphWidth <= 0) {
+    return 1;
+  }
+
+  const measuredCapacity = Math.floor(availableWidth / widestGlyphWidth);
+  return Math.max(1, measuredCapacity - Math.max(0, Math.floor(safetyReserve)));
 }
 
 function clamp01(value: number): number {
@@ -26,10 +39,10 @@ function smoothstep(value: number): number {
 
 function randomScrambleCharacter(random: () => number): string {
   const index = Math.min(
-    SCRAMBLE_CHARACTERS.length - 1,
-    Math.floor(random() * SCRAMBLE_CHARACTERS.length)
+    HERO_SCRAMBLE_CHARACTERS.length - 1,
+    Math.floor(random() * HERO_SCRAMBLE_CHARACTERS.length)
   );
-  return SCRAMBLE_CHARACTERS[index];
+  return HERO_SCRAMBLE_CHARACTERS[index];
 }
 
 export function heroScrambleFrame(

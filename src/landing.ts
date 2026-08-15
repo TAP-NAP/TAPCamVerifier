@@ -3,7 +3,7 @@ import "./topbar.css";
 import {
   clamp01,
   chapterNaturalTop,
-  chapterPanelBoundary,
+  chapterPanelEntryOpacity,
   chapterPanelOpacity,
   directionalSnapTarget,
   landingStageForProgress,
@@ -12,7 +12,6 @@ import {
   PROGRESS_NAVIGATION_DURATION_MS,
   presentationTopForCopy,
   progressForActiveStep,
-  stableFixedControlTop,
   storyEntranceProgressFromGeometry,
   storyPresentationProgress,
   storyProgressFromGeometry,
@@ -30,11 +29,14 @@ import {
   type LandingLocale
 } from "./landing/locale";
 import {
+  HERO_SCRAMBLE_CHARACTERS,
   HERO_SCRAMBLE_HOLD_MS,
   heroPhraseFitScale,
+  heroSafeGlyphCapacity,
   heroScrambleFrame,
   type HeroScrambleGlyph
 } from "./landing/heroScramble";
+import { mountEmptyParticleField } from "./emptyParticleField";
 import type { LandingScene } from "./landingScene";
 import { renderTapCamTopbar } from "./ui/topbar";
 
@@ -90,6 +92,7 @@ landing.innerHTML = `
   <p class="visually-hidden" role="status" aria-live="polite" data-page-status></p>
 
   <section class="landing-hero" id="intro" aria-labelledby="landing-title">
+    <div class="hero-particles" data-hero-particles aria-hidden="true"></div>
     <div class="hero-lockup">
       <span class="hero-wordmark" aria-label="TAPCam">TAPCam</span>
     </div>
@@ -281,6 +284,7 @@ const heroLeadPrimary = document.querySelector<HTMLElement>("[data-hero-lead-pri
 const heroLeadSecondary = document.querySelector<HTMLElement>("[data-hero-lead-secondary]");
 const heroValue = document.querySelector<HTMLElement>("[data-hero-value]");
 const heroAccessible = document.querySelector<HTMLElement>("[data-hero-accessible]");
+const heroParticles = document.querySelector<HTMLElement>("[data-hero-particles]");
 
 if (
   !story ||
@@ -300,7 +304,8 @@ if (
   !heroLeadPrimary ||
   !heroLeadSecondary ||
   !heroValue ||
-  !heroAccessible
+  !heroAccessible ||
+  !heroParticles
 ) {
   throw new Error("Landing story did not mount.");
 }
@@ -343,10 +348,14 @@ const pageStageAnnouncements: Record<LandingLocale, Record<LandingPageStage, str
 let currentPageStage: LandingPageStage = "intro";
 let resetHeroScramble: (() => void) | undefined;
 let heroPhraseScale = 1;
+let heroScrambleCapacity = 1;
 
 function renderHeroPhrase(glyphs: readonly HeroScrambleGlyph[]): void {
   const fragment = document.createDocumentFragment();
-  for (const glyph of glyphs) {
+  const visibleGlyphs = glyphs.some((glyph) => glyph.state === "scrambled")
+    ? glyphs.slice(0, heroScrambleCapacity)
+    : glyphs;
+  for (const glyph of visibleGlyphs) {
     const character = document.createElement("span");
     character.className = "hero-title__glyph";
     character.dataset.state = glyph.state;
@@ -389,6 +398,36 @@ function fitHeroPhrasesToSafeLine(): void {
 
   heroPhraseScale = heroPhraseFitScale(Math.max(0, line.clientWidth - 2), widestPhrase);
   heroValue!.style.setProperty("--hero-phrase-scale", heroPhraseScale.toFixed(4));
+
+  const glyphMeasurement = heroValue!.cloneNode(false) as HTMLElement;
+  glyphMeasurement.removeAttribute("data-hero-value");
+  glyphMeasurement.dataset.scrambling = "true";
+  glyphMeasurement.setAttribute("aria-hidden", "true");
+  glyphMeasurement.style.position = "absolute";
+  glyphMeasurement.style.visibility = "hidden";
+  glyphMeasurement.style.width = "max-content";
+  glyphMeasurement.style.minWidth = "0";
+  glyphMeasurement.style.transform = "none";
+  for (const glyph of HERO_SCRAMBLE_CHARACTERS) {
+    const probe = document.createElement("span");
+    probe.className = "hero-title__glyph";
+    probe.dataset.state = "scrambled";
+    probe.textContent = glyph;
+    glyphMeasurement.append(probe);
+  }
+  line.append(glyphMeasurement);
+  const widestGlyph = Math.max(
+    1,
+    ...Array.from(glyphMeasurement.children, (child) =>
+      (child as HTMLElement).getBoundingClientRect().width
+    )
+  );
+  glyphMeasurement.remove();
+  heroScrambleCapacity = heroSafeGlyphCapacity(
+    Math.max(0, line.clientWidth - 2),
+    widestGlyph,
+    1
+  );
 }
 
 function setHeroAccessibleCopy(lead: string, phrase: string): void {
@@ -836,6 +875,23 @@ resetHeroScramble = () => {
 
 scheduleHeroScramble();
 reducedMotion.addEventListener("change", scheduleHeroScramble);
+const heroParticleField = mountEmptyParticleField(heroParticles, {
+  revealCats: true,
+  canvasClassName: "hero-particle-canvas"
+});
+const heroParticleObserver = new IntersectionObserver(
+  ([entry]) => heroParticleField.setActive(Boolean(entry?.isIntersecting)),
+  { threshold: 0.02 }
+);
+heroParticleObserver.observe(heroParticles);
+window.addEventListener(
+  "pagehide",
+  () => {
+    heroParticleObserver.disconnect();
+    heroParticleField.cleanup();
+  },
+  { once: true }
+);
 const CHAPTER_PROGRESS_GAP_PX = 12;
 const CHAPTER_TRANSITION_RUNWAY_RATIO = 0.52;
 let layoutViewportWidth = window.innerWidth;
@@ -858,16 +914,15 @@ function getChapterTransitionRunway(): number {
   return getStableViewportHeight() * CHAPTER_TRANSITION_RUNWAY_RATIO;
 }
 
+function getProgressAnchorTop(): number {
+  return Math.max(0, pageProgress!.getBoundingClientRect().top);
+}
+
 function getChapterPresentationProgresses(
   storyTop: number,
   storyDistance: number
 ): [number, number, number] {
-  const progressStyle = window.getComputedStyle(pageProgress!);
-  const progressTop = stableFixedControlTop(
-    getStableViewportHeight(),
-    pageProgress!.offsetHeight,
-    Number.parseFloat(progressStyle.bottom) || 0
-  );
+  const progressTop = getProgressAnchorTop();
   const progresses = chapterCopies.map((copy) => {
     const chapter = copy.closest<HTMLElement>(".story-chapter");
     if (!chapter) {
@@ -895,21 +950,8 @@ function getChapterPresentationProgresses(
 }
 
 function updateChapterPanelPresentation(progress: number): void {
-  const progressStyle = window.getComputedStyle(pageProgress!);
-  const stableProgressTop = stableFixedControlTop(
-    getStableViewportHeight(),
-    pageProgress!.offsetHeight,
-    Number.parseFloat(progressStyle.bottom) || 0
-  );
-  const visualViewport = window.visualViewport;
   const mobileViewport = window.matchMedia("(max-width: 780px)").matches;
-  const progressTop = chapterPanelBoundary(
-    stableProgressTop,
-    pageProgress!.getBoundingClientRect().top,
-    visualViewport?.offsetTop ?? 0,
-    visualViewport?.height ?? window.innerHeight,
-    mobileViewport
-  );
+  const progressTop = getProgressAnchorTop();
   const exitPoints = [
     LANDING_STAGE_TRANSITIONS.sign,
     LANDING_STAGE_TRANSITIONS.privacy,
@@ -920,6 +962,7 @@ function updateChapterPanelPresentation(progress: number): void {
     LANDING_PRESENTATION_PROGRESS.sign,
     LANDING_PRESENTATION_PROGRESS.privacy
   ];
+  const entryPoints = [0, LANDING_STAGE_TRANSITIONS.sign, LANDING_STAGE_TRANSITIONS.privacy];
 
   chapterCopies.forEach((copy, index) => {
     const desiredTop = presentationTopForCopy(
@@ -945,11 +988,19 @@ function updateChapterPanelPresentation(progress: number): void {
         )
       : window.scrollY + copy.getBoundingClientRect().top;
     const exitPoint = exitPoints[index] ?? 1;
-    const opacity = chapterPanelOpacity(
+    const exitOpacity = chapterPanelOpacity(
       progress,
       settledPoints[index] ?? LANDING_PRESENTATION_PROGRESS.privacy,
       exitPoint
     );
+    const entryOpacity = index === 0
+      ? 1
+      : chapterPanelEntryOpacity(
+          progress,
+          entryPoints[index] ?? 0,
+          settledPoints[index] ?? LANDING_PRESENTATION_PROGRESS.privacy
+        );
+    const opacity = exitOpacity * entryOpacity;
 
     const fixedTopValue = `${fixedTop}px`;
     if (copy.style.getPropertyValue("--chapter-copy-fixed-top") !== fixedTopValue) {

@@ -61,6 +61,20 @@ export function chapterPanelOpacity(
   return 1 - smoothstep(rangeProgress(progress, fadeStart, exitsAt));
 }
 
+export function chapterPanelEntryOpacity(
+  progress: number,
+  entersAt: number,
+  settledAt: number,
+  entranceFraction = 0.25
+): number {
+  if (settledAt <= entersAt) {
+    return progress >= entersAt ? 1 : 0;
+  }
+
+  const fadeEnd = entersAt + (settledAt - entersAt) * clamp01(entranceFraction);
+  return smoothstep(rangeProgress(progress, entersAt, fadeEnd));
+}
+
 export function landingStageForProgress(progress: number): LandingStage {
   const normalized = clamp01(progress);
   if (normalized < LANDING_STAGE_TRANSITIONS.sign) {
