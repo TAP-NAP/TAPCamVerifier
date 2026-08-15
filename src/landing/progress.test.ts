@@ -7,7 +7,10 @@ import {
   progressForActiveStep,
   rangeProgress,
   smoothstep,
-  storyProgressFromGeometry
+  storyEntranceProgressFromGeometry,
+  storyPresentationProgress,
+  storyProgressFromGeometry,
+  updateFullyVisibleStack
 } from "./progress";
 
 describe("landing scroll progress", () => {
@@ -45,12 +48,51 @@ describe("landing scroll progress", () => {
     expect(progressForActiveStep(4, 5)).toBe(1);
   });
 
+  it("keeps the latest fully visible action on top of a navigation stack", () => {
+    let stack = updateFullyVisibleStack([0], [], 1);
+    expect(stack).toEqual([0]);
+
+    stack = updateFullyVisibleStack([0, 1], stack, 1);
+    expect(stack).toEqual([0, 1]);
+
+    stack = updateFullyVisibleStack([1, 2], stack, 1);
+    expect(stack).toEqual([0, 1, 2]);
+
+    stack = updateFullyVisibleStack([1, 2], stack, -1);
+    expect(stack).toEqual([0, 1, 2]);
+
+    stack = updateFullyVisibleStack([0, 1], stack, -1);
+    expect(stack).toEqual([0, 1]);
+
+    stack = updateFullyVisibleStack([0], stack, -1);
+    expect(stack).toEqual([0]);
+  });
+
+  it("reveals the story scene while it enters below the hero", () => {
+    expect(storyEntranceProgressFromGeometry(1000, 1000)).toBe(0);
+    expect(storyEntranceProgressFromGeometry(500, 1000)).toBe(0.5);
+    expect(storyEntranceProgressFromGeometry(0, 1000)).toBe(1);
+  });
+
   it("aligns the chapter copy bottom with the progress bar top", () => {
     expect(presentationTopForCopy(914, 144)).toBe(770);
   });
 
-  it("keeps a copy taller than the available region pinned to the viewport top", () => {
-    expect(presentationTopForCopy(280, 300)).toBe(0);
+  it("keeps a fixed gap between chapter copy and progress bar", () => {
+    expect(presentationTopForCopy(914, 144, 12)).toBe(758);
+  });
+
+  it("preserves bottom alignment when the copy is taller than the available region", () => {
+    expect(presentationTopForCopy(280, 300, 12)).toBe(-32);
+  });
+
+  it("maps layout-dependent chapter positions to stable animation states", () => {
+    const chapterProgresses = [0.043, 0.512, 0.982];
+
+    expect(storyPresentationProgress(0.043, chapterProgresses)).toBeCloseTo(0.1);
+    expect(storyPresentationProgress(0.512, chapterProgresses)).toBeCloseTo(0.5);
+    expect(storyPresentationProgress(0.982, chapterProgresses)).toBeCloseTo(0.9);
+    expect(storyPresentationProgress(1, chapterProgresses)).toBe(1);
   });
 
   it("only snaps toward the user's intended next stage", () => {

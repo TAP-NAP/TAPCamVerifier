@@ -55,11 +55,73 @@ export function progressForActiveStep(activeIndex: number, stepCount: number): n
   return clamp01(activeIndex / (stepCount - 1));
 }
 
+export function updateFullyVisibleStack(
+  visibleIndices: readonly number[],
+  previousStack: readonly number[],
+  direction: ScrollDirection
+): number[] {
+  const visible = new Set(visibleIndices);
+  const nextStack = [...previousStack];
+
+  if (direction < 0) {
+    if (nextStack.length === 0) {
+      return [...visible].sort((left, right) => left - right);
+    }
+
+    while (
+      nextStack.length > 0 &&
+      !visible.has(nextStack[nextStack.length - 1]!)
+    ) {
+      nextStack.pop();
+    }
+    return nextStack;
+  }
+
+  for (const index of [...visible].sort((left, right) => left - right)) {
+    const stackTop = nextStack[nextStack.length - 1];
+    if (!nextStack.includes(index) && (stackTop === undefined || index > stackTop)) {
+      nextStack.push(index);
+    }
+  }
+  return nextStack;
+}
+
 export function presentationTopForCopy(
   progressTop: number,
-  copyHeight: number
+  copyHeight: number,
+  gap = 0
 ): number {
-  return Math.max(0, Math.max(0, progressTop) - Math.max(0, copyHeight));
+  return Math.max(0, progressTop) - Math.max(0, copyHeight) - Math.max(0, gap);
+}
+
+export function storyPresentationProgress(
+  progress: number,
+  chapterProgresses: readonly number[]
+): number {
+  const inputAnchors = [0, ...chapterProgresses.map(clamp01), 1];
+  const outputAnchors = [
+    0,
+    LANDING_PRESENTATION_PROGRESS.capture,
+    LANDING_PRESENTATION_PROGRESS.sign,
+    LANDING_PRESENTATION_PROGRESS.privacy,
+    1
+  ];
+  const normalized = clamp01(progress);
+
+  for (let index = 1; index < inputAnchors.length; index += 1) {
+    if (normalized <= inputAnchors[index]!) {
+      const localProgress = rangeProgress(
+        normalized,
+        inputAnchors[index - 1]!,
+        inputAnchors[index]!
+      );
+      const start = outputAnchors[index - 1]!;
+      const end = outputAnchors[index]!;
+      return start + (end - start) * localProgress;
+    }
+  }
+
+  return 1;
 }
 
 export function directionalSnapTarget(
@@ -108,4 +170,12 @@ export function storyProgressFromGeometry(
 ): number {
   const scrollableDistance = Math.max(1, height - viewportHeight);
   return clamp01(-top / scrollableDistance);
+}
+
+export function storyEntranceProgressFromGeometry(
+  top: number,
+  viewportHeight: number
+): number {
+  const safeViewportHeight = Math.max(1, viewportHeight);
+  return clamp01((safeViewportHeight - top) / safeViewportHeight);
 }

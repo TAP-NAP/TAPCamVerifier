@@ -14,6 +14,12 @@ const COLORS = {
   dim: 0x575a61
 } as const;
 
+const MOBILE_MEDIA_QUERY = "(max-width: 780px)";
+const DESKTOP_MAX_FPS = 60;
+const MOBILE_MAX_FPS = 30;
+const CALLOUT_MAX_FPS = 20;
+const PROGRESS_DAMPING_PER_SECOND = 4.68;
+
 type FadableMaterial = THREE.Material & { opacity: number };
 
 export class LandingScene {
@@ -47,8 +53,13 @@ export class LandingScene {
   private readonly captureCamera = new THREE.PerspectiveCamera(36, 1, 0.1, 10);
   private readonly depthMaterial = new THREE.MeshDepthMaterial();
   private readonly reducedMotion: boolean;
+  private readonly mobileViewport = window.matchMedia(MOBILE_MEDIA_QUERY);
+  private readonly calloutProjectionPoint = new THREE.Vector3();
   private resizeObserver: ResizeObserver | null = null;
   private animationFrame = 0;
+  private lastRenderTimeMs = 0;
+  private lastCalloutTimeMs = 0;
+  private calloutsVisible = false;
   private targetProgress = 0;
   private renderedProgress = 0;
   private active = false;
@@ -149,6 +160,7 @@ export class LandingScene {
     if (this.animationFrame || this.contextLost || this.disposed) {
       return;
     }
+    this.lastRenderTimeMs = 0;
     this.animationFrame = window.requestAnimationFrame(this.tick);
   }
 
@@ -164,7 +176,21 @@ export class LandingScene {
     if (!this.active || this.disposed || this.contextLost) {
       return;
     }
-    this.renderedProgress += (this.targetProgress - this.renderedProgress) * 0.075;
+
+    const maximumFps = this.mobileViewport.matches ? MOBILE_MAX_FPS : DESKTOP_MAX_FPS;
+    const minimumFrameDurationMs = 1000 / maximumFps;
+    const elapsedMs = this.lastRenderTimeMs > 0
+      ? timeMs - this.lastRenderTimeMs
+      : minimumFrameDurationMs;
+    if (this.lastRenderTimeMs > 0 && elapsedMs < minimumFrameDurationMs - 0.5) {
+      this.animationFrame = window.requestAnimationFrame(this.tick);
+      return;
+    }
+
+    this.lastRenderTimeMs = timeMs;
+    const deltaSeconds = Math.min(elapsedMs, 100) / 1000;
+    const progressBlend = 1 - Math.exp(-PROGRESS_DAMPING_PER_SECOND * deltaSeconds);
+    this.renderedProgress += (this.targetProgress - this.renderedProgress) * progressBlend;
     this.updateScene(this.renderedProgress, timeMs * 0.001);
     this.renderer.render(this.scene, this.camera);
     this.animationFrame = window.requestAnimationFrame(this.tick);
@@ -174,8 +200,8 @@ export class LandingScene {
     const host = this.canvas.parentElement;
     const width = Math.max(1, host?.clientWidth ?? window.innerWidth);
     const height = Math.max(1, host?.clientHeight ?? window.innerHeight);
-    const isMobile = width < 700;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1 : 1.5));
+    const isMobile = this.mobileViewport.matches;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.5));
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.fov = isMobile ? 49 : 38;
@@ -372,81 +398,87 @@ export class LandingScene {
     const captureLayoutFit = smoothstep(rangeProgress(viewportAspect, 1.05, 1.4));
     this.captureGroup.position.x = mix(0, -0.35 * captureLayoutFit, captureProgress);
     this.captureGroup.rotation.y = mix(-0.08, 0.12, captureProgress);
-    this.cameraRig.rotation.y = Math.sin(time * 0.35) * 0.035;
-    this.subjectRig.rotation.set(time * 0.09, time * 0.16, Math.sin(time * 0.2) * 0.05);
-    this.subjectRig.scale.setScalar(mix(1.18, 1.34, captureProgress));
-    for (const [index, plane] of this.outputRig.children.entries()) {
-      if (plane === this.depthBloom) {
-        continue;
+    if (this.captureGroup.visible) {
+      this.cameraRig.rotation.y = Math.sin(time * 0.35) * 0.035;
+      this.subjectRig.rotation.set(time * 0.09, time * 0.16, Math.sin(time * 0.2) * 0.05);
+      this.subjectRig.scale.setScalar(mix(1.18, 1.34, captureProgress));
+      for (const [index, plane] of this.outputRig.children.entries()) {
+        if (plane === this.depthBloom) {
+          continue;
+        }
+        plane.position.x = mix(-2.65 - index * 0.22, -3.25 - index * 0.36, captureProgress);
+        plane.position.z = mix(0, index === 0 ? 0.38 : -0.38, captureProgress);
+        plane.rotation.y = mix(0.12, 0.34, captureProgress);
       }
-      plane.position.x = mix(-2.65 - index * 0.22, -3.25 - index * 0.36, captureProgress);
-      plane.position.z = mix(0, index === 0 ? 0.38 : -0.38, captureProgress);
-      plane.rotation.y = mix(0.12, 0.34, captureProgress);
-    }
 
-    const bloomProgress = smoothstep(rangeProgress(captureProgress, 0.28, 0.88));
-    this.depthBloom.scale.set(
-      mix(0.05, 0.64, bloomProgress),
-      mix(0.05, 0.64, bloomProgress),
-      mix(0.001, 0.72, bloomProgress)
-    );
-    this.depthBloom.rotation.set(time * 0.05, mix(-0.45, 0.42, bloomProgress), time * 0.08);
-    this.depthBloom.position.x = mix(-3.1, -2.1, bloomProgress);
+      const bloomProgress = smoothstep(rangeProgress(captureProgress, 0.28, 0.88));
+      this.depthBloom.scale.set(
+        mix(0.05, 0.64, bloomProgress),
+        mix(0.05, 0.64, bloomProgress),
+        mix(0.001, 0.72, bloomProgress)
+      );
+      this.depthBloom.rotation.set(time * 0.05, mix(-0.45, 0.42, bloomProgress), time * 0.08);
+      this.depthBloom.position.x = mix(-3.1, -2.1, bloomProgress);
+    }
 
     const signingProgress = smoothstep(
       rangeProgress(progress, 0.3, LANDING_PRESENTATION_PROGRESS.sign)
     );
-    for (const [index, layer] of this.packageLayers.entries()) {
-      const baseX = Number(layer.userData.baseX);
-      const baseZ = Number(layer.userData.baseZ);
-      const convergence = smoothstep(rangeProgress(signingProgress, 0.42, 0.88));
-      layer.position.x = mix(baseX, (index - 1.5) * 0.12, convergence);
-      layer.position.z = mix(baseZ, (index - 1.5) * 0.08, convergence);
-      layer.rotation.y = mix(-0.24 + index * 0.16, 0.03 * (index - 1.5), convergence);
+    if (this.signingGroup.visible) {
+      for (const [index, layer] of this.packageLayers.entries()) {
+        const baseX = Number(layer.userData.baseX);
+        const baseZ = Number(layer.userData.baseZ);
+        const convergence = smoothstep(rangeProgress(signingProgress, 0.42, 0.88));
+        layer.position.x = mix(baseX, (index - 1.5) * 0.12, convergence);
+        layer.position.z = mix(baseZ, (index - 1.5) * 0.08, convergence);
+        layer.rotation.y = mix(-0.24 + index * 0.16, 0.03 * (index - 1.5), convergence);
+      }
+      const ring = this.signingGroup.getObjectByName("signature-ring");
+      const seal = this.signingGroup.getObjectByName("seal-core");
+      const sealProgress = smoothstep(rangeProgress(signingProgress, 0.56, 0.92));
+      ring?.scale.setScalar(Math.max(0.001, sealProgress));
+      if (ring) {
+        ring.rotation.z = time * 0.28;
+      }
+      seal?.scale.setScalar(Math.max(0.001, sealProgress * 0.88));
+      if (seal) {
+        seal.rotation.y = time * 0.42;
+      }
+      const scan = this.signingGroup.getObjectByName("signature-scan");
+      if (scan) {
+        scan.position.x = mix(-2.85, 2.85, (signingProgress * 1.8) % 1);
+      }
+      this.signingGroup.rotation.y = Math.sin(time * 0.18) * 0.055;
     }
-    const ring = this.signingGroup.getObjectByName("signature-ring");
-    const seal = this.signingGroup.getObjectByName("seal-core");
-    const sealProgress = smoothstep(rangeProgress(signingProgress, 0.56, 0.92));
-    ring?.scale.setScalar(Math.max(0.001, sealProgress));
-    if (ring) {
-      ring.rotation.z = time * 0.28;
-    }
-    seal?.scale.setScalar(Math.max(0.001, sealProgress * 0.88));
-    if (seal) {
-      seal.rotation.y = time * 0.42;
-    }
-    const scan = this.signingGroup.getObjectByName("signature-scan");
-    if (scan) {
-      scan.position.x = mix(-2.85, 2.85, (signingProgress * 1.8) % 1);
-    }
-    this.signingGroup.rotation.y = Math.sin(time * 0.18) * 0.055;
 
     const privacyProgress = smoothstep(
       rangeProgress(progress, 0.66, LANDING_PRESENTATION_PROGRESS.privacy)
     );
-    const proofCore = this.privacyGroup.getObjectByName("proof-core");
-    const privacyShell = this.privacyGroup.getObjectByName("privacy-shell");
-    if (proofCore) {
-      proofCore.rotation.set(time * 0.11, time * 0.22, time * 0.08);
-      proofCore.scale.setScalar(mix(0.68, 0.96, privacyProgress));
+    if (this.privacyGroup.visible) {
+      const proofCore = this.privacyGroup.getObjectByName("proof-core");
+      const privacyShell = this.privacyGroup.getObjectByName("privacy-shell");
+      if (proofCore) {
+        proofCore.rotation.set(time * 0.11, time * 0.22, time * 0.08);
+        proofCore.scale.setScalar(mix(0.68, 0.96, privacyProgress));
+      }
+      if (privacyShell) {
+        privacyShell.rotation.set(-time * 0.05, time * 0.08, time * 0.035);
+        privacyShell.scale.setScalar(mix(0.65, 1.15, privacyProgress));
+      }
+      for (const [index, node] of this.networkNodes.entries()) {
+        const target = node.userData.target as THREE.Vector3;
+        node.position.copy(target).multiplyScalar(mix(0.05, 1, privacyProgress));
+        node.scale.setScalar(0.78 + Math.sin(time * 1.4 + index) * 0.12);
+      }
+      this.privacyGroup.rotation.y = Math.sin(time * 0.12) * 0.08;
     }
-    if (privacyShell) {
-      privacyShell.rotation.set(-time * 0.05, time * 0.08, time * 0.035);
-      privacyShell.scale.setScalar(mix(0.65, 1.15, privacyProgress));
-    }
-    for (const [index, node] of this.networkNodes.entries()) {
-      const target = node.userData.target as THREE.Vector3;
-      node.position.copy(target).multiplyScalar(mix(0.05, 1, privacyProgress));
-      node.scale.setScalar(0.78 + Math.sin(time * 1.4 + index) * 0.12);
-    }
-    this.privacyGroup.rotation.y = Math.sin(time * 0.12) * 0.08;
 
-    const mobile = window.innerWidth < 700;
+    const mobile = this.mobileViewport.matches;
     const captureScale = mobile
       ? 0.72
       : Math.min(1, Math.max(0.68, viewportAspect / 1.32));
     this.captureGroup.scale.setScalar(captureScale);
-    this.signingGroup.scale.setScalar(mobile ? 1.15 : 1);
+    this.signingGroup.scale.setScalar(mobile ? 1.55 : 1);
     this.privacyGroup.scale.setScalar(mobile ? 0.78 : 1);
     const verticalOffset = mobile ? 0.86 : 0.42;
     this.captureGroup.position.y = verticalOffset;
@@ -456,7 +488,30 @@ export class LandingScene {
     const calloutOpacity =
       smoothstep(rangeProgress(progress, 0.04, LANDING_PRESENTATION_PROGRESS.capture)) *
       (1 - smoothstep(rangeProgress(progress, 0.26, 0.34)));
-    this.emitCalloutPositions(calloutOpacity);
+    this.updateCallouts(calloutOpacity, time * 1000);
+  }
+
+  private updateCallouts(opacity: number, timeMs: number): void {
+    if (opacity <= 0.002) {
+      if (this.calloutsVisible) {
+        this.calloutsVisible = false;
+        this.emitCalloutPositions(0);
+      }
+      return;
+    }
+
+    const minimumCalloutIntervalMs = 1000 / CALLOUT_MAX_FPS;
+    if (
+      !this.reducedMotion &&
+      this.lastCalloutTimeMs > 0 &&
+      timeMs - this.lastCalloutTimeMs < minimumCalloutIntervalMs
+    ) {
+      return;
+    }
+
+    this.calloutsVisible = true;
+    this.lastCalloutTimeMs = timeMs;
+    this.emitCalloutPositions(opacity);
   }
 
   private emitCalloutPositions(opacity: number): void {
@@ -467,7 +522,7 @@ export class LandingScene {
     this.scene.updateMatrixWorld(true);
     this.camera.updateMatrixWorld(true);
     const project = (target: THREE.Object3D): { x: number; y: number } => {
-      const point = target.getWorldPosition(new THREE.Vector3()).project(this.camera);
+      const point = target.getWorldPosition(this.calloutProjectionPoint).project(this.camera);
       return {
         x: Math.min(100, Math.max(0, (point.x * 0.5 + 0.5) * 100)),
         y: Math.min(100, Math.max(0, (-point.y * 0.5 + 0.5) * 100))
@@ -538,6 +593,7 @@ function makePoints(
   size: number,
   opacity: number
 ): THREE.Points {
+  geometry.setIndex(null);
   const material = fadable(
     new THREE.PointsMaterial({
       color,
@@ -560,6 +616,11 @@ function fadable<T extends FadableMaterial>(material: T): T {
 function setGroupOpacity(group: THREE.Group, opacity: number): void {
   const clamped = Math.min(1, Math.max(0, opacity));
   group.visible = clamped > 0.002;
+  const previousOpacity = group.userData.renderOpacity;
+  if (typeof previousOpacity === "number" && Math.abs(previousOpacity - clamped) < 0.0001) {
+    return;
+  }
+  group.userData.renderOpacity = clamped;
   group.traverse((object) => {
     const renderable = object as THREE.Mesh | THREE.Points | THREE.Line | THREE.LineSegments;
     const materials = Array.isArray(renderable.material)

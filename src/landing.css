@@ -270,7 +270,6 @@ canvas {
   padding: clamp(7rem, 9vw, 9rem) clamp(1.5rem, 3.5vw, 4rem) clamp(1.5rem, 3.5vw, 4rem);
   display: grid;
   grid-template-rows: auto 1fr;
-  border-bottom: 1px solid var(--line);
 }
 
 .hero-lockup {
@@ -330,8 +329,7 @@ canvas {
 
 .story {
   position: relative;
-  min-height: 460svh;
-  padding-bottom: 15svh;
+  min-height: 390svh;
   background: var(--black);
 }
 
@@ -341,12 +339,13 @@ canvas {
   top: 0;
   height: 100svh;
   overflow: hidden;
-  border-bottom: 1px solid var(--line);
 }
 
 .story-canvas {
   width: 100%;
   height: 100%;
+  transform: translateY(var(--scene-entry-offset, 0));
+  will-change: transform;
 }
 
 .story-fallback {
@@ -517,7 +516,7 @@ canvas {
 }
 
 .story-chapter {
-  min-height: 155svh;
+  min-height: 130svh;
   padding: clamp(1.25rem, 5vw, 5rem);
   display: flex;
   align-items: flex-end;
@@ -610,7 +609,6 @@ canvas {
   display: flex;
   flex-direction: column;
   background: var(--black);
-  border-top: 1px solid var(--line);
 }
 
 .action-heading {
@@ -824,6 +822,10 @@ canvas {
     --progress-height: 3.85rem;
   }
 
+  .landing-topbar {
+    background: rgba(17, 17, 19, 0.96);
+    backdrop-filter: none;
+  }
   .landing-progress {
     bottom: 0;
     width: 100%;
@@ -831,6 +833,8 @@ canvas {
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
+    background: rgba(5, 5, 5, 0.96);
+    backdrop-filter: none;
   }
 
   .landing-progress__rail {
@@ -883,6 +887,10 @@ canvas {
     padding: 5.4rem 1.25rem 1.25rem;
   }
 
+  .story {
+    min-height: 345svh;
+  }
+
   .hero-lockup {
     display: block;
   }
@@ -922,7 +930,7 @@ canvas {
   }
 
   .story-chapter {
-    min-height: 155svh;
+    min-height: 115svh;
     padding: 1rem;
   }
 
@@ -953,6 +961,45 @@ canvas {
     min-height: 18rem;
     border-right: 0;
     border-bottom: 1px solid #46484e;
+  }
+
+  .action-link:hover,
+  .action-link:focus-visible {
+    color: var(--paper);
+    background: transparent;
+  }
+
+  .action-link .action-index,
+  .action-link .action-type,
+  .action-link:hover .action-index,
+  .action-link:hover .action-type,
+  .action-link:hover > span:last-child,
+  .action-link:focus-visible .action-index,
+  .action-link:focus-visible .action-type,
+  .action-link:focus-visible > span:last-child {
+    color: var(--muted);
+  }
+
+  .action-link[data-mobile-active="true"] {
+    color: var(--black);
+  }
+
+  .action-link--download[data-mobile-active="true"] {
+    background: var(--lime);
+  }
+
+  .action-link--verify[data-mobile-active="true"] {
+    background: var(--coral);
+  }
+
+  .action-link--docs[data-mobile-active="true"] {
+    background: var(--cobalt);
+  }
+
+  .action-link[data-mobile-active="true"] .action-index,
+  .action-link[data-mobile-active="true"] .action-type,
+  .action-link[data-mobile-active="true"] > span:last-child {
+    color: var(--black);
   }
 
   .action-link:last-child {

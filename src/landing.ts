@@ -3,11 +3,13 @@ import "./topbar.css";
 import {
   clamp01,
   directionalSnapTarget,
-  LANDING_PRESENTATION_PROGRESS,
   landingStageForProgress,
   presentationTopForCopy,
   progressForActiveStep,
+  storyEntranceProgressFromGeometry,
+  storyPresentationProgress,
   storyProgressFromGeometry,
+  updateFullyVisibleStack,
   type LandingStage,
   type ScrollDirection
 } from "./landing/progress";
@@ -208,6 +210,9 @@ const story = document.querySelector<HTMLElement>("[data-story]");
 const canvas = document.querySelector<HTMLCanvasElement>("[data-story-canvas]");
 const fallback = document.querySelector<HTMLElement>("[data-story-fallback]");
 const actionSection = document.querySelector<HTMLElement>("#next");
+const actionLinks = Array.from(
+  document.querySelectorAll<HTMLAnchorElement>(".action-link")
+);
 const pageProgress = document.querySelector<HTMLElement>("[data-page-progress]");
 const pageProgressLine = document.querySelector<HTMLElement>("[data-page-progress-line]");
 const pageProgressLinks = Array.from(
@@ -250,6 +255,7 @@ if (
   !canvas ||
   !fallback ||
   !actionSection ||
+  actionLinks.length !== 3 ||
   !pageProgress ||
   !pageProgressLine ||
   pageProgressLinks.length !== 5 ||
@@ -638,8 +644,12 @@ let alignedNodeIndex: number | null = null;
 let lastScrollY = window.scrollY;
 let scrollDirection: ScrollDirection = 0;
 let directionOriginIndex = 0;
+let fullyVisibleActionStack: number[] = [];
+let lastActionScrollY = window.scrollY;
+let actionScrollDirection: ScrollDirection = 0;
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const CHAPTER_PROGRESS_GAP_PX = 12;
 const snapKeys = new Set([
   "ArrowDown",
   "ArrowUp",
@@ -650,23 +660,33 @@ const snapKeys = new Set([
   " "
 ]);
 
+function getChapterPresentationProgresses(
+  storyTop: number,
+  storyDistance: number
+): [number, number, number] {
+  const progressTop = pageProgress!.getBoundingClientRect().top;
+  const progresses = chapterCopies.map((copy) => {
+    const copyRect = copy.getBoundingClientRect();
+    const copyTop = window.scrollY + copyRect.top;
+    const desiredTop = presentationTopForCopy(
+      progressTop,
+      copyRect.height,
+      CHAPTER_PROGRESS_GAP_PX
+    );
+    return clamp01((copyTop - desiredTop - storyTop) / storyDistance);
+  });
+
+  return [progresses[0]!, progresses[1]!, progresses[2]!];
+}
+
 function getNodeStatePoints(): number[] {
   const storyRect = story!.getBoundingClientRect();
   const actionRect = actionSection!.getBoundingClientRect();
   const storyTop = window.scrollY + storyRect.top;
   const storyDistance = Math.max(1, storyRect.height - window.innerHeight);
   const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-  const progressTop = pageProgress!.getBoundingClientRect().top;
-
-  const chapterPoints = chapterCopies.map((copy) => {
-    const copyRect = copy.getBoundingClientRect();
-    const copyTop = window.scrollY + copyRect.top;
-    const desiredTop = presentationTopForCopy(progressTop, copyRect.height);
-    const visibilityProgress = (copyTop - desiredTop - storyTop) / storyDistance;
-    const presentationProgress = clamp01(visibilityProgress);
-
-    return storyTop + storyDistance * presentationProgress;
-  });
+  const chapterPoints = getChapterPresentationProgresses(storyTop, storyDistance)
+    .map((progress) => storyTop + storyDistance * progress);
 
   return [
     0,
@@ -835,11 +855,63 @@ async function ensureScene(): Promise<void> {
 function updateStory(): void {
   updateFrame = 0;
   const rect = story!.getBoundingClientRect();
-  const progress = storyProgressFromGeometry(rect.top, rect.height, window.innerHeight);
+  const rawProgress = storyProgressFromGeometry(rect.top, rect.height, window.innerHeight);
+  const storyTop = window.scrollY + rect.top;
+  const storyDistance = Math.max(1, rect.height - window.innerHeight);
+  const progress = storyPresentationProgress(
+    rawProgress,
+    getChapterPresentationProgresses(storyTop, storyDistance)
+  );
+  const entranceProgress = storyEntranceProgressFromGeometry(rect.top, window.innerHeight);
+  const entranceOffset = (1 - entranceProgress) * window.innerHeight * -0.4;
+  story!.style.setProperty("--scene-entry-offset", `${entranceOffset}px`);
   const stage = landingStageForProgress(progress);
   story!.dataset.stage = stage;
   updatePageProgress(rect, progress, stage);
+  updateActionCardHighlights();
   scene?.setProgress(progress);
+}
+
+function updateActionCardHighlights(): void {
+  const mobile = window.matchMedia("(max-width: 780px)").matches;
+  if (!mobile) {
+    fullyVisibleActionStack = [];
+    for (const link of actionLinks) {
+      delete link.dataset.mobileActive;
+    }
+    return;
+  }
+
+  const scrollY = window.scrollY;
+  const delta = scrollY - lastActionScrollY;
+  if (Math.abs(delta) > 1) {
+    actionScrollDirection = delta > 0 ? 1 : -1;
+  }
+  lastActionScrollY = scrollY;
+
+  const topbarBottom = topNavigation!.closest<HTMLElement>(".landing-topbar")
+    ?.getBoundingClientRect().bottom ?? 0;
+  const progressTop = pageProgress!.getBoundingClientRect().top;
+  const safeTop = topbarBottom + 8;
+  const safeBottom = progressTop - 8;
+  const fullyVisibleIndices = actionLinks.flatMap((link, index) => {
+    const rect = link.getBoundingClientRect();
+    return rect.top >= safeTop - 1 && rect.bottom <= safeBottom + 1 ? [index] : [];
+  });
+  fullyVisibleActionStack = updateFullyVisibleStack(
+    fullyVisibleIndices,
+    fullyVisibleActionStack,
+    actionScrollDirection
+  );
+  const activeActionIndex = fullyVisibleActionStack.at(-1) ?? null;
+
+  actionLinks.forEach((link, index) => {
+    if (index === activeActionIndex) {
+      link.dataset.mobileActive = "true";
+    } else {
+      delete link.dataset.mobileActive;
+    }
+  });
 }
 
 function updatePageProgress(
