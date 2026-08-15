@@ -21,7 +21,7 @@ export type GeometryViewerCleanup = () => void;
 export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelCloud): GeometryViewerCleanup {
   host.textContent = "";
 
-  const backgroundColor = new THREE.Color(0x111820);
+  const backgroundColor = new THREE.Color(0x050505);
   const scene = new THREE.Scene();
   scene.background = backgroundColor;
 
@@ -49,7 +49,6 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
         <span class="geometry-rotate-hint__arrow geometry-rotate-hint__arrow--left" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </span>
-        <span class="geometry-rotate-hint__center" aria-hidden="true"></span>
         <span class="geometry-rotate-hint__arrow geometry-rotate-hint__arrow--right" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
         </span>
@@ -79,7 +78,9 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   let geometry = new THREE.BufferGeometry();
 
   const model = new THREE.Points(geometry, material);
-  scene.add(model);
+  const modelPivot = new THREE.Group();
+  modelPivot.add(model);
+  scene.add(modelPivot);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -99,6 +100,8 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   let pulseStartedAt: number | null = null;
   let activePointer: { id: number; x: number; y: number; moved: boolean; pointerType: string } | null = null;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const introStartedAt = performance.now();
+  let introMotionActive = !reducedMotion;
 
   let userMovedCamera = false;
   let canvasSize = { width: 1, height: 1 };
@@ -118,6 +121,8 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   };
   const markCameraMoved = (): void => {
     userMovedCamera = true;
+    introMotionActive = false;
+    modelPivot.rotation.set(0, 0, 0);
     hideRotateHint();
   };
   controls.addEventListener("start", markCameraMoved);
@@ -257,6 +262,10 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     geometry.dispose();
     geometry = nextGeometry;
     model.geometry = geometry;
+    geometry.computeBoundingBox();
+    const center = geometry.boundingBox?.getCenter(new THREE.Vector3()) ?? new THREE.Vector3();
+    modelPivot.position.copy(center);
+    model.position.copy(center).multiplyScalar(-1);
     if (visiblePoints) {
       visiblePoints.textContent = String(filtered.visiblePointCount);
     }
@@ -359,6 +368,8 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   };
   const handleResetButtonClick = (): void => {
     userMovedCamera = false;
+    introMotionActive = false;
+    modelPivot.rotation.set(0, 0, 0);
     defaultView = "reset";
     resetView();
   };
@@ -390,7 +401,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     renderer.setSize(width, height, false);
     uniforms.uViewportHeight.value = height;
     uniforms.uPixelRatio.value = pixelRatio;
-    uniforms.uMinPointSize.value = 1.35 * pixelRatio;
+    uniforms.uPointSize.value = 1.55 * pixelRatio;
     updateCaptureCameraProjection(camera, cloud, width, height);
     if (!userMovedCamera) {
       if (defaultView === "initial") {
@@ -422,6 +433,18 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
         uniforms.uPulseProgress.value = -1;
       } else {
         uniforms.uPulseProgress.value = progress;
+      }
+    }
+    if (introMotionActive) {
+      const elapsed = Math.max(0, (frameTime - introStartedAt) / 1000);
+      const duration = 4.6;
+      if (elapsed >= duration) {
+        introMotionActive = false;
+        modelPivot.rotation.set(0, 0, 0);
+      } else {
+        const fade = Math.sin(Math.min(1, elapsed / duration) * Math.PI);
+        modelPivot.rotation.x = Math.sin(elapsed * 1.55) * 0.026 * fade;
+        modelPivot.rotation.y = Math.sin(elapsed * 1.15 + 0.7) * 0.044 * fade;
       }
     }
     controls.update();
@@ -566,6 +589,7 @@ function syncFilterPanelToggle(
     "aria-label",
     filterPanelCollapsed ? t("filter.expand") : t("filter.collapse")
   );
+  filterToggle.textContent = t("filter.title");
 }
 
 function formatFilterSummary(options: PixelProjectionFilterOptions): string {

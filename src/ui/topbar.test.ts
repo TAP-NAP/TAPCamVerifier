@@ -1,0 +1,43 @@
+import { describe, expect, it } from "vitest";
+import { renderTapCamTopbar } from "./topbar";
+
+describe("renderTapCamTopbar", () => {
+  it("renders the landing navigation from the shared component", () => {
+    const html = renderTapCamTopbar({
+      assetBase: "./",
+      homeHref: "#intro",
+      verifyHref: "./verify/",
+      locale: "zh",
+      navAriaLabel: "TAPCam 主导航",
+      copyKeys: {
+        verify: "nav.verifier",
+        docs: "nav.docs",
+        download: "nav.download"
+      }
+    });
+
+    expect(html).toContain('href="./verify/"');
+    expect(html).toContain('data-copy="nav.verifier"');
+    expect(html).toContain("landing-topbar__link--download");
+    expect(html).toContain("验证器");
+    expect(html).not.toContain('aria-current="page"');
+  });
+
+  it("renders the same canonical buttons for the verifier", () => {
+    const html = renderTapCamTopbar({
+      assetBase: "../",
+      homeHref: "../",
+      verifyHref: "./",
+      locale: "en",
+      navAriaLabel: "TAPCam navigation",
+      verifyActive: true
+    });
+
+    expect(html).toContain("data-nav-tool");
+    expect(html).toContain(">VERIFIER</a>");
+    expect(html).toContain('data-nav-doc>DOCS</a>');
+    expect(html).toContain('data-nav-download>DOWNLOAD</a>');
+    expect(html).toContain('data-nav-github>GITHUB</a>');
+    expect(html).toContain('aria-current="page"');
+  });
+});

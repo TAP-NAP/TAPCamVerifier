@@ -5,6 +5,7 @@ export interface PointCloudMaterialUniforms extends Record<string, THREE.IUnifor
   uSplatWorldSize: { value: number };
   uViewportHeight: { value: number };
   uPixelRatio: { value: number };
+  uPointSize: { value: number };
   uMinPointSize: { value: number };
   uMaxPointSize: { value: number };
   uHoverPoint: { value: THREE.Vector3 };
@@ -31,6 +32,7 @@ export function makePointCloudMaterial(
     uSplatWorldSize: { value: splatWorldSize },
     uViewportHeight: { value: 1 },
     uPixelRatio: { value: 1 },
+    uPointSize: { value: 1.55 },
     uMinPointSize: { value: 1.35 },
     uMaxPointSize: { value: Math.max(8, maxPointSize) },
     uHoverPoint: { value: new THREE.Vector3() },
@@ -49,7 +51,7 @@ export function makePointCloudMaterial(
     depthTest: true,
     depthWrite: true,
     blending: THREE.NormalBlending,
-    toneMapped: true
+    toneMapped: false
   });
   material.alphaToCoverage = true;
 
@@ -103,6 +105,7 @@ const POINT_CLOUD_VERTEX_SHADER = /* glsl */ `
   uniform float uSplatWorldSize;
   uniform float uViewportHeight;
   uniform float uPixelRatio;
+  uniform float uPointSize;
   uniform float uMinPointSize;
   uniform float uMaxPointSize;
   uniform vec3 uHoverPoint;
@@ -115,44 +118,17 @@ const POINT_CLOUD_VERTEX_SHADER = /* glsl */ `
   attribute vec3 color;
 
   varying vec3 vPointColor;
-  varying float vEnergy;
-  varying vec2 vRollOffset;
-
   void main() {
-    float hoverDistance = distance(position, uHoverPoint);
-    float hoverWeight = uHoverStrength * (1.0 - smoothstep(0.0, uHoverRadius, hoverDistance));
-
-    float pulseEnabled = step(0.0, uPulseProgress) * step(uPulseProgress, 1.0);
-    float pulseDistance = distance(position, uPulsePoint);
-    float pulseRadius = uHoverRadius * mix(0.15, 2.45, clamp(uPulseProgress, 0.0, 1.0));
-    float pulseWidth = max(uHoverRadius * 0.2, 0.0001);
-    float pulseRing = pulseEnabled
-      * (1.0 - smoothstep(pulseWidth * 0.35, pulseWidth, abs(pulseDistance - pulseRadius)))
-      * (1.0 - clamp(uPulseProgress, 0.0, 1.0));
-
-    float energy = clamp(hoverWeight * 0.88 + pulseRing, 0.0, 1.0);
-    float tumbleEnvelope = hoverWeight * (0.42 + 0.58 * (1.0 - smoothstep(0.0, uHoverRadius * 0.72, hoverDistance)));
     vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
-
-    float projectedDiameter = uSplatWorldSize
-      * uViewportHeight
-      * uPixelRatio
-      * projectionMatrix[1][1]
-      / max(0.0001, -viewPosition.z)
-      * 0.5;
-    gl_PointSize = clamp(projectedDiameter, uMinPointSize, uMaxPointSize);
+    gl_PointSize = uPointSize;
     gl_Position = projectionMatrix * viewPosition;
 
     vPointColor = color;
-    vEnergy = energy;
-    vRollOffset = uRollDirection * tumbleEnvelope;
   }
 `;
 
 const POINT_CLOUD_FRAGMENT_SHADER = /* glsl */ `
   varying vec3 vPointColor;
-  varying float vEnergy;
-  varying vec2 vRollOffset;
 
   void main() {
     vec2 centered = gl_PointCoord * 2.0 - 1.0;
@@ -161,18 +137,8 @@ const POINT_CLOUD_FRAGMENT_SHADER = /* glsl */ `
       discard;
     }
 
-    float softCoverage = 1.0 - smoothstep(0.84, 1.0, radius);
-    float luminousCore = 1.0 - smoothstep(0.0, 0.72, length(centered - vRollOffset * 0.24));
-    float luminance = dot(vPointColor, vec3(0.2126, 0.7152, 0.0722));
-    vec3 coolNeutral = vec3(luminance * 0.64, luminance * 0.82, luminance * 1.05);
-    vec3 baseColor = mix(vPointColor, coolNeutral, 0.18);
-    vec3 sourceChroma = vPointColor - vec3(luminance);
-    vec3 selfLitColor = vPointColor * 1.24 + sourceChroma * 0.3 + vec3(0.09 + luminance * 0.2);
-    vec3 finalColor = mix(baseColor, selfLitColor, smoothstep(0.0, 1.0, vEnergy) * 0.86);
-    finalColor *= 0.94 + luminousCore * 0.14 + vEnergy * 0.26;
-
-    gl_FragColor = vec4(finalColor, softCoverage * (0.9 + luminousCore * 0.1));
-    #include <tonemapping_fragment>
+    float softCoverage = 1.0 - smoothstep(0.72, 1.0, radius);
+    gl_FragColor = vec4(vPointColor, softCoverage);
     #include <colorspace_fragment>
   }
 `;
