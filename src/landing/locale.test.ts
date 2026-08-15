@@ -59,13 +59,13 @@ describe("landing locale", () => {
       "安全，<br />保证创作的真实性。"
     );
     expect(landingCopy("zh", "sign.body")).toBe(
-      "我们使用苹果的 App Attest 技术来保证软件的安全性，从而确保每个人的拍摄都可以被验证。"
+      "我们使用苹果的 App Attest 技术；我们把影像数据、深度数据、可验证凭证绑定在一起，从而确保每个人的拍摄都可以被验证。"
     );
     expect(landingCopy("en", "sign.title")).toBe(
       "Security ensures <br />creative authenticity."
     );
     expect(landingCopy("en", "sign.body")).toBe(
-      "We use Apple's App Attest technology to secure the software so every capture can be verified."
+      "We use Apple's App Attest technology to bind image data, depth data, and verifiable credentials together so every capture can be verified."
     );
   });
 

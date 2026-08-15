@@ -22,10 +22,11 @@ const CALLOUT_MAX_FPS = 20;
 const PROGRESS_DAMPING_PER_SECOND = 4.68;
 const SCENE_HORIZONTAL_FILL = 0.94;
 const CAPTURE_DESIGN_WIDTH = 8.3;
-const SIGNING_DESIGN_WIDTH = 3.4;
+const SIGNING_DESIGN_WIDTH = 5.35;
 const PRIVACY_DESIGN_WIDTH = 6.2;
 
 type FadableMaterial = THREE.Material & { opacity: number };
+type ProjectedBounds = { left: number; top: number; right: number; bottom: number };
 
 export class LandingScene {
   private readonly scene = new THREE.Scene();
@@ -33,6 +34,7 @@ export class LandingScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly captureGroup = new THREE.Group();
   private readonly signingGroup = new THREE.Group();
+  private readonly signingAssembly = new THREE.Group();
   private readonly privacyGroup = new THREE.Group();
   private readonly cameraRig = new THREE.Group();
   private readonly outputRig = new THREE.Group();
@@ -227,8 +229,8 @@ export class LandingScene {
     this.signingScale = sceneScaleForHorizontalFill(
       horizontalViewSize,
       SIGNING_DESIGN_WIDTH,
-      1.75,
-      2.75
+      1.2,
+      1.85
     );
     this.privacyScale = sceneScaleForHorizontalFill(
       horizontalViewSize,
@@ -324,24 +326,26 @@ export class LandingScene {
 
   private buildSigningStage(): void {
     const definitions = [
-      { color: COLORS.white, x: -2.25 },
-      { color: COLORS.lime, x: -0.75 },
-      { color: COLORS.cobalt, x: 0.75 },
-      { color: COLORS.coral, x: 2.25 }
+      { color: COLORS.white, x: -2.15 },
+      { color: COLORS.lime, x: -0.72 },
+      { color: COLORS.cobalt, x: 0.72 },
+      { color: COLORS.coral, x: 2.15 }
     ];
     for (const [index, definition] of definitions.entries()) {
-      const geometry = new THREE.BoxGeometry(1.05, 1.62, 0.12, 14, 18, 1);
+      // One point plane per payload makes the four bound layers legible. A box
+      // would draw a second coloured face and visually double every layer.
+      const geometry = new THREE.PlaneGeometry(0.76, 1.92, 12, 28);
       const slab = makePoints(geometry, definition.color, 0.026, 0.98);
-      slab.position.set(definition.x, 0, (index - 1.5) * 0.38);
+      slab.position.set(definition.x, 0, (index - 1.5) * 0.24);
       slab.rotation.y = -0.24 + index * 0.16;
       slab.userData.baseX = definition.x;
-      slab.userData.baseZ = (index - 1.5) * 0.38;
+      slab.userData.baseZ = (index - 1.5) * 0.24;
       this.packageLayers.push(slab);
-      this.signingGroup.add(slab);
+      this.signingAssembly.add(slab);
     }
 
     const signatureRing = makePoints(
-      new THREE.TorusGeometry(1.26, 0.055, 8, 180),
+      new THREE.TorusGeometry(1.08, 0.04, 8, 180),
       COLORS.lime,
       0.036,
       1
@@ -349,12 +353,7 @@ export class LandingScene {
     signatureRing.name = "signature-ring";
     signatureRing.rotation.x = Math.PI / 2;
     signatureRing.scale.setScalar(0.001);
-    this.signingGroup.add(signatureRing);
-
-    const sealCore = makePoints(new THREE.IcosahedronGeometry(0.5, 4), COLORS.white, 0.026, 1);
-    sealCore.name = "seal-core";
-    sealCore.scale.setScalar(0.001);
-    this.signingGroup.add(sealCore);
+    this.signingAssembly.add(signatureRing);
 
     const scanGeometry = new THREE.BoxGeometry(0.035, 2.25, 0.035);
     const scanMaterial = fadable(
@@ -363,7 +362,7 @@ export class LandingScene {
     const scanLine = new THREE.Mesh(scanGeometry, scanMaterial);
     scanLine.name = "signature-scan";
     scanLine.position.x = -2.8;
-    this.signingGroup.add(scanLine);
+    this.signingGroup.add(this.signingAssembly, scanLine);
     this.signingGroup.position.z = 0.15;
   }
 
@@ -449,7 +448,7 @@ export class LandingScene {
         mix(0.001, 0.72, bloomProgress)
       );
       this.depthBloom.rotation.set(time * 0.05, mix(-0.45, 0.42, bloomProgress), time * 0.08);
-      this.depthBloom.position.x = mix(-3.1, -2.1, bloomProgress);
+      this.depthBloom.position.x = mix(-3.1, -2.7667, bloomProgress);
     }
 
     const signingProgress = smoothstep(
@@ -460,26 +459,28 @@ export class LandingScene {
         const baseX = Number(layer.userData.baseX);
         const baseZ = Number(layer.userData.baseZ);
         const convergence = smoothstep(rangeProgress(signingProgress, 0.42, 0.88));
-        layer.position.x = mix(baseX, (index - 1.5) * 0.12, convergence);
-        layer.position.z = mix(baseZ, (index - 1.5) * 0.08, convergence);
-        layer.rotation.y = mix(-0.24 + index * 0.16, 0.03 * (index - 1.5), convergence);
+        layer.position.x = mix(baseX, 0, convergence);
+        layer.position.y = mix(0, (index - 1.5) * 0.04, convergence);
+        layer.position.z = mix(baseZ, (index - 1.5) * 0.28, convergence);
+        layer.rotation.y = mix(-0.24 + index * 0.16, 0, convergence);
       }
       const ring = this.signingGroup.getObjectByName("signature-ring");
-      const seal = this.signingGroup.getObjectByName("seal-core");
-      const sealProgress = smoothstep(rangeProgress(signingProgress, 0.56, 0.92));
-      ring?.scale.setScalar(Math.max(0.001, sealProgress));
+      const bindProgress = smoothstep(rangeProgress(signingProgress, 0.56, 0.92));
+      ring?.scale.setScalar(Math.max(0.001, bindProgress));
       if (ring) {
-        ring.rotation.z = time * 0.28;
+        ring.rotation.z = time * 0.34;
       }
-      seal?.scale.setScalar(Math.max(0.001, sealProgress * 0.88));
-      if (seal) {
-        seal.rotation.y = time * 0.42;
-      }
+      const assemblyRotation = smoothstep(rangeProgress(signingProgress, 0.72, 0.96));
+      this.signingAssembly.rotation.set(
+        (0.28 + Math.sin(time * 0.32) * 0.12) * assemblyRotation,
+        time * 0.34 * assemblyRotation,
+        Math.sin(time * 0.23) * 0.08 * assemblyRotation
+      );
       const scan = this.signingGroup.getObjectByName("signature-scan");
       if (scan) {
         scan.position.x = mix(-2.85, 2.85, (signingProgress * 1.8) % 1);
       }
-      this.signingGroup.rotation.y = Math.sin(time * 0.18) * 0.055;
+      this.signingGroup.rotation.y = 0;
     }
 
     const privacyProgress = smoothstep(
@@ -556,6 +557,34 @@ export class LandingScene {
         y: Math.min(100, Math.max(0, (-point.y * 0.5 + 0.5) * 100))
       };
     };
+    const projectBounds = (
+      target: THREE.Object3D,
+      halfWidth: number,
+      halfHeight: number
+    ): ProjectedBounds => {
+      const corners = [
+        [-halfWidth, -halfHeight],
+        [-halfWidth, halfHeight],
+        [halfWidth, -halfHeight],
+        [halfWidth, halfHeight]
+      ] as const;
+      const projected = corners.map(([x, y]) => {
+        const point = this.calloutProjectionPoint
+          .set(x, y, 0)
+          .applyMatrix4(target.matrixWorld)
+          .project(this.camera);
+        return {
+          x: Math.min(100, Math.max(0, (point.x * 0.5 + 0.5) * 100)),
+          y: Math.min(100, Math.max(0, (-point.y * 0.5 + 0.5) * 100))
+        };
+      });
+      return {
+        left: Math.min(...projected.map((point) => point.x)),
+        top: Math.min(...projected.map((point) => point.y)),
+        right: Math.max(...projected.map((point) => point.x)),
+        bottom: Math.max(...projected.map((point) => point.y))
+      };
+    };
 
     this.canvas.dispatchEvent(
       new CustomEvent("tapcam:callouts", {
@@ -566,6 +595,10 @@ export class LandingScene {
             depth: project(this.depthCalloutTarget),
             camera: project(this.cameraCalloutTarget),
             subject: project(this.subjectRig)
+          },
+          bounds: {
+            rgb: projectBounds(this.photoCalloutTarget, 0.86, 0.59),
+            depth: projectBounds(this.depthCalloutTarget, 0.86, 0.59)
           }
         }
       })

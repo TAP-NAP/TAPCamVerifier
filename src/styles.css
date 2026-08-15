@@ -1758,14 +1758,6 @@ summary {
   z-index: 1;
 }
 
-.dropzone-mark {
-  width: 76px;
-  height: 76px;
-  border: 1px solid var(--tap-rule);
-  border-radius: 2px;
-  object-fit: cover;
-}
-
 .dropzone-action {
   display: inline-flex;
   min-width: 230px;
@@ -2071,13 +2063,22 @@ summary {
 }
 
 .depth-legend__scale span:last-child {
-  color: var(--tap-lime);
+  color: var(--tap-coral);
 }
 
 .depth-legend__scale i {
   display: block;
   height: 8px;
-  background: linear-gradient(90deg, var(--tap-cobalt), #9cb9ff 32%, #f1f0ea 62%, var(--tap-lime));
+  background: linear-gradient(
+    90deg,
+    #0026ff 0%,
+    #007dbc 20%,
+    #0cd460 40%,
+    #28ff28 50%,
+    #80be00 65%,
+    #d77d00 80%,
+    #ff2600 100%
+  );
 }
 
 .depth-legend__values {

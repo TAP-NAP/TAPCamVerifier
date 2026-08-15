@@ -104,7 +104,6 @@ app.innerHTML = `
       <div class="dropzone" id="dropzone">
         <input id="fileInput" class="file-input" type="file" accept=".heic,.heif,.jpg,.jpeg,.mp4,.tapnap,.zip,image/heic,image/heif,image/jpeg,video/mp4,${TAPNAP_CAPTURE_PACKAGE_MIME_TYPE},application/zip" />
         <div class="dropzone-copy">
-          <img class="dropzone-mark" src="../launch_logo.png" alt="" width="76" height="76" />
           <strong class="dropzone-action" data-dropzone-select>${t("dropzone.select")}</strong>
           <p data-dropzone-instruction>${t("dropzone.instruction")}</p>
           <span class="dropzone-formats" data-dropzone-formats>${t("dropzone.formats")}</span>

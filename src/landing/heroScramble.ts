@@ -8,6 +8,13 @@ const SCRAMBLE_PEAK = 0.38;
 
 export const HERO_SCRAMBLE_HOLD_MS = 4400;
 
+export function heroPhraseFitScale(availableWidth: number, phraseWidth: number): number {
+  if (availableWidth <= 0 || phraseWidth <= 0) {
+    return 1;
+  }
+  return Math.min(1, availableWidth / phraseWidth);
+}
+
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }

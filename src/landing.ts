@@ -2,8 +2,13 @@ import "./landing.css";
 import "./topbar.css";
 import {
   clamp01,
+  chapterNaturalTop,
+  chapterPanelBoundary,
+  chapterPanelOpacity,
   directionalSnapTarget,
   landingStageForProgress,
+  LANDING_PRESENTATION_PROGRESS,
+  LANDING_STAGE_TRANSITIONS,
   PROGRESS_NAVIGATION_DURATION_MS,
   presentationTopForCopy,
   progressForActiveStep,
@@ -11,6 +16,7 @@ import {
   storyEntranceProgressFromGeometry,
   storyPresentationProgress,
   storyProgressFromGeometry,
+  storySceneProgress,
   updateFullyVisibleStack,
   type LandingStage,
   type ScrollDirection
@@ -25,6 +31,7 @@ import {
 } from "./landing/locale";
 import {
   HERO_SCRAMBLE_HOLD_MS,
+  heroPhraseFitScale,
   heroScrambleFrame,
   type HeroScrambleGlyph
 } from "./landing/heroScramble";
@@ -54,12 +61,6 @@ landing.innerHTML = `
       download: "nav.download"
     }
   })}
-
-  <div class="scroll-cue" aria-hidden="true">
-    <svg viewBox="0 0 96 24" focusable="false">
-      <path d="M2 2 48 22 94 2" />
-    </svg>
-  </div>
 
   <nav class="landing-progress" aria-label="页面章节" data-page-progress>
     <span class="landing-progress__rail" aria-hidden="true"><i data-page-progress-line></i></span>
@@ -108,12 +109,17 @@ landing.innerHTML = `
           </span>
         </span>
       </h1>
-      <p data-copy-html="hero.body">
+      <p class="hero-body" data-copy-html="hero.body">
         AI 时代下，摄影还有价值吗？<br />
         在充斥着 AI 内容的当下，我们如何让真实的内容被看见？<br />
         正如摄影不会替代绘画，而 AI 生图也无法取代摄影。<br />
         TAPCam 就是这样一款帮助你记录的摄影软件，让你的感受、表达在 AI 时代也能被看见。
       </p>
+      <div class="scroll-cue" aria-hidden="true">
+        <svg viewBox="0 0 96 24" focusable="false">
+          <path d="M2 2 48 22 94 2" />
+        </svg>
+      </div>
     </div>
   </section>
 
@@ -171,7 +177,7 @@ landing.innerHTML = `
           <p class="chapter-number">02 / BIND &amp; SIGN</p>
           <h2 data-copy-html="sign.title">安全，<br />保证创作的真实性。</h2>
           <p data-copy="sign.body">
-            我们使用苹果的 App Attest 技术来保证软件的安全性，从而确保每个人的拍摄都可以被验证。
+            我们使用苹果的 App Attest 技术；我们把影像数据、深度数据、可验证凭证绑定在一起，从而确保每个人的拍摄都可以被验证。
           </p>
           <p class="chapter-note">MEDIA · DEPTH · ATTESTATION · SIGNATURE</p>
         </div>
@@ -197,7 +203,7 @@ landing.innerHTML = `
   <section class="action-section" id="next" aria-labelledby="action-title">
     <div class="action-heading">
       <p>04 / NEXT</p>
-      <h2 id="action-title" data-copy="action.title">拍摄、验证，或者继续读下去。</h2>
+      <h2 id="action-title" data-copy="action.title">从现在开始，记录当下。</h2>
     </div>
     <div class="action-grid">
       <a class="action-link action-link--download" href="https://testflight.apple.com/join/bwcgjzNd" target="_blank" rel="noopener noreferrer">
@@ -245,6 +251,7 @@ const chapterCopies = Array.from(
 type SceneCalloutName = "rgb" | "depth" | "camera" | "subject";
 type CalloutPoint = { x: number; y: number };
 type PixelRect = { left: number; top: number; right: number; bottom: number };
+type ProjectedRect = { left: number; top: number; right: number; bottom: number };
 type CalloutDirection =
   | "above"
   | "aboveLeft"
@@ -335,6 +342,7 @@ const pageStageAnnouncements: Record<LandingLocale, Record<LandingPageStage, str
 
 let currentPageStage: LandingPageStage = "intro";
 let resetHeroScramble: (() => void) | undefined;
+let heroPhraseScale = 1;
 
 function renderHeroPhrase(glyphs: readonly HeroScrambleGlyph[]): void {
   const fragment = document.createDocumentFragment();
@@ -346,11 +354,41 @@ function renderHeroPhrase(glyphs: readonly HeroScrambleGlyph[]): void {
     fragment.append(character);
   }
   heroValue!.replaceChildren(fragment);
+  heroValue!.style.setProperty("--hero-phrase-scale", heroPhraseScale.toFixed(4));
 }
 
 function renderResolvedHeroPhrase(phrase: string): void {
   heroValue!.textContent = phrase;
   heroValue!.dataset.scrambling = "false";
+  heroValue!.style.setProperty("--hero-phrase-scale", heroPhraseScale.toFixed(4));
+}
+
+function fitHeroPhrasesToSafeLine(): void {
+  const line = heroValue!.closest<HTMLElement>(".hero-title__decode");
+  if (!line) {
+    return;
+  }
+
+  const measurement = heroValue!.cloneNode(false) as HTMLElement;
+  measurement.removeAttribute("data-hero-value");
+  measurement.dataset.scrambling = "false";
+  measurement.setAttribute("aria-hidden", "true");
+  measurement.style.position = "absolute";
+  measurement.style.visibility = "hidden";
+  measurement.style.minWidth = "0";
+  measurement.style.width = "max-content";
+  measurement.style.transform = "none";
+  line.append(measurement);
+
+  let widestPhrase = 0;
+  for (const phrase of landingHeroCopy(currentLocale).phrases) {
+    measurement.textContent = phrase;
+    widestPhrase = Math.max(widestPhrase, measurement.scrollWidth);
+  }
+  measurement.remove();
+
+  heroPhraseScale = heroPhraseFitScale(Math.max(0, line.clientWidth - 2), widestPhrase);
+  heroValue!.style.setProperty("--hero-phrase-scale", heroPhraseScale.toFixed(4));
 }
 
 function setHeroAccessibleCopy(lead: string, phrase: string): void {
@@ -380,6 +418,7 @@ function applyLandingLocale(locale: LandingLocale): void {
   heroLeadPrimary!.textContent = localizedHero.leadParts[0];
   heroLeadSecondary!.textContent = localizedHero.leadParts[1];
   renderResolvedHeroPhrase(localizedHero.phrases[0]);
+  fitHeroPhrasesToSafeLine();
   setHeroAccessibleCopy(localizedHero.lead, localizedHero.phrases[0]);
   resetHeroScramble?.();
 
@@ -592,7 +631,8 @@ function setCalloutLeader(
 
 function layoutSceneCallouts(
   projectedPositions: Partial<Record<SceneCalloutName, CalloutPoint>>,
-  opacity: number
+  opacity: number,
+  projectedBounds: Partial<Record<SceneCalloutName, ProjectedRect>> = {}
 ): void {
   const width = Math.max(1, canvas!.clientWidth);
   const height = Math.max(1, canvas!.clientHeight);
@@ -609,17 +649,27 @@ function layoutSceneCallouts(
     };
   }
 
+  const projectedRectToPixels = (rect: ProjectedRect): PixelRect => ({
+    left: rect.left * width / 100,
+    top: rect.top * height / 100,
+    right: rect.right * width / 100,
+    bottom: rect.bottom * height / 100
+  });
   const targetRects: Record<SceneCalloutName, PixelRect> = {
-    rgb: rectAround(
-      positions.rgb,
-      clampValue(width * 0.09, 54, 160),
-      clampValue(height * 0.06, 42, 100)
-    ),
-    depth: rectAround(
-      positions.depth,
-      clampValue(width * 0.09, 54, 160),
-      clampValue(height * 0.06, 42, 100)
-    ),
+    rgb: projectedBounds.rgb
+      ? projectedRectToPixels(projectedBounds.rgb)
+      : rectAround(
+          positions.rgb,
+          clampValue(width * 0.09, 54, 160),
+          clampValue(height * 0.06, 42, 100)
+        ),
+    depth: projectedBounds.depth
+      ? projectedRectToPixels(projectedBounds.depth)
+      : rectAround(
+          positions.depth,
+          clampValue(width * 0.09, 54, 160),
+          clampValue(height * 0.06, 42, 100)
+        ),
     camera: rectAround(
       positions.camera,
       clampValue(width * 0.06, 35, 105),
@@ -787,6 +837,7 @@ resetHeroScramble = () => {
 scheduleHeroScramble();
 reducedMotion.addEventListener("change", scheduleHeroScramble);
 const CHAPTER_PROGRESS_GAP_PX = 12;
+const CHAPTER_TRANSITION_RUNWAY_RATIO = 0.52;
 let layoutViewportWidth = window.innerWidth;
 let layoutViewportHeight = getStableViewportHeight();
 const snapKeys = new Set([
@@ -803,6 +854,10 @@ function getStableViewportHeight(): number {
   return Math.max(1, storyStageElement!.clientHeight);
 }
 
+function getChapterTransitionRunway(): number {
+  return getStableViewportHeight() * CHAPTER_TRANSITION_RUNWAY_RATIO;
+}
+
 function getChapterPresentationProgresses(
   storyTop: number,
   storyDistance: number
@@ -814,17 +869,111 @@ function getChapterPresentationProgresses(
     Number.parseFloat(progressStyle.bottom) || 0
   );
   const progresses = chapterCopies.map((copy) => {
-    const copyRect = copy.getBoundingClientRect();
-    const copyTop = window.scrollY + copyRect.top;
+    const chapter = copy.closest<HTMLElement>(".story-chapter");
+    if (!chapter) {
+      return 0;
+    }
+    const chapterRect = chapter.getBoundingClientRect();
+    const chapterStyle = window.getComputedStyle(chapter);
+    const copyStyle = window.getComputedStyle(copy);
+    const copyTop = chapterNaturalTop(
+      window.scrollY + chapterRect.bottom,
+      Number.parseFloat(chapterStyle.paddingBottom) || 0,
+      getChapterTransitionRunway(),
+      Number.parseFloat(copyStyle.marginBottom) || 0,
+      copy.offsetHeight
+    );
     const desiredTop = presentationTopForCopy(
       progressTop,
-      copyRect.height,
+      copy.offsetHeight,
       CHAPTER_PROGRESS_GAP_PX
     );
     return clamp01((copyTop - desiredTop - storyTop) / storyDistance);
   });
 
   return [progresses[0]!, progresses[1]!, progresses[2]!];
+}
+
+function updateChapterPanelPresentation(progress: number): void {
+  const progressStyle = window.getComputedStyle(pageProgress!);
+  const stableProgressTop = stableFixedControlTop(
+    getStableViewportHeight(),
+    pageProgress!.offsetHeight,
+    Number.parseFloat(progressStyle.bottom) || 0
+  );
+  const visualViewport = window.visualViewport;
+  const mobileViewport = window.matchMedia("(max-width: 780px)").matches;
+  const progressTop = chapterPanelBoundary(
+    stableProgressTop,
+    pageProgress!.getBoundingClientRect().top,
+    visualViewport?.offsetTop ?? 0,
+    visualViewport?.height ?? window.innerHeight,
+    mobileViewport
+  );
+  const exitPoints = [
+    LANDING_STAGE_TRANSITIONS.sign,
+    LANDING_STAGE_TRANSITIONS.privacy,
+    1
+  ];
+  const settledPoints = [
+    LANDING_PRESENTATION_PROGRESS.capture,
+    LANDING_PRESENTATION_PROGRESS.sign,
+    LANDING_PRESENTATION_PROGRESS.privacy
+  ];
+
+  chapterCopies.forEach((copy, index) => {
+    const desiredTop = presentationTopForCopy(
+      progressTop,
+      copy.offsetHeight,
+      CHAPTER_PROGRESS_GAP_PX
+    );
+    const deviceScale = Math.max(1, window.devicePixelRatio || 1);
+    const fixedTop = mobileViewport
+      ? Math.round(desiredTop * deviceScale) / deviceScale
+      : desiredTop;
+    const chapter = copy.closest<HTMLElement>(".story-chapter");
+    const chapterRect = chapter?.getBoundingClientRect();
+    const chapterStyle = chapter ? window.getComputedStyle(chapter) : null;
+    const copyStyle = window.getComputedStyle(copy);
+    const naturalDocumentTop = chapterRect && chapterStyle
+      ? chapterNaturalTop(
+          window.scrollY + chapterRect.bottom,
+          Number.parseFloat(chapterStyle.paddingBottom) || 0,
+          getChapterTransitionRunway(),
+          Number.parseFloat(copyStyle.marginBottom) || 0,
+          copy.offsetHeight
+        )
+      : window.scrollY + copy.getBoundingClientRect().top;
+    const exitPoint = exitPoints[index] ?? 1;
+    const opacity = chapterPanelOpacity(
+      progress,
+      settledPoints[index] ?? LANDING_PRESENTATION_PROGRESS.privacy,
+      exitPoint
+    );
+
+    const fixedTopValue = `${fixedTop}px`;
+    if (copy.style.getPropertyValue("--chapter-copy-fixed-top") !== fixedTopValue) {
+      copy.style.setProperty("--chapter-copy-fixed-top", fixedTopValue);
+    }
+
+    const shouldFix = naturalDocumentTop - window.scrollY <= fixedTop + 0.5 && opacity > 0.02;
+    if (shouldFix && copy.dataset.panelPosition !== "fixed") {
+      const naturalRect = copy.getBoundingClientRect();
+      copy.style.setProperty("--chapter-copy-fixed-left", `${naturalRect.left}px`);
+      copy.style.setProperty("--chapter-copy-fixed-width", `${naturalRect.width}px`);
+      copy.dataset.panelPosition = "fixed";
+    } else if (!shouldFix && copy.dataset.panelPosition === "fixed") {
+      delete copy.dataset.panelPosition;
+      copy.style.removeProperty("--chapter-copy-fixed-left");
+      copy.style.removeProperty("--chapter-copy-fixed-width");
+    }
+    copy.style.setProperty("--chapter-copy-opacity", opacity.toFixed(4));
+    copy.dataset.panelState = opacity <= 0.02
+      ? "hidden"
+      : opacity < 0.98
+        ? "fading"
+        : "visible";
+  });
 }
 
 function getNodeStatePoints(): number[] {
@@ -1011,6 +1160,10 @@ function updateStory(): void {
   updateFrame = 0;
   const rect = story!.getBoundingClientRect();
   const viewportHeight = getStableViewportHeight();
+  story!.style.setProperty(
+    "--chapter-transition-runway",
+    `${getChapterTransitionRunway()}px`
+  );
   const rawProgress = storyProgressFromGeometry(rect.top, rect.height, viewportHeight);
   const storyTop = window.scrollY + rect.top;
   const storyDistance = Math.max(1, rect.height - viewportHeight);
@@ -1024,9 +1177,10 @@ function updateStory(): void {
   story!.dataset.stagePinned = rect.top <= 0 ? "true" : "false";
   const stage = landingStageForProgress(progress);
   story!.dataset.stage = stage;
+  updateChapterPanelPresentation(progress);
   updatePageProgress(rect, progress, stage);
   updateActionCardHighlights();
-  scene?.setProgress(progress);
+  scene?.setProgress(storySceneProgress(progress, entranceProgress));
 }
 
 function updateActionCardHighlights(): void {
@@ -1172,6 +1326,12 @@ window.addEventListener(
 
     layoutViewportWidth = nextViewportWidth;
     layoutViewportHeight = nextViewportHeight;
+    fitHeroPhrasesToSafeLine();
+    chapterCopies.forEach((copy) => {
+      delete copy.dataset.panelPosition;
+      copy.style.removeProperty("--chapter-copy-fixed-left");
+      copy.style.removeProperty("--chapter-copy-fixed-width");
+    });
     sceneCalloutLabelSizes.clear();
     sceneCalloutDirections.clear();
     const nodeToRealign = alignedNodeIndex;
@@ -1187,6 +1347,7 @@ window.addEventListener(
   },
   { passive: true }
 );
+window.visualViewport?.addEventListener("resize", scheduleStoryUpdate, { passive: true });
 document.addEventListener("visibilitychange", () => {
   scene?.setActive(storyIsVisible && !document.hidden);
   scheduleHeroScramble();
@@ -1202,8 +1363,9 @@ canvas.addEventListener("tapcam:callouts", (event) => {
   const detail = (event as CustomEvent<{
     opacity: number;
     positions: Partial<Record<SceneCalloutName, CalloutPoint>>;
+    bounds: Partial<Record<SceneCalloutName, ProjectedRect>>;
   }>).detail;
-  layoutSceneCallouts(detail.positions, detail.opacity);
+  layoutSceneCallouts(detail.positions, detail.opacity, detail.bounds);
 });
 window.addEventListener("pagehide", (event) => {
   cancelDirectionalSnap();

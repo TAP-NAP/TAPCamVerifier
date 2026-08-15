@@ -76,6 +76,61 @@ final result: passed
 
 ---
 
+# Landing annotations round 2 design QA
+
+## Source and implementation evidence
+
+- Source screenshots: `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/source-capture-1152x876.png`, `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/source-sign-1152x876.png`, and `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/source-verify-1152x876.png`.
+- Implementation screenshots: `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/implementation-capture-1152x876.png`, `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/implementation-sign-final-1152x876.png`, `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/implementation-verify-empty-1152x876.png`, `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/implementation-hero-mobile-430x932.png`, `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/implementation-hero-en-mobile-430x932.png`, `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/implementation-sign-mobile-final-c.png`, `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/implementation-sign-mobile-final-d.png`, `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/implementation-privacy-mobile-430x932.png`, and `/Users/harold/TAPCamVerifier/artifacts/design-qa/annotations-round-2/implementation-depth-legend-mobile-430x932.png`.
+- Source and implementation pairs for Capture, Bind & Sign, and Verifier empty state were emitted together in one in-app-browser comparison input and judged at the same `1152 × 876` viewport.
+- Mobile states were checked at `430 × 932` CSS pixels. Desktop states were checked at `1152 × 876` CSS pixels. Captured PNG pixel dimensions matched the CSS viewport dimensions.
+- States: Chinese Capture, Chinese Bind & Sign at two rotation frames, Chinese Open Verification, verifier empty state, Chinese mobile hero, English mobile hero, and a verifier-style depth legend probe.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing TAPCam display and monospaced technical styles remain unchanged. The English scramble value stayed inside its `390px` row safe boundary (`value.right = 278.86`, `row.right = 410`) and did not resize or move neighboring lines.
+- Spacing and layout rhythm: the mobile hero body ended at `793.41px`; the scroll cue began at `809.41px`, leaving a measured `16px` gap with zero overlap. Capture labels use live projected image-plane bounds, so the RGB label sits outside the image rather than over it. The mobile chapter panel remains above the progress rail with a small fixed gap.
+- Colors and visual tokens: the four Bind & Sign payload layers preserve paper, lime, cobalt, and coral. The depth legend now renders the full blue, cyan, green, yellow, orange, and red range, with computed stops from `rgb(0, 38, 255)` through `rgb(255, 38, 0)`.
+- Image quality and asset fidelity: no new raster assets were introduced. The verifier dropzone's repeated logo was removed. WebGL point density remains crisp at both viewports; the four payload objects are single point planes rather than doubled box faces.
+- Copy and content: the Sign body now says that image data, depth data, and verifiable credentials are bound together while retaining the App Attest context and verification boundary. Chinese and English strings were updated together and covered by locale tests.
+- Interaction and motion: Capture depth-bloom travel is one third of its previous horizontal distance. The four rectangular layers converge, retain visible spacing, are encircled by a ring slightly longer than the rectangle's long side, and rotate as one assembly; the center sphere is gone. Chapter copies use fixed positioning with device-pixel-rounded top coordinates and a shared opacity timeline, including Open Verification. Progress-link animation remains `2500ms`.
+
+## Comparison history
+
+### Iteration 1 — needs changes
+
+- [P1] Bind & Sign used square, two-faced box geometry, making each color read as two layers and making the mobile assembly too small.
+- [P1] The ring and payload layers did not consistently reveal all four colors during rotation.
+- [P2] The RGB callout used an estimated center box and could overlap the image after the WebGL plane moved.
+- [P2] The verifier dropzone repeated the TAPCam logo.
+- [P2] The depth legend omitted the cyan, green, orange, and red portions visible in the depth canvas.
+- [P2] The mobile hero scroll cue was viewport-positioned rather than anchored after the body copy.
+
+Fixes: replaced signing boxes with four single point planes sized as vertical rectangles, added separated depth layers and a permanently tilted rotating assembly, enlarged the binding ring relative to the rectangle's long side, projected live RGB/depth plane corners for callout layout, removed the repeated verifier logo, expanded the depth legend gradient, and placed the mobile scroll cue in hero-copy flow.
+
+### Iteration 2 — passed
+
+- Same-input comparison confirms the Capture bloom stays near its source plane and the RGB label clears the image.
+- Bind & Sign now reads as four colored layers bound by a larger ring; two frames confirm the assembly rotates rather than remaining a flat composition.
+- Desktop and mobile dimensions preserve the same object logic; only the scene scale changes.
+- Verifier empty-state comparison confirms the dropzone logo is absent while the centered action remains intact.
+- Mobile geometry confirms the hero cue has no copy overlap, the English scramble respects its row boundary, and the Open Verification panel sits above the progress rail.
+- No actionable P0, P1, or P2 findings remain.
+
+## Validation
+
+- `npm test`: 48 Rust tests and 100 Vitest tests passed.
+- `npm run build`: TypeScript and Vite production build passed.
+- `git diff --check`: passed.
+
+## Follow-up polish
+
+- [P3] Confirm WebGL point density and the fixed panel's Safari toolbar gap on the user's physical iPhone; browser viewport evidence is complete, but physical-device acceptance remains separate.
+
+final result: passed
+
+---
+
 # TAPCam hero scramble design QA
 
 ## Evidence

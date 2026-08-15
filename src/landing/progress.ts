@@ -7,6 +7,11 @@ export const LANDING_PRESENTATION_PROGRESS = {
   privacy: 0.9
 } as const;
 
+export const LANDING_STAGE_TRANSITIONS = {
+  sign: 0.34,
+  privacy: 0.68
+} as const;
+
 export const PROGRESS_NAVIGATION_DURATION_MS = 2500;
 
 export function clamp01(value: number): number {
@@ -33,12 +38,35 @@ export function captureStageOpacity(progress: number): number {
   return enter * (1 - exit);
 }
 
+export function storySceneProgress(
+  presentationProgress: number,
+  entranceProgress: number
+): number {
+  const entrancePreview =
+    rangeProgress(entranceProgress, 0, 0.72) * LANDING_PRESENTATION_PROGRESS.capture;
+  return Math.max(clamp01(presentationProgress), entrancePreview);
+}
+
+export function chapterPanelOpacity(
+  progress: number,
+  settledAt: number,
+  exitsAt: number,
+  holdFraction = 0.45
+): number {
+  if (exitsAt <= settledAt) {
+    return progress < exitsAt ? 1 : 0;
+  }
+
+  const fadeStart = settledAt + (exitsAt - settledAt) * clamp01(holdFraction);
+  return 1 - smoothstep(rangeProgress(progress, fadeStart, exitsAt));
+}
+
 export function landingStageForProgress(progress: number): LandingStage {
   const normalized = clamp01(progress);
-  if (normalized < 0.34) {
+  if (normalized < LANDING_STAGE_TRANSITIONS.sign) {
     return "capture";
   }
-  if (normalized < 0.68) {
+  if (normalized < LANDING_STAGE_TRANSITIONS.privacy) {
     return "sign";
   }
   return "privacy";
@@ -76,6 +104,38 @@ export function stableFixedControlTop(
       Math.max(0, controlHeight) -
       Math.max(0, bottomOffset)
   );
+}
+
+export function chapterNaturalTop(
+  chapterBottom: number,
+  chapterPaddingBottom: number,
+  transitionRunway: number,
+  panelMarginBottom: number,
+  panelHeight: number
+): number {
+  return (
+    chapterBottom -
+    Math.max(0, chapterPaddingBottom) -
+    Math.max(0, transitionRunway) -
+    Math.max(0, panelMarginBottom) -
+    Math.max(0, panelHeight)
+  );
+}
+
+export function chapterPanelBoundary(
+  stableProgressTop: number,
+  renderedProgressTop: number,
+  visualViewportTop: number,
+  visualViewportHeight: number,
+  mobile: boolean
+): number {
+  if (!mobile) {
+    return Math.max(0, stableProgressTop);
+  }
+
+  const visibleBottom =
+    Math.max(0, visualViewportTop) + Math.max(0, visualViewportHeight);
+  return Math.min(Math.max(0, renderedProgressTop), visibleBottom);
 }
 
 export function updateFullyVisibleStack(

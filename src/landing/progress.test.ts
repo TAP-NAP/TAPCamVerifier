@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   LANDING_PRESENTATION_PROGRESS,
+  LANDING_STAGE_TRANSITIONS,
   PROGRESS_NAVIGATION_DURATION_MS,
   captureStageOpacity,
+  chapterNaturalTop,
+  chapterPanelBoundary,
+  chapterPanelOpacity,
   directionalSnapTarget,
   landingStageForProgress,
   pageProgressForStoryProgress,
@@ -14,6 +18,7 @@ import {
   storyEntranceProgressFromGeometry,
   storyPresentationProgress,
   storyProgressFromGeometry,
+  storySceneProgress,
   updateFullyVisibleStack
 } from "./progress";
 
@@ -28,6 +33,24 @@ describe("landing scroll progress", () => {
     expect(landingStageForProgress(0.1)).toBe("capture");
     expect(landingStageForProgress(0.34)).toBe("sign");
     expect(landingStageForProgress(0.68)).toBe("privacy");
+  });
+
+  it("previews scene 01 while the story is pulled into the viewport", () => {
+    expect(storySceneProgress(0, 0)).toBe(0);
+    expect(storySceneProgress(0, 0.5)).toBeCloseTo(0.0694, 3);
+    expect(storySceneProgress(0, 1)).toBe(LANDING_PRESENTATION_PROGRESS.capture);
+    expect(storySceneProgress(0.5, 1)).toBe(0.5);
+  });
+
+  it("holds a settled chapter panel before fading into the next scene", () => {
+    const settledAt = LANDING_PRESENTATION_PROGRESS.capture;
+    const exitsAt = LANDING_STAGE_TRANSITIONS.sign;
+    const fadeStart = settledAt + (exitsAt - settledAt) * 0.45;
+
+    expect(chapterPanelOpacity(settledAt, settledAt, exitsAt)).toBe(1);
+    expect(chapterPanelOpacity(fadeStart, settledAt, exitsAt)).toBe(1);
+    expect(chapterPanelOpacity((fadeStart + exitsAt) / 2, settledAt, exitsAt)).toBeCloseTo(0.5);
+    expect(chapterPanelOpacity(exitsAt, settledAt, exitsAt)).toBe(0);
   });
 
   it("normalizes and eases a local animation range", () => {
@@ -66,6 +89,16 @@ describe("landing scroll progress", () => {
   it("keeps fixed progress geometry independent of visual viewport translation", () => {
     expect(stableFixedControlTop(852, 65, 0)).toBe(787);
     expect(stableFixedControlTop(852, 65, 12)).toBe(775);
+  });
+
+  it("recovers a panel's natural top independently of sticky positioning", () => {
+    expect(chapterNaturalTop(1400, 40, 320, 88, 220)).toBe(732);
+  });
+
+  it("keeps navigation geometry stable while following Safari's visible bottom", () => {
+    expect(chapterPanelBoundary(775, 790, 0, 744, false)).toBe(775);
+    expect(chapterPanelBoundary(775, 790, 0, 744, true)).toBe(744);
+    expect(chapterPanelBoundary(775, 720, 0, 744, true)).toBe(720);
   });
 
   it("keeps the latest fully visible action on top of a navigation stack", () => {

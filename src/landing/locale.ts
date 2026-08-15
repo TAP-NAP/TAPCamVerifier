@@ -80,12 +80,12 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "callout.subject": "被摄对象",
     "sign.title": "安全，<br />保证创作的真实性。",
     "sign.body":
-      "我们使用苹果的 App Attest 技术来保证软件的安全性，从而确保每个人的拍摄都可以被验证。",
+      "我们使用苹果的 App Attest 技术；我们把影像数据、深度数据、可验证凭证绑定在一起，从而确保每个人的拍摄都可以被验证。",
     "privacy.title": "证明及验证，<br />是基本权利。",
     "privacy.body":
       "软件完全开源（在正式版上架后），因为我们认为，在 AI 时代下，证明自己是作者本人是一项基本权利。同时，我们欢迎更多人加入来进行维护。未来会引入 ZKP 技术，以提供更好的匿名性。",
     "privacy.tagsLabel": "验证原则与后续能力",
-    "action.title": "拍摄、验证，或者继续读下去。",
+    "action.title": "从现在开始，记录当下。",
     "action.download.title": "下载 TAPCam",
     "action.download.body": "现在参与 TestFlight 进行测试",
     "action.verify.title": "打开验证器",
@@ -110,12 +110,12 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "callout.subject": "SUBJECT",
     "sign.title": "Security ensures <br />creative authenticity.",
     "sign.body":
-      "We use Apple's App Attest technology to secure the software so every capture can be verified.",
+      "We use Apple's App Attest technology to bind image data, depth data, and verifiable credentials together so every capture can be verified.",
     "privacy.title": "Proof and verification <br />are fundamental rights.",
     "privacy.body":
       "The software will be fully open source after the official release because we believe that, in the AI era, proving that you are the original author is a fundamental right. We welcome more people to help maintain it, and plan to introduce ZKP technology to provide stronger anonymity.",
     "privacy.tagsLabel": "Verification principles and upcoming capability",
-    "action.title": "Capture, verify, or keep reading.",
+    "action.title": "Start now. Capture the moment.",
     "action.download.title": "Download TAPCam",
     "action.download.body": "Join the TestFlight beta now",
     "action.verify.title": "Open the verifier",

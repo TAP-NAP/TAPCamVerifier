@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { HERO_SCRAMBLE_HOLD_MS, heroScrambleFrame } from "./heroScramble";
+import {
+  HERO_SCRAMBLE_HOLD_MS,
+  heroPhraseFitScale,
+  heroScrambleFrame
+} from "./heroScramble";
 
 describe("hero scramble frames", () => {
   it("holds each resolved phrase for the approved interval", () => {
     expect(HERO_SCRAMBLE_HOLD_MS).toBe(4400);
+  });
+
+  it("fits long phrases inside their line without enlarging the layout slot", () => {
+    expect(heroPhraseFitScale(320, 400)).toBe(0.8);
+    expect(heroPhraseFitScale(320, 240)).toBe(1);
+    expect(heroPhraseFitScale(0, 400)).toBe(1);
   });
 
   it("keeps the source and target phrases intact at the animation boundaries", () => {
