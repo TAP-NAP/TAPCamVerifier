@@ -292,6 +292,17 @@ export function renderDepthPanel(state: DepthPanelState): string {
     <div class="depth-canvas-frame">
       <canvas id="depthCanvas" width="${state.width}" height="${state.height}" aria-label="${t("depth.ariaLabel")}"></canvas>
     </div>
+    <div class="depth-legend" aria-label="${t("depth.legendAria")}">
+      <div class="depth-legend__scale">
+        <span>${t("depth.near")}</span>
+        <i aria-hidden="true"></i>
+        <span>${t("depth.far")}</span>
+      </div>
+      <div class="depth-legend__values">
+        <span>${formatNumber(state.minValue)} ${escapeHtml(state.valueUnit)}</span>
+        <span>${formatNumber(state.maxValue)} ${escapeHtml(state.valueUnit)}</span>
+      </div>
+    </div>
     <dl class="depth-meta">
       <div>
         <dt>${t("depth.source")}</dt>
@@ -537,7 +548,7 @@ function formatProjectionViewMode(viewMode: string): string {
 function renderGeometryFilterControls(): string {
   return `
       <div class="geometry-filter-panel" data-geometry-filter-panel>
-      <button class="geometry-filter-collapse" data-geometry-filter-toggle type="button" aria-expanded="true" aria-label="${t("filter.collapse")}"></button>
+      <button class="geometry-filter-collapse" data-geometry-filter-toggle type="button" aria-expanded="true" aria-label="${t("filter.collapse")}">${t("filter.title")}</button>
       <div class="geometry-filter-body" data-geometry-filter-body>
         <label class="geometry-sensitivity-control">
           <span>${t("filter.sensitivity")}</span>

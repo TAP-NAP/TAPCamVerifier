@@ -1,135 +1,75 @@
-# TAPCam Landing Design QA
+# TAPCam Verifier design QA
 
-## Comparison setup
+## Comparison target
 
-- Source visual truth:
-  - `/Users/harold/.codex/generated_images/01a00467-edbd-7381-948f-0db43cc079c5/exec-8c135a64-bdb4-4686-84d5-9955043376e5.png` — 862 × 1824 px.
-  - `/Users/harold/.codex/generated_images/01a00467-edbd-7381-948f-0db43cc079c5/exec-af756c29-44b5-4c97-a56f-36446346c563.png` — 864 × 1821 px.
-  - `/Users/harold/.codex/generated_images/01a00467-edbd-7381-948f-0db43cc079c5/exec-e36852a0-aa4f-42ea-b5a6-8b4d1580bd06.png` — 864 × 1821 px.
-  - `/private/var/folders/hw/p2sd7bcx3j5g6km12ml617600000gn/T/codex-clipboard-8b84b2d3-ad56-49b6-a5ae-5fc899a650a4.png` — persistent top-bar reference.
-- Rendered implementation: `http://127.0.0.1:4173/` from the production Vite build.
-- Desktop evidence: `Docs/Assets/LandingQA/desktop-{hero,capture,sign,privacy,actions}.jpg`.
-- Mobile evidence: `Docs/Assets/LandingQA/mobile-{hero,capture,sign,privacy,actions}.jpg`.
-- Full-view comparison evidence: `Docs/Assets/LandingQA/reference-comparison.png`.
-- Navigation iteration evidence: `Docs/Assets/LandingQA/desktop-{hero-nav,capture-navigation}-v2.png`.
-- Viewports and normalization:
-  - Desktop: 1440 × 900 CSS px; screenshot output 1440 × 900 px.
-  - Mobile: 390 × 844 CSS px; screenshot output 390 × 844 px.
-  - Browser viewport override produced one output pixel per CSS pixel. The tall source concepts are not same-state full-page specifications, so the user-selected source regions were aspect-fitted without stretching into 700 × 440 cells beside same-size implementation captures. The final contact sheet is 1400 × 1320 px.
-- States: black hero; capture scene; bound-and-signed package; open verification/privacy scene; final Download / Verify / Technology links; mobile equivalents.
+- Source visual truth: `/Users/harold/.codex/generated_images/01a005a6-465e-7fd0-b598-2d5bd1b6763b/exec-f21130fd-6d9a-4e68-8f65-bfd9cbbbf4e1.png` for the empty state, `/Users/harold/.codex/generated_images/01a005a6-465e-7fd0-b598-2d5bd1b6763b/exec-384c53cc-2486-4666-9c50-34aef6edc531.png` for the loaded workbench, plus the later annotated browser requirements that supersede those images.
+- Rendered implementation: `http://127.0.0.1:4174/verify/`.
+- Empty desktop screenshot: `/private/tmp/tapcam-verifier-desktop-qa-final.png`.
+- Empty mobile hover screenshot: `/private/tmp/tapcam-verifier-empty-mobile-hover.png`.
+- Unsigned-file confirmation screenshot: `/private/tmp/tapcam-verifier-nosignature-mobile.png`.
+- Combined empty-state comparison: `/private/tmp/tapcam-verifier-empty-comparison.jpg`.
+- State: dark theme; Chinese locale for visual comparison; empty, particle hover, unsigned-file confirmation, and revealed-analysis states checked.
 
-## Findings
+## Viewport and normalization
 
-No actionable P0, P1, or P2 findings remain.
+- Source empty-state image: 1440 × 1024 pixels.
+- Desktop implementation: 1440 × 1024 CSS pixels, captured from the in-app browser at device scale 1. The browser capture surface returned a double-coordinate canvas, so the full captured surface was normalized back to 1440 × 1024 before comparison.
+- Mobile implementation: 430 × 932 CSS pixels at device scale 2 for the empty hover and unsigned-file modal checks.
+- Responsive bounds: desktop document width 1440 with scroll width 1440; mobile document width 430 with scroll width 430. No horizontal overflow was present.
 
-- [P3] The camera is a deliberate point-cloud concept model, not a scan-accurate TAPCam hardware mesh.
-  - Location: capture scene in `src/landingScene.ts`.
-  - Evidence: the references use a stylized camera/product object; the implementation uses two explicit point-cloud camera modules because no production camera mesh was supplied.
-  - Impact: the intended stereo-capture relationship is clear, but future marketing work could make the hardware silhouette more proprietary.
-  - Follow-up: replace only the camera modules with an approved GLB/GLTF asset when one exists; retain the current scroll lifecycle and photo/depth layout.
+## Full-view comparison evidence
+
+The combined comparison confirms the selected black, warm-white, acid-lime, coral, and cobalt system; a five-step horizontal verification rail; a centered file action; and the shared compact pill navigation established by the landing page. Later user annotations intentionally remove the mock's left explanatory column and bottom three-step explainer, expand the particle field across the viewport, and keep the upload action centered. These are accepted product decisions rather than fidelity drift.
+
+The loaded-state browser evidence confirms that the 3D projection remains the primary panel, original image and depth remain secondary panels, the duplicate lower replacement dropzone is absent, and replacement is available only from the top file summary.
+
+## Focused-region comparison evidence
+
+- Top navigation: landing and verifier both render `renderTapCamTopbar` and import `topbar.css`. The two routes remain isolated MPA entries, with a progressive cross-document view transition; desktop and mobile bounds were checked without clipping.
+- Empty action: the Three.js canvas measures the full viewport, stays pointer-transparent, and produces a brighter raised cluster around the pointer while leaving the file control usable.
+- Verification gate: an unsigned JPEG completed local image/depth analysis while `#visualization` remained hidden. The blocking modal showed the missing-signature consequence and an explicit “继续查看分析” action. Only after that action did the analysis become visible.
+- Loaded replacement affordance: the top file summary contains no repeated logo, reads “选择其他照片”, accepts file drops, and no `.dropzone--compact` or `.compact-dropzone-slot` remains.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: the implementation preserves the references' oversized Chinese display type, condensed monospace metadata, hard line breaks, and high-contrast hierarchy. Desktop and mobile wraps were inspected; no clipping or orphaned wordmark remains.
-- Spacing and layout rhythm: hero, three long sticky chapters, and the horizontal final links follow the selected order. The desktop comparison keeps the subject right, twin camera modules centered, and photo/depth output left. Mobile collapses only the final link row and keeps all scene labels and copy readable.
-- Colors and tokens: black background is continuous. Warm white, lime, coral, and bright cobalt reproduce the young technical palette; cobalt was raised to `#5e78ff` for small-text contrast. There are no generic rounded cards, glass surfaces, or decorative gradients.
-- Image quality and asset fidelity: the real `launch_logo.png` asset is used for the rounded top-bar and footer brand marks; the Hero now intentionally uses the TAPCam wordmark alone. The point-cloud scene is live WebGL at capped device pixel ratio rather than a raster placeholder. The source concepts provide composition and motion direction rather than a production hardware asset; that intentional limitation is recorded as P3 above.
-- Copy and content: the hero explicitly states the post-capture verification problem and TAPCam's role. Current local checks and the server verification boundary are distinguished from decentralized verification and zero-knowledge privacy proofs, which are labeled R&D/future work.
-- Accessibility and interaction: skip link, semantic headings/links, visible focus treatments, a polite chapter status announcement that preserves keyboard focus in the progress navigation, reduced-motion presentation frames, mobile tap targets, WebGL fallback, and context restore paths were checked. The Verify link was activated and reached `/verify/`; the existing file-drop verifier mounted successfully.
-- Semantic chapter navigation: each bottom node lands after that chapter's intro motion, with the explanatory panel visible rather than at the chapter's raw DOM start. The active progress line is quantized to the five node centers. Desktop measurements put the active-dot/line-end error between `0.006` and `0.015` CSS px.
-- Moving annotations: RGB, depth, spatial-camera, and real-world-subject callouts are projected from their live Three.js targets every frame. Their opacity measured `0` during the early move, approximately `0.384` mid-transition, and `1` at the Capture presentation state; the two-segment leaders use obtuse bends.
-- Panel alignment: Capture, Bind & Sign, and Open Verification presentation states are now defined by one exact geometric rule: the chapter panel bottom meets the fixed progress navigation top. At `900 × 998`, measured gaps were `-0.12px`, `-0.02px`, and `0.09px`; the `393 × 852` Capture gap was `-0.19px`. The target is recalculated from live panel and progress-bar rectangles, so copy height, locale, and viewport size do not require separate offsets.
-
-## Focused region comparison
-
-Focused evidence was required because the tall source boards mix several states. `reference-comparison.png` places the user's selected exploded/depth regions beside the desktop capture state, and the selected horizontal footer region beside the final action row. Individual desktop and mobile captures were also inspected at readable scale for typography, contrast, and wrapping.
+- Fonts and typography: the implementation preserves the landing page's Inter/system display stack and monospaced technical labels. Weight, tracking, hierarchy, wrapping, and mobile truncation were checked at 1440 and 430 CSS pixels.
+- Spacing and layout rhythm: the top bar, progress rail, centered action, two-column desktop workbench, and single-column mobile workbench maintain consistent narrow rules and compact spacing. No content collision or horizontal overflow was found.
+- Colors and visual tokens: black background, warm-white text, lime action/pass state, coral server/failure state, and cobalt verified/depth state match the selected direction. The rail uses those colors as a functional status gradient.
+- Image quality and asset fidelity: the real TAPCam launch logo is used. The empty visual is no longer a raster background; it is a live Three.js particle field as explicitly requested. Loaded 3D points use source RGB pixel colors at constant screen-space point size.
+- Copy and content: Chinese and English states are internally coherent. Product terms such as TAPCam, TAP Video, HEIC, RGB, 3D, and App Attest remain untranslated where necessary. Failure copy clearly separates depth analysis from provenance and integrity claims.
+- Interaction and accessibility: visible keyboard focus, semantic buttons/links, modal role and focus placement, reduced-motion handling, drag/drop, file chooser, language switch, hover response, and blocking confirmation behavior were checked. The modal cannot be dismissed by clicking its backdrop.
 
 ## Comparison history
 
-### Pass 1 — blocked
+### Iteration 1 — blocked
 
-Earlier findings from the first browser-rendered inspection:
+- [P1] The empty particle effect was confined to the upload card and moved too subtly.
+- [P1] The verifier's first navigation pass drifted from the established landing-bar structure and visual tokens.
+- [P1] Failed or missing signatures revealed analysis without an explicit blocking decision.
+- [P2] The loaded mobile workbench retained a large second dropzone and repeated the logo in the file summary.
+- [P2] Intro motion rotated around the geometry's original coordinate origin, which could appear as translation when the cloud was off-center.
 
-- P1: near-viewport preloading also activated a hidden 60 fps scene on the hero.
-- P1: the mobile logo lockup could overflow at 320–390 px.
-- P1: sticky minimum height and progress geometry diverged on short viewports.
-- P1: the sign state faded before the seal animation had a readable hold.
-- P1: WebGL restore and bfcache return paths could leave a hidden or disposed scene.
-- P1: the original cobalt token was too dark for small metadata text.
-- P2: the hero described TAPCam but did not state the verification problem directly.
-- P2: the depth plane lacked the selected photo-to-point-cloud expansion cue.
+Fixes: moved the particle canvas to a fixed full-viewport layer, increased fluctuation and hover lift, extracted the landing and verifier navigation into one shared top-bar renderer and stylesheet, restored a result-dependent confirmation gate, removed the loaded compact dropzone and repeated logo, and introduced a point-cloud pivot at the filtered geometry bounding-box center.
 
-Fixes made:
+### Iteration 2 — passed
 
-- Split scene preloading from true viewport activation.
-- Stacked and resized the mobile brand lockup; removed sticky minimum-height drift.
-- Added a completed-signature hold, context restore event, and persisted page lifecycle handling.
-- Raised cobalt to `#5e78ff`, increased the smallest metadata sizes, and added an explicit problem statement.
-- Added a live depth-bloom point cloud that expands from the depth output.
-- Rebalanced scene scale and camera distance independently for desktop and mobile.
+- Post-fix evidence: desktop and mobile empty states, particle hover, unsigned-file modal, post-confirmation analysis, shared navigation DOM, responsive bounds, and console output were rechecked.
+- No actionable P0, P1, or P2 findings remain.
 
-Post-fix evidence: all files under `Docs/Assets/LandingQA/`, especially `desktop-capture.jpg`, `desktop-sign.jpg`, `mobile-capture.jpg`, and `mobile-sign.jpg`.
+## Primary interactions tested
 
-### Pass 2 — passed
-
-The normalized source/implementation contact sheet and focused desktop/mobile captures show no remaining P0/P1/P2 difference. The remaining hardware-model fidelity gap is non-blocking P3 because no approved production mesh exists.
-
-### Pass 3 — blocked
-
-The first persistent-navigation iteration exposed four interaction mismatches:
-
-- Chapter links targeted each article's DOM start instead of the moment its intro animation and explanatory copy had settled.
-- The progress fill tracked continuous document progress rather than terminating at the active node center.
-- Capture callouts were fixed overlays, so their leaders separated from the moving Three.js objects.
-- Capture and Bind & Sign copy settled too high and obscured the scene compared with Open Verification.
-
-Fixes made:
-
-- Added semantic presentation points for all five navigation nodes and aligned initial hash loads to the same points.
-- Temporarily disabled CSS smooth scrolling during the controlled node animation so landing is deterministic.
-- Quantized the fill to `0 / 0.25 / 0.5 / 0.75 / 1` and corrected desktop/mobile rail endpoints.
-- Projected callout anchors from live 3D world positions, added progressive opacity, and replaced right-angle leaders with obtuse two-segment leaders.
-- Completed the Capture object's intro transform at a shared `0.10` semantic presentation frame, before every responsive node target, then held the settled composition until its exit begins. Bind & Sign and reduced-motion rendering use the same shared presentation-frame contract.
-- Unified the three chapter panels around a `64%` viewport-top presentation position while preserving a safe gap above the progress bar.
-
-### Pass 4 — passed
-
-Final browser inspection covered all five node destinations, moving and settled Capture states, initial and same-document hash navigation, Chinese and English copy, desktop and mobile layouts, viewport changes while a node was aligned, and the isolated verifier route. Capture, Bind & Sign, and Open Verification all landed with the expected stage active and their copy fully visible. All four mobile callout labels remained inside the scene after their leader directions were adapted for the narrow layout. No horizontal overflow or browser error-level console entries were found. The browser screenshot compositor produced duplicated tiles in one capture attempt, so that artifact was excluded from layout findings; DOM geometry and the clean saved comparison captures were used instead.
-
-### Pass 5 — passed
-
-The annotated navigation and panel-stop refinements were checked against the supplied `900 × 998` browser evidence and at `393 × 852` mobile width. The top-bar mark is rounded, the Hero mark is removed, and the navigation now switches `验证器 / 文档 / 下载` with `VERIFIER / DOCS / DOWNLOAD`; the coral Download link remains background-free. All labels fit without horizontal overflow at 393px and 320px widths. The three chapter node destinations land within `0.2px` of the requested panel-bottom/progress-top alignment.
-
-### Pass 6 — passed
-
-Capture copy now uses the requested Chinese title and description, with an English counterpart. The RGB, depth, spatial-camera, and subject callouts each render only the active language, and their cached geometry is reset after a language switch so collision avoidance can remeasure the shorter labels. The process note now reads `DEEPTH PHOTO <- SPATIAL CAM <- REAL WORLD` with the requested reversed arrows. Browser checks at the supplied `900 × 998` viewport confirmed both languages, zero horizontal overflow, and a chapter-panel/progress alignment delta below `0.1px` before and after switching languages.
-
-## Primary checks
-
-- Production routes: `/` 200; `/verify/` 200; `/wasm/tapcam_verifier_wasm.wasm` 200 with `application/wasm`.
-- Browser console: no error-level entries on the production landing or verifier routes.
-- Responsive checks: 1440 × 900 and 390 × 844; no horizontal overflow at mobile width.
-- Automated checks: the current refinement passed 13 focused landing tests, TypeScript, and the Vite production build; the earlier baseline passed 48 Rust tests and 77 Vitest tests.
-
-## Implementation checklist
-
-- [x] Black introductory hero with a standalone TAPCam wordmark and explicit problem/solution copy.
-- [x] Stereo capture composition: outputs left, two capture modules center, subject right.
-- [x] Scroll-driven bind/sign animation with completed signature state.
-- [x] Open verification and privacy/R&D boundaries represented accurately.
-- [x] Persistent top navigation with bilingual Verifier / Docs / Download labels and a coral TestFlight destination.
-- [x] Five semantic bottom nodes with center-aligned progress fill.
-- [x] Live projected Capture callouts with progressive reveal and obtuse leaders.
-- [x] Capture, Bind & Sign, and Open Verification panel bottoms aligned to the progress-navigation top.
-- [x] Horizontal Download / Verify / Technology destinations.
-- [x] Existing verifier isolated at `/verify/` and production WASM path verified.
-
-## Open questions
-
-- Non-blocking: provide an approved TAPCam camera GLB/GLTF later if the marketing scene should match final industrial design rather than the current point-cloud concept.
+- Choose-file flow with an unsigned JPEG.
+- Missing-signature modal blocks analysis and requires explicit continuation.
+- Analysis becomes visible after confirmation and retains locally parsed media/depth outcomes.
+- Full-screen particle hover highlight.
+- Chinese-to-English language switch.
+- Replacement button and drag target presence in the loaded file summary.
+- Desktop and mobile responsive layout.
+- Browser console checked: no warnings or errors.
 
 ## Follow-up polish
 
-- Replace the conceptual camera modules when production hardware geometry becomes available.
+- [P3] Re-evaluate particle density on low-power mobile hardware after device testing; reduced-motion behavior is already present.
+- [P3] Validate the final loaded workbench with additional real signed TAPCam photo and TAP Video samples across very wide and very tall aspect ratios.
 
 final result: passed

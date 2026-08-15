@@ -1,4 +1,5 @@
 import "./landing.css";
+import "./topbar.css";
 import {
   clamp01,
   directionalSnapTarget,
@@ -18,6 +19,7 @@ import {
   type LandingLocale
 } from "./landing/locale";
 import type { LandingScene } from "./landingScene";
+import { renderTapCamTopbar } from "./ui/topbar";
 
 const landing = document.querySelector<HTMLElement>("#landing");
 
@@ -25,24 +27,23 @@ if (!landing) {
   throw new Error("Missing #landing root.");
 }
 
+let currentLocale = getInitialLandingLocale();
+
 landing.innerHTML = `
   <a class="skip-link" href="#capture-story" data-copy="skip">跳到产品原理</a>
 
-  <header class="landing-topbar">
-    <a class="landing-topbar__brand" href="#intro" aria-label="TAPCam home">
-      <img src="./launch_logo.png" alt="" width="34" height="34" />
-      <strong>TAPCam</strong>
-    </a>
-    <nav class="landing-topbar__nav" aria-label="TAPCam navigation" data-top-navigation>
-      <a class="landing-topbar__link landing-topbar__link--verify" href="./verify/" data-copy="nav.verifier">验证器</a>
-      <a class="landing-topbar__link" href="https://github.com/TAP-NAP/TAPCamVerifier/blob/main/Docs/VerificationFlow.md" target="_blank" rel="noopener noreferrer" data-copy="nav.docs">文档</a>
-      <a class="landing-topbar__link landing-topbar__link--download" href="https://testflight.apple.com/join/bwcgjzNd" target="_blank" rel="noopener noreferrer" data-copy="nav.download">下载</a>
-      <a class="landing-topbar__link" href="https://github.com/TAP-NAP" target="_blank" rel="noopener noreferrer">GITHUB</a>
-      <button class="landing-topbar__lang" type="button" data-language-toggle aria-label="Switch to English">
-        <span lang="zh-CN">中</span><i aria-hidden="true">/</i><span lang="en">EN</span>
-      </button>
-    </nav>
-  </header>
+  ${renderTapCamTopbar({
+    assetBase: "./",
+    homeHref: "#intro",
+    verifyHref: "./verify/",
+    locale: currentLocale,
+    navAriaLabel: currentLocale === "zh" ? "TAPCam 主导航" : "TAPCam navigation",
+    copyKeys: {
+      verify: "nav.verifier",
+      docs: "nav.docs",
+      download: "nav.download"
+    }
+  })}
 
   <div class="scroll-cue" aria-hidden="true">
     <span data-copy="scrollCue">继续向下探索</span>
@@ -287,7 +288,6 @@ const pageStageAnnouncements: Record<LandingLocale, Record<LandingPageStage, str
   }
 };
 
-let currentLocale = getInitialLandingLocale();
 let currentPageStage: LandingPageStage = "intro";
 
 function applyLandingLocale(locale: LandingLocale): void {

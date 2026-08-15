@@ -75,6 +75,12 @@ Completed verification coverage:
 
 ## Deferred TODO
 
+- A single-page transition between the landing experience and verifier is a
+  future feature. The current release keeps `/` and `/verify/` as isolated MPA
+  entries while sharing the top navigation component and using a progressive
+  cross-document view transition. Reopen SPA routing only after the verifier's
+  document-level drag/drop listeners, Three.js resources, WASM work, and locale
+  subscriptions have explicit mount/unmount lifecycles.
 - 3D point-cloud screenshot or canvas-pixel CI checks are deferred. Do not treat
   blank-render or framing automation as a current CI gate unless this item is
   explicitly reopened.

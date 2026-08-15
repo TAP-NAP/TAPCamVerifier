@@ -56,7 +56,7 @@ describe("renderVerificationResult", () => {
     const html = renderVerificationSuccessGate(result);
 
     expect(html).toContain("Photo verified");
-    expect(html).toContain("This photo was captured by TAPCam");
+    expect(html).toContain("The TAPCam signature is valid");
     expect(html).toContain("capture.HEIC · 2.0 KB");
     expect(html).toContain("View details");
     expect(html).toContain("result-modal-backdrop");

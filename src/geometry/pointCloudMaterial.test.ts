@@ -40,16 +40,15 @@ describe("point cloud render policy", () => {
     );
   });
 
-  it("exposes time-driven local motion without adding a fixed highlight color uniform", () => {
+  it("keeps every rendered point at one screen-space size and preserves source color", () => {
     const { material, uniforms } = makePointCloudMaterial(fixtureCloud(), 1.5, 64);
 
     expect(uniforms.uRollDirection.value.toArray()).toEqual([0, 0]);
-    expect(material.vertexShader).not.toContain("sin(");
-    expect(material.vertexShader).not.toContain("cos(");
     expect(material.vertexShader).toContain("modelViewMatrix * vec4(position, 1.0)");
-    expect(material.vertexShader).not.toContain("displacedPosition");
-    expect(material.fragmentShader).toContain("selfLitColor");
-    expect(material.fragmentShader).not.toContain("energyColor");
+    expect(material.vertexShader).toContain("gl_PointSize = uPointSize");
+    expect(material.vertexShader).not.toContain("projectedDiameter");
+    expect(material.fragmentShader).toContain("vec4(vPointColor, softCoverage)");
+    expect(material.fragmentShader).not.toContain("selfLitColor");
     material.dispose();
   });
 });

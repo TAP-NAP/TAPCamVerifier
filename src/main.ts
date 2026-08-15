@@ -1,7 +1,9 @@
 import "./styles.css";
+import "./topbar.css";
 import { t, onLangChange, toggleLang, getLang } from "./i18n/i18n";
 import { decodeEmbeddedDepthPlane } from "./depth/heifDepthDecoder";
 import type { DecodedDepthPlane, DepthPanelState, DisplayOrientationReference } from "./depth/types";
+import { mountEmptyParticleField } from "./emptyParticleField";
 import { mountGeometryViewer, type GeometryViewerCleanup } from "./geometry/geometryViewer";
 import { decodeRgbForPixelProjection, projectSignedDepthPixels } from "./geometry/pixelProjection";
 import type { DecodedRgbImage, PixelProjectionState } from "./geometry/types";
@@ -14,9 +16,9 @@ import {
 import { visualizeOriginalHeicFallback } from "./original/originalVisualization";
 import type { OriginalPreviewResult } from "./original/types";
 import {
-  classifyResult,
   drawDepthCanvas,
   drawOriginalCanvas,
+  classifyResult,
   escapeHtml,
   formatBytes,
   renderDepthPanel,
@@ -29,6 +31,7 @@ import {
   renderVerificationResult,
   type ResultModalType
 } from "./ui/rendering";
+import { getTapCamTopbarLabels, renderTapCamTopbar } from "./ui/topbar";
 import { verifyCapturePackageLocally, visualizeDepthPlane } from "./wasm/tapcamVerifier";
 import { verifyCaptureSignature } from "./verifier/serverVerify";
 import { buildServerBoundaryDiagnostic } from "./verifier/serverBoundaryDiagnostic";
@@ -49,61 +52,66 @@ if (!app) {
 document.documentElement.lang = getLang();
 
 app.innerHTML = `
-  <nav class="navbar" role="navigation" aria-label="Main navigation">
-    <div class="navbar-inner">
-      <a class="navbar-brand" href="../" data-nav-brand>
-        <img src="../launch_logo.png" alt="" width="28" height="28" />
-        <span class="navbar-brand-text" data-nav-brand-text>${t("nav.brand")}</span>
-      </a>
-      <div class="navbar-links">
-        <button class="navbar-link" type="button" data-nav-doc>${t("nav.doc")}</button>
-        <button class="navbar-link" type="button" data-nav-blog>${t("nav.blog")}</button>
-        <a class="navbar-link navbar-link--active" href="./" data-nav-tool>${t("nav.tool")}</a>
-        <a class="navbar-link navbar-link--download" href="https://testflight.apple.com/join/bwcgjzNd" target="_blank" rel="noopener noreferrer" data-nav-download aria-label="${t("nav.downloadAria")}">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span data-nav-download-text>${t("nav.download")}</span>
-        </a>
-        <a class="navbar-link navbar-link--github" href="https://github.com/TAP-NAP" target="_blank" rel="noopener noreferrer" data-nav-github aria-label="${t("nav.github")}">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
-        </a>
-        <button class="navbar-link navbar-lang" type="button" data-nav-lang aria-label="Switch language">${t("nav.langSwitchToEn")}</button>
-      </div>
-    </div>
-  </nav>
+  ${renderTapCamTopbar({
+    assetBase: "../",
+    homeHref: "../",
+    verifyHref: "./",
+    locale: getLang(),
+    navAriaLabel: getLang() === "zh" ? "TAPCam 主导航" : "TAPCam navigation",
+    verifyActive: true
+  })}
+  <div class="verifier-particles" id="dropzoneParticles" aria-hidden="true"></div>
   <section class="workspace">
+    <section class="verification-overview" aria-label="${t("progress.ariaLabel")}">
+      <div class="file-summary" data-file-summary hidden>
+        <div class="file-summary__identity">
+          <div>
+            <strong data-file-name></strong>
+            <span data-file-meta></span>
+          </div>
+        </div>
+        <button class="file-summary__select" type="button" data-file-select>${t("dropzone.replacePhoto")}</button>
+      </div>
+      <ol class="verification-progress" data-verification-progress style="--verification-progress-scale: 0">
+        <li data-progress-step="0">
+          <span class="verification-progress__node" aria-hidden="true"></span>
+          <strong>${t("progress.file")}</strong>
+          <span data-progress-detail>${t("progress.fileWaiting")}</span>
+        </li>
+        <li data-progress-step="1">
+          <span class="verification-progress__node" aria-hidden="true"></span>
+          <strong>${t("progress.local")}</strong>
+          <span data-progress-detail>${t("progress.waiting")}</span>
+        </li>
+        <li data-progress-step="2">
+          <span class="verification-progress__node" aria-hidden="true"></span>
+          <strong>${t("progress.signature")}</strong>
+          <span data-progress-detail>${t("progress.waiting")}</span>
+        </li>
+        <li data-progress-step="3">
+          <span class="verification-progress__node" aria-hidden="true"></span>
+          <strong>${t("progress.server")}</strong>
+          <span data-progress-detail>${t("progress.waiting")}</span>
+        </li>
+        <li data-progress-step="4">
+          <span class="verification-progress__node" aria-hidden="true"></span>
+          <strong>${t("progress.result")}</strong>
+          <span data-progress-detail>${t("progress.waiting")}</span>
+        </li>
+      </ol>
+    </section>
     <section class="onboarding" data-onboarding>
-      <h2 class="onboarding-title" data-onboarding-title>${t("onboarding.title")}</h2>
-      <p class="onboarding-desc" data-onboarding-desc>${t("onboarding.description")}</p>
-      <div class="onboarding-grid">
-        <div class="onboarding-card">
-          <div class="onboarding-card-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          </div>
-          <h3 data-onboarding-signature-title>${t("onboarding.signatureTitle")}</h3>
-          <p data-onboarding-signature>${t("onboarding.signature")}</p>
-        </div>
-        <div class="onboarding-card">
-          <div class="onboarding-card-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-          </div>
-          <h3 data-onboarding-depth-title>${t("onboarding.depthTitle")}</h3>
-          <p data-onboarding-depth>${t("onboarding.depth")}</p>
-        </div>
-        <div class="onboarding-card">
-          <div class="onboarding-card-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          </div>
-          <h3 data-onboarding-privacy-title>${t("onboarding.privacyTitle")}</h3>
-          <p data-onboarding-privacy>${t("onboarding.privacy")}</p>
+      <div class="dropzone" id="dropzone">
+        <input id="fileInput" class="file-input" type="file" accept=".heic,.heif,.jpg,.jpeg,.mp4,.tapnap,.zip,image/heic,image/heif,image/jpeg,video/mp4,${TAPNAP_CAPTURE_PACKAGE_MIME_TYPE},application/zip" />
+        <div class="dropzone-copy">
+          <img class="dropzone-mark" src="../launch_logo.png" alt="" width="76" height="76" />
+          <strong class="dropzone-action" data-dropzone-select>${t("dropzone.select")}</strong>
+          <p data-dropzone-instruction>${t("dropzone.instruction")}</p>
+          <span class="dropzone-formats" data-dropzone-formats>${t("dropzone.formats")}</span>
+          <span class="dropzone-privacy" data-dropzone-privacy>${t("dropzone.privacy")}</span>
         </div>
       </div>
     </section>
-    <div class="dropzone" id="dropzone">
-      <input id="fileInput" class="file-input" type="file" accept=".heic,.heif,.jpg,.jpeg,.mp4,.tapnap,.zip,image/heic,image/heif,image/jpeg,video/mp4,${TAPNAP_CAPTURE_PACKAGE_MIME_TYPE},application/zip" />
-      <div class="dropzone-copy">
-        <p>${t("dropzone.subtitle")}</p>
-      </div>
-    </div>
     <section class="visualization" id="visualization" hidden></section>
     <section class="result" id="result" aria-live="polite"></section>
   </section>
@@ -113,22 +121,27 @@ const dropzone = document.querySelector<HTMLDivElement>("#dropzone");
 const fileInput = document.querySelector<HTMLInputElement>("#fileInput");
 const visualizationPanel = document.querySelector<HTMLElement>("#visualization");
 const resultPanel = document.querySelector<HTMLElement>("#result");
-const navDocBtn = document.querySelector<HTMLButtonElement>("[data-nav-doc]");
-const navBlogBtn = document.querySelector<HTMLButtonElement>("[data-nav-blog]");
+const navDocLink = document.querySelector<HTMLAnchorElement>("[data-nav-doc]");
 const navToolLink = document.querySelector<HTMLAnchorElement>("[data-nav-tool]");
+const navDownloadLink = document.querySelector<HTMLAnchorElement>("[data-nav-download]");
 const navLangBtn = document.querySelector<HTMLButtonElement>("[data-nav-lang]");
 const navBrandText = document.querySelector<HTMLSpanElement>("[data-nav-brand-text]");
 const navGithubLink = document.querySelector<HTMLAnchorElement>("[data-nav-github]");
-const navDownloadLink = document.querySelector<HTMLAnchorElement>("[data-nav-download]");
-const navDownloadText = document.querySelector<HTMLSpanElement>("[data-nav-download-text]");
 const onboardingEl = document.querySelector<HTMLElement>("[data-onboarding]");
+const fileSummaryEl = document.querySelector<HTMLElement>("[data-file-summary]");
+const fileNameEl = document.querySelector<HTMLElement>("[data-file-name]");
+const fileMetaEl = document.querySelector<HTMLElement>("[data-file-meta]");
+const fileSelectButton = document.querySelector<HTMLButtonElement>("[data-file-select]");
+const progressEl = document.querySelector<HTMLOListElement>("[data-verification-progress]");
+const dropzoneParticles = document.querySelector<HTMLElement>("#dropzoneParticles");
 
-if (!dropzone || !fileInput || !visualizationPanel || !resultPanel || !navDocBtn || !navBlogBtn || !navToolLink || !navLangBtn || !navBrandText || !navGithubLink || !navDownloadLink || !navDownloadText || !onboardingEl) {
+if (!dropzone || !fileInput || !visualizationPanel || !resultPanel || !navDocLink || !navToolLink || !navDownloadLink || !navLangBtn || !navBrandText || !navGithubLink || !onboardingEl || !fileSummaryEl || !fileNameEl || !fileMetaEl || !fileSelectButton || !progressEl || !dropzoneParticles) {
   throw new Error("Verifier UI did not mount.");
 }
 
 const resultEl = resultPanel;
 const visualizationEl = visualizationPanel;
+const workspaceEl = app.querySelector<HTMLElement>(".workspace");
 let activeRunId = 0;
 let activeObjectUrl: string | null = null;
 let activeFileBytes: Uint8Array | null = null;
@@ -154,6 +167,15 @@ let verifyingFileName = "";
 let verifyingFileSize = 0;
 let currentDepthState: DepthPanelState | null = null;
 let currentGeometryState: PixelProjectionState | null = null;
+type VerificationProgressStatus = "idle" | "running" | "valid" | "invalid";
+let currentProgressPhase = 0;
+let currentProgressStatus: VerificationProgressStatus = "idle";
+
+if (!workspaceEl) {
+  throw new Error("Verifier workspace did not mount.");
+}
+
+const emptyParticleField = mountEmptyParticleField(dropzoneParticles);
 
 dropzone.addEventListener("click", () => fileInput.click());
 dropzone.addEventListener("dragover", (event) => {
@@ -194,6 +216,19 @@ fileInput.addEventListener("change", () => {
     void verifyFile(file);
   }
 });
+fileSelectButton.addEventListener("click", () => fileInput.click());
+fileSummaryEl.addEventListener("dragover", (event) => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  setDropEffect(event);
+  fileSummaryEl.classList.add("is-dragging");
+});
+fileSummaryEl.addEventListener("dragleave", () => fileSummaryEl.classList.remove("is-dragging"));
+fileSummaryEl.addEventListener("drop", (event) => {
+  event.stopPropagation();
+  fileSummaryEl.classList.remove("is-dragging");
+  handleDroppedFile(event);
+});
 
 function showToast(message: string): void {
   const existing = document.querySelector('.toast');
@@ -218,16 +253,97 @@ function showToast(message: string): void {
   timerId = window.setTimeout(close, 3000);
 }
 
-navDocBtn!.addEventListener("click", () => {
-  showToast(t("toast.comingSoon"));
-});
+function restoreDynamicPanels(): void {
+  if (dropzone!.parentElement !== onboardingEl) {
+    onboardingEl!.append(dropzone!);
+  }
+  if (resultEl.parentElement !== workspaceEl) {
+    workspaceEl!.append(resultEl);
+  }
+}
 
-navBlogBtn!.addEventListener("click", () => {
-  showToast(t("toast.comingSoon"));
-});
+function setVerificationProgress(
+  phase: number,
+  status: VerificationProgressStatus = "running"
+): void {
+  currentProgressPhase = Math.max(-1, Math.min(4, phase));
+  currentProgressStatus = status;
+  syncProgressUI();
+}
+
+function syncProgressUI(): void {
+  const steps = Array.from(progressEl!.querySelectorAll<HTMLElement>("[data-progress-step]"));
+  const progressScale = currentProgressPhase <= 0 ? 0 : currentProgressPhase / 4;
+  progressEl!.style.setProperty("--verification-progress-scale", String(progressScale));
+  progressEl!.setAttribute("aria-label", t("progress.ariaLabel"));
+
+  const labelKeys = [
+    "progress.file",
+    "progress.local",
+    "progress.signature",
+    "progress.server",
+    "progress.result"
+  ];
+
+  progressEl!.classList.toggle("is-invalid", currentProgressStatus === "invalid");
+
+  steps.forEach((step, index) => {
+    const title = step.querySelector<HTMLElement>("strong");
+    const detail = step.querySelector<HTMLElement>("[data-progress-detail]");
+    const complete = currentProgressPhase > index || (currentProgressPhase === 4 && currentProgressStatus === "valid");
+    const active = currentProgressPhase === index;
+    step.classList.toggle("is-complete", complete);
+    step.classList.toggle("is-active", active);
+    step.classList.toggle("is-invalid", active && currentProgressStatus === "invalid");
+    if (title) {
+      title.textContent = t(labelKeys[index]);
+    }
+    if (detail) {
+      detail.textContent = progressDetailForStep(index);
+    }
+  });
+}
+
+function progressDetailForStep(index: number): string {
+  if (currentProgressStatus === "idle" || currentProgressPhase < 0) {
+    return t(index === 0 ? "progress.fileWaiting" : "progress.waiting");
+  }
+  if (currentProgressStatus === "invalid" && index === currentProgressPhase) {
+    return t("progress.failed");
+  }
+  if (index === 0) {
+    return t("progress.fileRead");
+  }
+  if (index === 1) {
+    if (currentProgressPhase < 1) return t("progress.waiting");
+    return t(currentProgressPhase === 1 ? "progress.checking" : "progress.bindingPassed");
+  }
+  if (index === 2) {
+    if (currentProgressPhase < 2) return t("progress.waiting");
+    return t(currentProgressPhase === 2 ? "progress.signatureChecking" : "progress.signatureValid");
+  }
+  if (index === 3) {
+    if (currentProgressPhase < 3) return t("progress.waiting");
+    return t(currentProgressPhase === 3 ? "progress.serverChecking" : "progress.issuedByTapCam");
+  }
+  if (currentProgressPhase < 4) {
+    return t("progress.waiting");
+  }
+  return t(currentProgressStatus === "valid" ? "progress.captureTrusted" : "progress.captureInvalid");
+}
+
+function syncFileSummary(): void {
+  fileSummaryEl!.hidden = !currentFile;
+  fileNameEl!.textContent = currentFile?.name ?? "";
+  fileMetaEl!.textContent = currentFile
+    ? `${formatBytes(currentFile.size)} · ${t("file.localOnly")}`
+    : "";
+  fileSelectButton!.textContent = t("dropzone.replacePhoto");
+}
 
 function resetToHome(event?: Event): void {
   event?.preventDefault();
+  restoreDynamicPanels();
   cleanupGeometryViewer();
   cleanupVideoPlayback();
   document.querySelector("[data-result-modal]")?.remove();
@@ -255,10 +371,19 @@ function resetToHome(event?: Event): void {
   verifyingFileSize = 0;
   currentDepthState = null;
   currentGeometryState = null;
+  currentProgressPhase = 0;
+  currentProgressStatus = "idle";
   visualizationEl.hidden = true;
   visualizationEl.innerHTML = "";
   resultEl.innerHTML = "";
+  fileSummaryEl!.hidden = true;
   onboardingEl!.hidden = false;
+  dropzone!.classList.remove("dropzone--compact");
+  dropzoneParticles!.hidden = false;
+  emptyParticleField.setActive(true);
+  const dropzoneSelect = dropzone!.querySelector<HTMLElement>("[data-dropzone-select]");
+  if (dropzoneSelect) dropzoneSelect.textContent = t("dropzone.select");
+  syncProgressUI();
 }
 
 navToolLink!.addEventListener("click", resetToHome);
@@ -300,6 +425,7 @@ async function verifyFile(file: File): Promise<void> {
   } catch (error) {
     if (runId === activeRunId) {
       isVerifying = false;
+      setVerificationProgress(0, "invalid");
       const message = error instanceof Error ? error.message : String(error);
       await showResultModal("parseError", {
         title: t("modal.parseErrorTitle"),
@@ -335,19 +461,19 @@ async function verifyFile(file: File): Promise<void> {
 
     currentResult = result;
     isVerifying = false;
+    setVerificationProgress(4, result.finalStatus === "valid" ? "valid" : "invalid");
 
-    const modalType = classifyResult(result);
-    const modalConfig = buildModalConfig(modalType, result);
-    await showResultModal(modalType, modalConfig);
+    resultEl.innerHTML = renderVerificationResult(result);
+    const modal = resultModalFor(result);
+    await showResultModal(modal.type, modal.config);
     if (runId !== activeRunId) {
       return;
     }
-
-    resultEl.innerHTML = renderVerificationResult(result);
     revealVisualization(runId);
   } catch (error) {
     if (runId === activeRunId) {
       isVerifying = false;
+      setVerificationProgress(Math.max(1, currentProgressPhase), "invalid");
       const message = error instanceof Error ? error.message : String(error);
       await showResultModal("parseError", {
         title: t("modal.parseErrorTitle"),
@@ -361,51 +487,6 @@ async function verifyFile(file: File): Promise<void> {
       resultEl.innerHTML = renderVerificationError(error);
       revealVisualization(runId);
     }
-  }
-}
-
-function buildModalConfig(type: ResultModalType, result: CombinedVerificationResult): { title: string; desc: string; detail?: string; buttonText: string } {
-  const isVideo = result.local.mediaKind === "video";
-  switch (type) {
-    case "success":
-      return {
-        title: t(isVideo ? "modal.videoValidTitle" : "modal.validTitle"),
-        desc: t(isVideo ? "modal.videoValidDesc" : "modal.validDesc"),
-        detail: t("modal.validNote", { fileName: result.fileName, fileSize: formatBytes(result.fileSize) }),
-        buttonText: t("modal.viewDetails")
-      };
-    case "invalid": {
-      const failCheck = result.local.checks.find((c) => c.status === "fail");
-      const reason = result.server?.status === "invalid" && result.server.reason
-        ? result.server.reason
-        : failCheck?.detail ?? result.local.summary;
-      return {
-        title: t("modal.invalidTitle"),
-        desc: t(isVideo ? "modal.videoInvalidDesc" : "modal.invalidDesc"),
-        detail: reason,
-        buttonText: t("modal.retry")
-      };
-    }
-    case "noSignature":
-      return {
-        title: t("modal.noSignatureTitle"),
-        desc: t(isVideo ? "modal.videoNoSignatureDesc" : "modal.noSignatureDesc"),
-        detail: t(isVideo ? "modal.videoNoSignatureHint" : "modal.noSignatureHint"),
-        buttonText: t("modal.retry")
-      };
-    case "networkError":
-      return {
-        title: t("modal.networkErrorTitle"),
-        desc: t("modal.networkErrorDesc"),
-        detail: result.serverError ?? t("modal.networkErrorHint"),
-        buttonText: t("modal.retry")
-      };
-    case "parseError":
-      return {
-        title: t("modal.parseErrorTitle"),
-        desc: t("modal.parseErrorDesc"),
-        buttonText: t("modal.retry")
-      };
   }
 }
 
@@ -428,24 +509,85 @@ function showResultModal(type: ResultModalType, config: { title: string; desc: s
     }
 
     function handleKey(e: KeyboardEvent): void {
-      if (e.key === "Escape" || e.key === "Enter") {
+      if (e.key === "Enter") {
         e.preventDefault();
         dismiss();
       }
     }
 
     closeBtn?.addEventListener("click", dismiss);
-    modalEl.addEventListener("click", (e) => {
-      if (e.target === modalEl) dismiss();
-    });
     document.addEventListener("keydown", handleKey);
 
     closeBtn?.focus();
   });
 }
 
+function resultModalFor(result: CombinedVerificationResult): {
+  type: ResultModalType;
+  config: { title: string; desc: string; detail?: string; buttonText: string };
+} {
+  const type = classifyResult(result);
+  const isVideo = result.local.mediaKind === "video";
+
+  switch (type) {
+    case "success":
+      return {
+        type,
+        config: {
+          title: t(isVideo ? "modal.videoValidTitle" : "modal.validTitle"),
+          desc: t(isVideo ? "modal.videoValidDesc" : "modal.validDesc"),
+          detail: t("modal.validNote", {
+            fileName: result.fileName,
+            fileSize: formatBytes(result.fileSize)
+          }),
+          buttonText: t("modal.continueAnalysis")
+        }
+      };
+    case "noSignature":
+      return {
+        type,
+        config: {
+          title: t("modal.noSignatureTitle"),
+          desc: t(isVideo ? "modal.videoNoSignatureDesc" : "modal.noSignatureDesc"),
+          detail: t(isVideo ? "modal.videoNoSignatureHint" : "modal.noSignatureHint"),
+          buttonText: t("modal.continueAnalysis")
+        }
+      };
+    case "networkError":
+      return {
+        type,
+        config: {
+          title: t("modal.networkErrorTitle"),
+          desc: t("modal.networkErrorDesc"),
+          detail: t("modal.networkErrorHint"),
+          buttonText: t("modal.continueAnalysis")
+        }
+      };
+    case "invalid":
+      return {
+        type,
+        config: {
+          title: t("modal.invalidTitle"),
+          desc: t(isVideo ? "modal.videoInvalidDesc" : "modal.invalidDesc"),
+          detail: t("modal.invalidHint"),
+          buttonText: t("modal.continueAnalysis")
+        }
+      };
+    case "parseError":
+      return {
+        type,
+        config: {
+          title: t("modal.parseErrorTitle"),
+          desc: t("modal.parseErrorDesc"),
+          buttonText: t("modal.retry")
+        }
+      };
+  }
+}
+
 function beginSelectedFile(file: File): number {
   activeRunId += 1;
+  restoreDynamicPanels();
   document.querySelector("[data-result-modal]")?.remove();
   activeFileBytes = null;
   activeDepthPlane = null;
@@ -474,10 +616,16 @@ function beginSelectedFile(file: File): number {
   verifyingFileSize = file.size;
   currentDepthState = null;
   currentGeometryState = null;
+  currentProgressPhase = 0;
+  currentProgressStatus = "running";
 
   visualizationEl.hidden = true;
   visualizationEl.innerHTML = "";
   onboardingEl!.hidden = true;
+  emptyParticleField.setActive(false);
+  dropzoneParticles!.hidden = true;
+  syncFileSummary();
+  syncProgressUI();
   updateDepthPanel({ status: "loading" });
   updateGeometryPanel({ status: "loading" });
   resultEl.innerHTML = renderVerificationBusy(file.name, file.size);
@@ -489,6 +637,7 @@ function startAnalysis(runId: number, captureInput: CaptureInput): void {
     return;
   }
 
+  setVerificationProgress(1, "running");
   activeInputKind = captureInput.kind;
   if (captureInput.kind === "tap-video") {
     renderVideoVisualizationScaffold(captureInput.videoFile);
@@ -675,70 +824,97 @@ async function projectSelectedPixels(
 function renderVisualizationScaffold(file: File, objectUrl: string): void {
   visualizationEl.hidden = true;
   visualizationEl.innerHTML = `
-    <div class="visual-grid">
-      <article class="visual-pane" data-pane-original>
-        <header>
-          <h2>${t("panel.original")}</h2>
-          <span>${escapeHtml(file.name)} · ${formatBytes(file.size)}</span>
-        </header>
-        <div class="media-frame" id="originalFrame">
-          <img id="originalPreview" src="${objectUrl}" alt="${escapeHtml(file.name)}" />
-        </div>
-      </article>
-      <article class="visual-pane" data-pane-depth>
-        <header>
-          <h2>${t("panel.depth")}</h2>
-          <span>${t("panel.depthSubtitle")}</span>
-        </header>
-        <div class="depth-panel" id="depthPanel"></div>
-      </article>
-      <article class="visual-pane visual-pane--geometry" data-pane-geometry>
-        <header>
-          <h2>${t("panel.geometry")}</h2>
-          <span>${t("panel.geometrySubtitle")}</span>
-        </header>
-        <div class="geometry-panel" id="geometryPanel"></div>
-      </article>
+    <div class="analysis-layout">
+      <div class="analysis-main">
+        <article class="visual-pane visual-pane--geometry" data-pane-geometry>
+          <header>
+            <h2>${t("panel.geometry")}</h2>
+            <span>${t("panel.geometrySubtitle")}</span>
+          </header>
+          <div class="geometry-panel" id="geometryPanel"></div>
+        </article>
+      </div>
+      <aside class="analysis-side">
+        <article class="visual-pane" data-pane-original>
+          <header>
+            <h2>${t("panel.original")}</h2>
+          </header>
+          <div class="media-frame" id="originalFrame">
+            <img id="originalPreview" src="${objectUrl}" alt="${escapeHtml(file.name)}" />
+          </div>
+        </article>
+        <article class="visual-pane" data-pane-depth>
+          <header>
+            <h2>${t("panel.depth")}</h2>
+          </header>
+          <div class="depth-panel" id="depthPanel"></div>
+        </article>
+        <article class="visual-pane analysis-details" data-pane-details>
+          <header>
+            <h2>${t("panel.details")}</h2>
+          </header>
+          <div class="analysis-details__result" data-result-slot></div>
+          <div class="analysis-details__diagnostics" data-depth-details></div>
+          <div class="analysis-details__diagnostics" data-geometry-details></div>
+        </article>
+      </aside>
     </div>
   `;
+  placeAnalysisPanels();
   attachOriginalPreviewFallback(file, activeRunId);
 }
 
 function renderVideoVisualizationScaffold(file: File): void {
   visualizationEl.hidden = true;
   visualizationEl.innerHTML = `
-    <div class="visual-grid visual-grid--video">
-      <article class="visual-pane" data-pane-video>
-        <header>
-          <h2>${t("panel.video")}</h2>
-          <span>${escapeHtml(file.name)} · ${formatBytes(file.size)}</span>
-        </header>
-        <div class="video-frame" id="videoFrame">
-          <div class="video-auth-wait" data-video-auth-wait>${t("videoPlayer.waitingForVerification")}</div>
-          <video id="videoPreview" controls playsinline preload="metadata" aria-label="${t("videoPlayer.ariaLabel")}" hidden></video>
-        </div>
-      </article>
-      <article class="visual-pane" data-pane-video-depth>
-        <header>
-          <h2>${t("panel.videoDepth")}</h2>
-          <span data-video-depth-meta>${t("videoPlayer.depthSubtitle")}</span>
-        </header>
-        <div class="video-depth-frame">
-          <canvas id="videoDepthCanvas" aria-label="${t("videoPlayer.depthAriaLabel")}"></canvas>
-          <p class="video-depth-status" data-video-depth-status>${t("videoPlayer.waitingForVerification")}</p>
-        </div>
-      </article>
-      <article class="visual-pane visual-pane--geometry visual-pane--disabled" data-pane-geometry aria-disabled="true">
-        <header>
-          <h2>${t("panel.geometry")}</h2>
-          <span class="disabled-badge">${t("videoPlayer.disabled")}</span>
-        </header>
-        <div class="geometry-message geometry-message--disabled">
-          <span>${t("videoPlayer.geometryDisabled")}</span>
-        </div>
-      </article>
+    <div class="analysis-layout analysis-layout--video">
+      <div class="analysis-main">
+        <article class="visual-pane" data-pane-video>
+          <header>
+            <h2>${t("panel.video")}</h2>
+            <span>${escapeHtml(file.name)} · ${formatBytes(file.size)}</span>
+          </header>
+          <div class="video-frame" id="videoFrame">
+            <div class="video-auth-wait" data-video-auth-wait>${t("videoPlayer.waitingForVerification")}</div>
+            <video id="videoPreview" controls playsinline preload="metadata" aria-label="${t("videoPlayer.ariaLabel")}" hidden></video>
+          </div>
+        </article>
+      </div>
+      <aside class="analysis-side">
+        <article class="visual-pane" data-pane-video-depth>
+          <header>
+            <h2>${t("panel.videoDepth")}</h2>
+            <span data-video-depth-meta>${t("videoPlayer.depthSubtitle")}</span>
+          </header>
+          <div class="video-depth-frame">
+            <canvas id="videoDepthCanvas" aria-label="${t("videoPlayer.depthAriaLabel")}"></canvas>
+            <p class="video-depth-status" data-video-depth-status>${t("videoPlayer.waitingForVerification")}</p>
+          </div>
+        </article>
+        <article class="visual-pane visual-pane--disabled" data-pane-geometry aria-disabled="true">
+          <header>
+            <h2>${t("panel.geometry")}</h2>
+            <span class="disabled-badge">${t("videoPlayer.disabled")}</span>
+          </header>
+          <div class="geometry-message geometry-message--disabled">
+            <span>${t("videoPlayer.geometryDisabled")}</span>
+          </div>
+        </article>
+        <article class="visual-pane analysis-details" data-pane-details>
+          <header><h2>${t("panel.details")}</h2></header>
+          <div class="analysis-details__result" data-result-slot></div>
+        </article>
+      </aside>
     </div>
   `;
+  placeAnalysisPanels();
+}
+
+function placeAnalysisPanels(): void {
+  const resultSlot = visualizationEl.querySelector<HTMLElement>("[data-result-slot]");
+  if (resultSlot) {
+    resultSlot.append(resultEl);
+  }
 }
 
 function activateVerifiedVideoPlayback(runId: number, input: Extract<CaptureInput, { kind: "tap-video" }>): void {
@@ -770,12 +946,14 @@ function updatePaneHeaders(): void {
   const depthPaneSubtitle = visualizationEl.querySelector<HTMLElement>("[data-pane-depth] header span");
   const geometryPane = visualizationEl.querySelector<HTMLElement>("[data-pane-geometry] h2");
   const geometryPaneSubtitle = visualizationEl.querySelector<HTMLElement>("[data-pane-geometry] header span");
+  const detailsPane = visualizationEl.querySelector<HTMLElement>("[data-pane-details] h2");
 
   if (originalPane) originalPane.textContent = t("panel.original");
   if (depthPane) depthPane.textContent = t("panel.depth");
   if (depthPaneSubtitle) depthPaneSubtitle.textContent = t("panel.depthSubtitle");
   if (geometryPane) geometryPane.textContent = t("panel.geometry");
   if (geometryPaneSubtitle) geometryPaneSubtitle.textContent = t("panel.geometrySubtitle");
+  if (detailsPane) detailsPane.textContent = t("panel.details");
   const disabledBadge = visualizationEl.querySelector<HTMLElement>(".disabled-badge");
   const disabledMessage = visualizationEl.querySelector<HTMLElement>(".geometry-message--disabled span");
   if (disabledBadge) disabledBadge.textContent = t("videoPlayer.disabled");
@@ -866,6 +1044,7 @@ function updateDepthPanel(state: DepthPanelState): void {
       drawDepthCanvas(state, canvas);
     }
   }
+  relocatePanelDiagnostics(depthPanel, "[data-depth-details]");
 }
 
 function updateGeometryPanel(state: PixelProjectionState): void {
@@ -883,6 +1062,19 @@ function updateGeometryPanel(state: PixelProjectionState): void {
       activeGeometryViewerCleanup = mountGeometryViewer(host, state);
     }
   }
+  relocatePanelDiagnostics(geometryPanel, "[data-geometry-details]");
+}
+
+function relocatePanelDiagnostics(panel: HTMLElement, targetSelector: string): void {
+  const target = visualizationEl.querySelector<HTMLElement>(targetSelector);
+  if (!target) {
+    return;
+  }
+  target.replaceChildren();
+  const diagnostics = Array.from(
+    panel.querySelectorAll<HTMLElement>(":scope > .depth-meta, :scope > .depth-warnings")
+  );
+  target.append(...diagnostics);
 }
 
 function cleanupGeometryViewer(): void {
@@ -901,11 +1093,18 @@ async function verifyFileBytes(runId: number, captureInput: CaptureInput): Promi
     : await verifyPhotoInputLocally(captureInput);
   const localFailure = hasLocalFailure(local);
 
+  if (runId === activeRunId) {
+    setVerificationProgress(localFailure ? 1 : 2, localFailure ? "invalid" : "running");
+  }
+
   if (!localFailure && captureInput.kind === "tap-video") {
     activateVerifiedVideoPlayback(runId, captureInput);
   }
 
   if (localFailure || !local.serverRequest) {
+    if (runId === activeRunId && !localFailure) {
+      setVerificationProgress(2, "invalid");
+    }
     const serverErrorMsg = localFailure ? t("error.serverNotRun") : t("error.serverMissingRequest");
     return {
       fileName: captureInput.fileName,
@@ -926,6 +1125,9 @@ async function verifyFileBytes(runId: number, captureInput: CaptureInput): Promi
   let serverError: string | null = null;
 
   try {
+    if (runId === activeRunId) {
+      setVerificationProgress(3, "running");
+    }
     server = await verifyCaptureSignature(local.serverRequest);
   } catch (error) {
     serverError = formatServerVerifyError(error);
@@ -973,14 +1175,14 @@ function formatServerVerifyError(error: unknown): string {
 
 function refreshUI(): void {
   document.documentElement.lang = getLang();
-  navBrandText!.textContent = t("nav.brand");
-  navDocBtn!.textContent = t("nav.doc");
-  navBlogBtn!.textContent = t("nav.blog");
-  navToolLink!.textContent = t("nav.tool");
-  navLangBtn!.textContent = t("nav.langSwitchToEn");
-  navGithubLink!.setAttribute("aria-label", t("nav.github"));
-  navDownloadText!.textContent = t("nav.download");
-  navDownloadLink!.setAttribute("aria-label", t("nav.downloadAria"));
+  const topbarLabels = getTapCamTopbarLabels(getLang());
+  navBrandText!.textContent = "TAPCam";
+  navDocLink!.textContent = topbarLabels.docs;
+  navToolLink!.textContent = topbarLabels.verify;
+  navDownloadLink!.textContent = topbarLabels.download;
+  navGithubLink!.textContent = topbarLabels.github;
+  navLangBtn!.dataset.locale = getLang();
+  navLangBtn!.setAttribute("aria-label", getLang() === "zh" ? "Switch to English" : "切换到中文");
 
   const onboardingTitle = document.querySelector<HTMLElement>("[data-onboarding-title]");
   const onboardingDesc = document.querySelector<HTMLElement>("[data-onboarding-desc]");
@@ -1000,8 +1202,19 @@ function refreshUI(): void {
   if (onboardingPrivacyTitle) onboardingPrivacyTitle.textContent = t("onboarding.privacyTitle");
   if (onboardingPrivacy) onboardingPrivacy.textContent = t("onboarding.privacy");
 
-  const dropzoneP = dropzone!.querySelector<HTMLParagraphElement>("p");
-  if (dropzoneP) dropzoneP.textContent = t("dropzone.subtitle");
+  const dropzoneSelect = dropzone!.querySelector<HTMLElement>("[data-dropzone-select]");
+  const dropzoneInstruction = dropzone!.querySelector<HTMLElement>("[data-dropzone-instruction]");
+  const dropzoneFormats = dropzone!.querySelector<HTMLElement>("[data-dropzone-formats]");
+  const dropzonePrivacy = dropzone!.querySelector<HTMLElement>("[data-dropzone-privacy]");
+  if (dropzoneSelect) dropzoneSelect.textContent = dropzone!.classList.contains("dropzone--compact")
+    ? t("dropzone.replace")
+    : t("dropzone.select");
+  if (dropzoneInstruction) dropzoneInstruction.textContent = t("dropzone.instruction");
+  if (dropzoneFormats) dropzoneFormats.textContent = t("dropzone.formats");
+  if (dropzonePrivacy) dropzonePrivacy.textContent = t("dropzone.privacy");
+
+  syncFileSummary();
+  syncProgressUI();
 
   if (visualizationEl.innerHTML !== "") {
     updatePaneHeaders();
@@ -1024,3 +1237,5 @@ function refreshUI(): void {
 onLangChange(() => {
   refreshUI();
 });
+
+refreshUI();
