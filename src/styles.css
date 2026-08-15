@@ -1442,10 +1442,10 @@ summary {
 }
 
 .verification-overview {
-  overflow: hidden;
-  border: 1px solid var(--tap-rule);
-  border-radius: 5px;
-  background: var(--tap-panel);
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .file-summary {
@@ -1521,29 +1521,29 @@ summary {
 .verification-progress {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   min-height: 122px;
   margin: 0;
-  padding: 24px 22px 18px;
+  padding: 24px 29.5px 18px;
   list-style: none;
 }
 
 .verification-progress::before,
 .verification-progress::after {
   position: absolute;
-  top: 31px;
-  left: 31px;
+  top: 31.5px;
+  left: 29.5px;
   height: 1px;
   content: "";
 }
 
 .verification-progress::before {
-  right: 31px;
+  right: 29.5px;
   background: #41423f;
 }
 
 .verification-progress::after {
-  right: 31px;
+  right: 29.5px;
   background: linear-gradient(
     90deg,
     var(--tap-lime) 0%,
@@ -1569,14 +1569,49 @@ summary {
 .verification-progress li {
   position: relative;
   z-index: 1;
+  grid-row: 1;
   display: grid;
+  width: 100%;
   min-width: 0;
+  justify-items: center;
   gap: 5px;
   color: #62635f;
+  text-align: center;
 }
 
-.verification-progress li:not(:first-child) {
-  padding-left: 18px;
+.verification-progress li:first-child {
+  grid-column: 1;
+  justify-items: start;
+  text-align: left;
+}
+
+.verification-progress li:first-child .verification-progress__node {
+  transform: translateX(-50%);
+}
+
+.verification-progress li:nth-child(2) {
+  grid-column: 2;
+  transform: translateX(-50%);
+}
+
+.verification-progress li:nth-child(3) {
+  grid-column: 3;
+  transform: translateX(-50%);
+}
+
+.verification-progress li:nth-child(4) {
+  grid-column: 4;
+  transform: translateX(-50%);
+}
+
+.verification-progress li:last-child {
+  grid-column: 4;
+  justify-items: end;
+  text-align: right;
+}
+
+.verification-progress li:last-child .verification-progress__node {
+  transform: translateX(50%);
 }
 
 .verification-progress__node {
@@ -2320,25 +2355,21 @@ summary {
 
   .verification-progress {
     min-height: 98px;
-    padding: 18px 12px 12px;
+    padding: 18px 18.5px 12px;
   }
 
   .verification-progress::before,
   .verification-progress::after {
-    top: 25px;
-    left: 19px;
+    top: 24.5px;
+    left: 18.5px;
   }
 
   .verification-progress::before {
-    right: 19px;
+    right: 18.5px;
   }
 
   .verification-progress::after {
-    right: 19px;
-  }
-
-  .verification-progress li:not(:first-child) {
-    padding-left: 8px;
+    right: 18.5px;
   }
 
   .verification-progress strong {
