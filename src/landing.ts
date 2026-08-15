@@ -4,8 +4,10 @@ import {
   clamp01,
   directionalSnapTarget,
   landingStageForProgress,
+  PROGRESS_NAVIGATION_DURATION_MS,
   presentationTopForCopy,
   progressForActiveStep,
+  stableFixedControlTop,
   storyEntranceProgressFromGeometry,
   storyPresentationProgress,
   storyProgressFromGeometry,
@@ -309,6 +311,14 @@ const pageStageIndex: Record<LandingPageStage, number> = {
   privacy: 3,
   next: 4
 };
+
+const pageStages: readonly LandingPageStage[] = [
+  "intro",
+  "capture",
+  "sign",
+  "privacy",
+  "next"
+];
 
 const pageStageAnnouncements: Record<LandingLocale, Record<LandingPageStage, string>> = {
   zh: {
@@ -714,6 +724,7 @@ let snapAnimationFrame = 0;
 let snapIsRunning = false;
 let savedInlineScrollBehavior: string | null = null;
 let alignedNodeIndex: number | null = null;
+let progressNavigationTargetIndex: number | null = null;
 let lastScrollY = window.scrollY;
 let scrollDirection: ScrollDirection = 0;
 let directionOriginIndex = 0;
@@ -805,7 +816,12 @@ function getChapterPresentationProgresses(
   storyTop: number,
   storyDistance: number
 ): [number, number, number] {
-  const progressTop = pageProgress!.getBoundingClientRect().top;
+  const progressStyle = window.getComputedStyle(pageProgress!);
+  const progressTop = stableFixedControlTop(
+    getStableViewportHeight(),
+    pageProgress!.offsetHeight,
+    Number.parseFloat(progressStyle.bottom) || 0
+  );
   const progresses = chapterCopies.map((copy) => {
     const copyRect = copy.getBoundingClientRect();
     const copyTop = window.scrollY + copyRect.top;
@@ -870,6 +886,7 @@ function cancelDirectionalSnap(clearAlignment = true): void {
   resizeAlignmentTimer = 0;
   if (clearAlignment) {
     alignedNodeIndex = null;
+    progressNavigationTargetIndex = null;
   }
   scrollDirection = 0;
   lastScrollY = window.scrollY;
@@ -886,6 +903,7 @@ function animateScrollTo(targetY: number, duration: number): void {
     restoreScrollBehavior();
     scrollDirection = 0;
     lastScrollY = window.scrollY;
+    progressNavigationTargetIndex = null;
     scheduleStoryUpdate();
     return;
   }
@@ -912,6 +930,7 @@ function animateScrollTo(targetY: number, duration: number): void {
     restoreScrollBehavior();
     scrollDirection = 0;
     lastScrollY = window.scrollY;
+    progressNavigationTargetIndex = null;
     scheduleStoryUpdate();
   };
 
@@ -970,7 +989,9 @@ pageProgressLinks.forEach((link, index) => {
     event.preventDefault();
     cancelDirectionalSnap();
     alignedNodeIndex = index;
-    animateScrollTo(getNodeStatePoints()[index], 460);
+    progressNavigationTargetIndex = index;
+    scheduleStoryUpdate();
+    animateScrollTo(getNodeStatePoints()[index], PROGRESS_NAVIGATION_DURATION_MS);
     window.history.replaceState(null, "", link.hash);
   });
 });
@@ -1086,12 +1107,15 @@ function updatePageProgress(
     activeStage = "next";
   }
 
-  const activeIndex = pageStageIndex[activeStage];
-  if (activeStage !== currentPageStage) {
-    pageStatus!.textContent = pageStageAnnouncements[currentLocale][activeStage];
+  const displayedStage = progressNavigationTargetIndex === null
+    ? activeStage
+    : pageStages[progressNavigationTargetIndex] ?? activeStage;
+  const activeIndex = pageStageIndex[displayedStage];
+  if (displayedStage !== currentPageStage) {
+    pageStatus!.textContent = pageStageAnnouncements[currentLocale][displayedStage];
   }
-  currentPageStage = activeStage;
-  landing!.dataset.activeSection = activeStage;
+  currentPageStage = displayedStage;
+  landing!.dataset.activeSection = displayedStage;
   landing!.dataset.scrollCue = scrollCueProgress < 0.075 ? "visible" : "hidden";
   landing!.dataset.scrolled = window.scrollY > 12 ? "true" : "false";
   pageProgressLine!.style.transform = `scaleX(${progressForActiveStep(activeIndex, pageProgressLinks.length).toFixed(4)})`;
@@ -1222,7 +1246,9 @@ function alignHashToNode(duration: number): void {
   animateScrollTo(getNodeStatePoints()[nodeIndex], duration);
 }
 
-window.addEventListener("hashchange", () => alignHashToNode(460));
+window.addEventListener("hashchange", () =>
+  alignHashToNode(PROGRESS_NAVIGATION_DURATION_MS)
+);
 
 if (pageProgressLinks.some((link) => link.hash === window.location.hash)) {
   const alignInitialHash = (): void => {

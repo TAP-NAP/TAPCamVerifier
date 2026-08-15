@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   LANDING_PRESENTATION_PROGRESS,
+  PROGRESS_NAVIGATION_DURATION_MS,
   captureStageOpacity,
   directionalSnapTarget,
   landingStageForProgress,
@@ -9,6 +10,7 @@ import {
   progressForActiveStep,
   rangeProgress,
   smoothstep,
+  stableFixedControlTop,
   storyEntranceProgressFromGeometry,
   storyPresentationProgress,
   storyProgressFromGeometry,
@@ -55,6 +57,15 @@ describe("landing scroll progress", () => {
     expect(progressForActiveStep(2, 5)).toBe(0.5);
     expect(progressForActiveStep(3, 5)).toBe(0.75);
     expect(progressForActiveStep(4, 5)).toBe(1);
+  });
+
+  it("uses one 2.5 second duration for progress-node navigation", () => {
+    expect(PROGRESS_NAVIGATION_DURATION_MS).toBe(2500);
+  });
+
+  it("keeps fixed progress geometry independent of visual viewport translation", () => {
+    expect(stableFixedControlTop(852, 65, 0)).toBe(787);
+    expect(stableFixedControlTop(852, 65, 12)).toBe(775);
   });
 
   it("keeps the latest fully visible action on top of a navigation stack", () => {

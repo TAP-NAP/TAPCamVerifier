@@ -7,6 +7,8 @@ export const LANDING_PRESENTATION_PROGRESS = {
   privacy: 0.9
 } as const;
 
+export const PROGRESS_NAVIGATION_DURATION_MS = 2500;
+
 export function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
@@ -61,6 +63,19 @@ export function progressForActiveStep(activeIndex: number, stepCount: number): n
     return 0;
   }
   return clamp01(activeIndex / (stepCount - 1));
+}
+
+export function stableFixedControlTop(
+  viewportHeight: number,
+  controlHeight: number,
+  bottomOffset: number
+): number {
+  return Math.max(
+    0,
+    Math.max(0, viewportHeight) -
+      Math.max(0, controlHeight) -
+      Math.max(0, bottomOffset)
+  );
 }
 
 export function updateFullyVisibleStack(
