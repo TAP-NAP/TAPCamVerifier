@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { landingCopy, resolveLandingLocale } from "./locale";
+import { landingCopy, landingHeroCopy, resolveLandingLocale } from "./locale";
 
 describe("landing locale", () => {
   it("prefers an explicit saved locale", () => {
@@ -31,5 +31,26 @@ describe("landing locale", () => {
     expect(landingCopy("en", "callout.depth")).toBe("DEPTH DATA");
     expect(landingCopy("en", "callout.camera")).toBe("SPATIAL CAMERA");
     expect(landingCopy("en", "callout.subject")).toBe("SUBJECT");
+  });
+
+  it("keeps the approved Chinese signing message and punctuation", () => {
+    expect(landingCopy("zh", "sign.title")).toBe(
+      "安全，<br />保证创作的真实性。"
+    );
+    expect(landingCopy("zh", "sign.body")).toBe(
+      "我们使用苹果的 App Attest 技术来保证软件的安全性，从而确保每个人的拍摄都可以被验证。"
+    );
+  });
+
+  it("offers every approved Chinese hero phrase combination", () => {
+    const hero = landingHeroCopy("zh");
+
+    expect(hero.lead).toBe("在 AI 时代，记录");
+    expect(hero.phrases).toHaveLength(20);
+    expect(hero.phrases[0]).toBe("我们的生活");
+    expect(hero.phrases).toContain("我们的瞬间");
+    expect(hero.phrases).toContain("真实的生活");
+    expect(hero.phrases).toContain("不可篡改的新闻");
+    expect(hero.phrases).toContain("可验的瞬间");
   });
 });

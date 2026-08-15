@@ -23,6 +23,14 @@ export function smoothstep(value: number): number {
   return clamped * clamped * (3 - 2 * clamped);
 }
 
+export function captureStageOpacity(progress: number): number {
+  const enter = smoothstep(
+    rangeProgress(progress, 0, LANDING_PRESENTATION_PROGRESS.capture)
+  );
+  const exit = smoothstep(rangeProgress(progress, 0.26, 0.38));
+  return enter * (1 - exit);
+}
+
 export function landingStageForProgress(progress: number): LandingStage {
   const normalized = clamp01(progress);
   if (normalized < 0.34) {

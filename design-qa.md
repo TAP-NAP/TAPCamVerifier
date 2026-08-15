@@ -73,3 +73,45 @@ Fixes: moved the particle canvas to a fixed full-viewport layer, increased fluct
 - [P3] Validate the final loaded workbench with additional real signed TAPCam photo and TAP Video samples across very wide and very tall aspect ratios.
 
 final result: passed
+
+---
+
+# TAPCam hero scramble design QA
+
+## Evidence
+
+- Source visual truth: `/Users/harold/.codex/generated_images/01a006cc-6e53-7df1-a56f-fec4ef3f3564/exec-11ac75ca-6341-4877-9a51-8af86366afdf.png`
+- Implementation screenshot: `/Users/harold/.codex/worktrees/eb49/TAPCamVerifier/implementation-hero.png`
+- Mobile implementation screenshot: `/Users/harold/.codex/worktrees/eb49/TAPCamVerifier/implementation-hero-mobile.png`
+- Side-by-side comparison: `/Users/harold/.codex/worktrees/eb49/TAPCamVerifier/design-qa-comparison.png`
+- Desktop viewport and pixels: `1438 x 1094` CSS px at density 1; source and implementation are both `1438 x 1094` pixels.
+- Mobile viewport and pixels: `390 x 844` CSS px at density 1; implementation is `390 x 844` pixels.
+- State: Chinese locale, intro route, initial resolved phrase captured immediately after a fresh page load.
+
+## Findings
+
+- No actionable P0, P1, or P2 differences remain.
+- Fonts and typography: the implementation preserves the existing Inter / PingFang / system fallback stack, heavy display weight, compact line height, and monospace technical accents. The selected ImageGen result is an illustrative font reference rather than a distributable font source; the implementation keeps the product's real type system while matching its hierarchy.
+- Spacing and layout rhythm: the headline width, two-line desktop composition, lower-left alignment, variable-copy slot, body-copy offset, and bottom progress rail match the selected direction. The desktop page has no horizontal overflow (`bodyScrollWidth = 1438`).
+- Colors and tokens: black, paper white, lime, coral, and cobalt continue to use the existing TAPCam CSS tokens. The variable phrase and scramble glyphs use the existing lime token.
+- Image quality and asset fidelity: the existing TAPCam logo asset is preserved. The selected direction contains no new raster imagery, illustration, or icon asset that needs replacement.
+- Copy and content: the user annotations supersede the selected visual for the headline treatment. The fixed Chinese line is `在 AI 时代，记录`; the cycle contains all 20 combinations of `我们的 / 真实的 / 不可篡改的 / 可验的` with `生活 / 影像 / 新闻 / 回忆 / 瞬间`; and both square brackets are removed. Existing localized body copy and navigation are intentionally preserved rather than copying the mock's English placeholders.
+- Interaction: a fresh page always begins at `我们的生活`. The locale switch, 4.4-second hold, 760-ms scramble/decode transition, scrambled phrase state, and resolved phrase state were exercised in the browser. The first transition contained scrambled glyph states and subsequently resolved to `真实的新闻`. No browser console errors were present.
+- Responsive behavior: at `390 x 844`, the fixed lead breaks at the intended semantic boundary, the lime variable phrase remains on one line, and `bodyScrollWidth` equals the viewport width.
+
+## Comparison history
+
+1. First same-size comparison found a P2 hierarchy mismatch: the Chinese headline was too small and sat lower than the selected visual. The hero copy width increased from `1060px` to `1120px`, the heading width increased from `1000px` to `1120px`, and the Chinese display size increased to `clamp(3rem, 7.5vw, 7.4rem)`.
+2. The next desktop comparison removed the scale mismatch. Mobile capture then found a P2 orphaned final character in the fixed lead. The lead was split at the semantic boundary between `在 AI 时代，` and `记录下我们` for narrow viewports.
+3. Browser annotations then changed the fixed phrase to `记录`, added `我们的` as the first descriptor, removed the brackets, changed the variable phrase to lime, and doubled the resolved hold interval from 2.2 to 4.4 seconds.
+4. Final desktop and mobile captures verify the annotated direction, including the deterministic `我们的生活` first frame, with no actionable P0/P1/P2 differences or overflow.
+
+## Focused comparison
+
+A separate crop was not required: the normalized `1438 x 1094` side-by-side image keeps the full hero headline, glyph treatment, navigation, body copy, and progress rail readable at the same scale. The mobile screenshot separately verifies the only responsive typography risk.
+
+## Follow-up polish
+
+- P3: the exact random glyph shown at any instant intentionally varies from the static concept frame; this is the behavior being designed, not fidelity drift.
+
+final result: passed

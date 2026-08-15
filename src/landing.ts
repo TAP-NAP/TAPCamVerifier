@@ -16,10 +16,16 @@ import {
 import {
   getInitialLandingLocale,
   landingCopy,
+  landingHeroCopy,
   saveLandingLocale,
   type LandingCopyKey,
   type LandingLocale
 } from "./landing/locale";
+import {
+  HERO_SCRAMBLE_HOLD_MS,
+  heroScrambleFrame,
+  type HeroScrambleGlyph
+} from "./landing/heroScramble";
 import type { LandingScene } from "./landingScene";
 import { renderTapCamTopbar } from "./ui/topbar";
 
@@ -85,7 +91,20 @@ landing.innerHTML = `
     </div>
     <div class="hero-copy">
       <p class="hero-kicker">VERIFIABLE CAPTURE / SPATIAL MEDIA</p>
-      <h1 id="landing-title" data-copy-html="hero.title">让媒体带着<br />拍摄凭证离开相机。</h1>
+      <h1 id="landing-title">
+        <span class="hero-title__accessible visually-hidden" data-hero-accessible>
+          在 AI 时代，记录我们的生活
+        </span>
+        <span class="hero-title__visual" aria-hidden="true">
+          <span class="hero-title__lead" data-hero-lead>
+            <span class="hero-title__lead-part" data-hero-lead-primary>在 AI 时代，</span>
+            <span class="hero-title__lead-part" data-hero-lead-secondary>记录</span>
+          </span>
+          <span class="hero-title__decode">
+            <span class="hero-title__value" data-hero-value>我们的生活</span>
+          </span>
+        </span>
+      </h1>
       <p data-copy="hero.body">
         媒体一旦离开拍摄设备，来源、完整性与空间上下文往往无法一起核验。TAPCam 将媒体内容、
         深度数据和由 App Attest 支持的采集凭证绑定在同一次捕获中，让原始文件仍能被独立检查。
@@ -138,18 +157,18 @@ landing.innerHTML = `
           <p data-copy="capture.body">
             TAPCam 不仅仅是一台相机，更是一台空间相机。我们利用此技术来记录被拍摄的照片的环境。从而确保我们所拍摄的内容是取自一个真实场景。
           </p>
-          <p class="chapter-note">DEEPTH PHOTO &lt;- SPATIAL CAM &lt;- REAL WORLD</p>
+          <p class="chapter-note">DEPTH PHOTO &lt;- SPATIAL CAM &lt;- REAL WORLD</p>
         </div>
       </article>
 
       <article class="story-chapter story-chapter--sign" id="bind-sign" data-chapter="sign">
         <div class="chapter-copy chapter-copy--right">
           <p class="chapter-number">02 / BIND &amp; SIGN</p>
-          <h2 data-copy-html="sign.title">数据包，<br />在离开相机前被绑定。</h2>
+          <h2 data-copy-html="sign.title">安全，<br />保证创作的真实性。</h2>
           <p data-copy="sign.body">
-            媒体、深度、清单与证明材料依次汇合；内容绑定与签名把这些资源固定在同一次捕获中。
+            我们使用苹果的 App Attest 技术来保证软件的安全性，从而确保每个人的拍摄都可以被验证。
           </p>
-          <p class="chapter-note">MEDIA · DEPTH · MANIFEST · APP ATTEST</p>
+          <p class="chapter-note">MEDIA · DEPTH · ATTESTATION · SIGNATURE</p>
         </div>
       </article>
 
@@ -250,6 +269,11 @@ const sceneCalloutLabelSizes = new Map<SceneCalloutName, { width: number; height
 const sceneCalloutDirections = new Map<SceneCalloutName, CalloutDirection>();
 const languageButton = document.querySelector<HTMLButtonElement>("[data-language-toggle]");
 const topNavigation = document.querySelector<HTMLElement>("[data-top-navigation]");
+const heroLead = document.querySelector<HTMLElement>("[data-hero-lead]");
+const heroLeadPrimary = document.querySelector<HTMLElement>("[data-hero-lead-primary]");
+const heroLeadSecondary = document.querySelector<HTMLElement>("[data-hero-lead-secondary]");
+const heroValue = document.querySelector<HTMLElement>("[data-hero-value]");
+const heroAccessible = document.querySelector<HTMLElement>("[data-hero-accessible]");
 
 if (
   !story ||
@@ -264,7 +288,12 @@ if (
   !pageStatus ||
   chapterCopies.length !== 3 ||
   !languageButton ||
-  !topNavigation
+  !topNavigation ||
+  !heroLead ||
+  !heroLeadPrimary ||
+  !heroLeadSecondary ||
+  !heroValue ||
+  !heroAccessible
 ) {
   throw new Error("Landing story did not mount.");
 }
@@ -297,6 +326,33 @@ const pageStageAnnouncements: Record<LandingLocale, Record<LandingPageStage, str
 };
 
 let currentPageStage: LandingPageStage = "intro";
+let resetHeroScramble: (() => void) | undefined;
+
+function renderHeroPhrase(glyphs: readonly HeroScrambleGlyph[]): void {
+  const fragment = document.createDocumentFragment();
+  for (const glyph of glyphs) {
+    const character = document.createElement("span");
+    character.className = "hero-title__glyph";
+    character.dataset.state = glyph.state;
+    character.textContent = glyph.character;
+    fragment.append(character);
+  }
+  heroValue!.replaceChildren(fragment);
+}
+
+function renderResolvedHeroPhrase(phrase: string): void {
+  renderHeroPhrase(
+    Array.from(phrase, (character) => ({
+      character,
+      state: "resolved" as const
+    }))
+  );
+  heroValue!.dataset.scrambling = "false";
+}
+
+function setHeroAccessibleCopy(lead: string, phrase: string): void {
+  heroAccessible!.textContent = currentLocale === "zh" ? `${lead}${phrase}` : `${lead} ${phrase}`;
+}
 
 function applyLandingLocale(locale: LandingLocale): void {
   currentLocale = locale;
@@ -310,6 +366,13 @@ function applyLandingLocale(locale: LandingLocale): void {
   document.querySelectorAll<HTMLElement>("[data-copy-html]").forEach((element) => {
     element.innerHTML = landingCopy(locale, element.dataset.copyHtml as LandingCopyKey);
   });
+
+  const localizedHero = landingHeroCopy(locale);
+  heroLeadPrimary!.textContent = localizedHero.leadParts[0];
+  heroLeadSecondary!.textContent = localizedHero.leadParts[1];
+  renderResolvedHeroPhrase(localizedHero.phrases[0]);
+  setHeroAccessibleCopy(localizedHero.lead, localizedHero.phrases[0]);
+  resetHeroScramble?.();
 
   sceneCalloutLabelSizes.clear();
   sceneCalloutDirections.clear();
@@ -651,6 +714,68 @@ let lastActionScrollY = window.scrollY;
 let actionScrollDirection: ScrollDirection = 0;
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+let heroPhraseIndex = 0;
+let heroCycleTimer = 0;
+let heroAnimationFrame = 0;
+let heroAnimationGeneration = 0;
+
+function stopHeroScramble(): void {
+  window.clearTimeout(heroCycleTimer);
+  window.cancelAnimationFrame(heroAnimationFrame);
+  heroCycleTimer = 0;
+  heroAnimationFrame = 0;
+  heroAnimationGeneration += 1;
+}
+
+function scheduleHeroScramble(): void {
+  stopHeroScramble();
+  const localizedHero = landingHeroCopy(currentLocale);
+  const currentPhrase = localizedHero.phrases[heroPhraseIndex] ?? localizedHero.phrases[0];
+  renderResolvedHeroPhrase(currentPhrase);
+  setHeroAccessibleCopy(localizedHero.lead, currentPhrase);
+
+  if (reducedMotion.matches || document.hidden || localizedHero.phrases.length < 2) {
+    return;
+  }
+
+  const generation = heroAnimationGeneration;
+  heroCycleTimer = window.setTimeout(() => {
+    const nextIndex = (heroPhraseIndex + 7) % localizedHero.phrases.length;
+    const nextPhrase = localizedHero.phrases[nextIndex];
+    const startedAt = performance.now();
+    const duration = 760;
+
+    const animate = (timestamp: number): void => {
+      if (generation !== heroAnimationGeneration) {
+        return;
+      }
+
+      const progress = Math.min(1, (timestamp - startedAt) / duration);
+      heroValue!.dataset.scrambling = progress < 1 ? "true" : "false";
+      renderHeroPhrase(heroScrambleFrame(currentPhrase, nextPhrase, progress));
+
+      if (progress < 1) {
+        heroAnimationFrame = window.requestAnimationFrame(animate);
+        return;
+      }
+
+      heroPhraseIndex = nextIndex;
+      setHeroAccessibleCopy(localizedHero.lead, nextPhrase);
+      scheduleHeroScramble();
+    };
+
+    heroAnimationFrame = window.requestAnimationFrame(animate);
+  }, HERO_SCRAMBLE_HOLD_MS);
+}
+
+resetHeroScramble = () => {
+  heroPhraseIndex = 0;
+  scheduleHeroScramble();
+};
+
+scheduleHeroScramble();
+reducedMotion.addEventListener("change", scheduleHeroScramble);
 const CHAPTER_PROGRESS_GAP_PX = 12;
 let layoutViewportWidth = window.innerWidth;
 let layoutViewportHeight = getStableViewportHeight();
@@ -1040,6 +1165,7 @@ window.addEventListener(
 );
 document.addEventListener("visibilitychange", () => {
   scene?.setActive(storyIsVisible && !document.hidden);
+  scheduleHeroScramble();
 });
 canvas.addEventListener("tapcam:webgl-unavailable", () => {
   fallback.hidden = false;
@@ -1057,6 +1183,7 @@ canvas.addEventListener("tapcam:callouts", (event) => {
 });
 window.addEventListener("pagehide", (event) => {
   cancelDirectionalSnap();
+  stopHeroScramble();
   if (event.persisted) {
     scene?.setActive(false);
     return;

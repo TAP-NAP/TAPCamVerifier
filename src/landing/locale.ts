@@ -1,5 +1,11 @@
 export type LandingLocale = "zh" | "en";
 
+export type LandingHeroCopy = {
+  lead: string;
+  leadParts: readonly [string, string];
+  phrases: readonly string[];
+};
+
 export type LandingCopyKey =
   | "skip"
   | "nav.verifier"
@@ -28,13 +34,37 @@ export type LandingCopyKey =
 
 const LANDING_LANGUAGE_STORAGE_KEY = "tapcam.landing.lang";
 
+const zhHeroPhrases = ["我们的", "真实的", "不可篡改的", "可验的"].flatMap((descriptor) =>
+  ["生活", "影像", "新闻", "回忆", "瞬间"].map((subject) => `${descriptor}${subject}`)
+);
+
+const heroCopy: Record<LandingLocale, LandingHeroCopy> = {
+  zh: {
+    lead: "在 AI 时代，记录",
+    leadParts: ["在 AI 时代，", "记录"],
+    phrases: zhHeroPhrases
+  },
+  en: {
+    lead: "In the age of AI, record",
+    leadParts: ["In the age of AI,", "record"],
+    phrases: [
+      "our life",
+      "real life",
+      "unaltered images",
+      "verifiable news",
+      "real memories",
+      "verifiable moments"
+    ]
+  }
+};
+
 const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
   zh: {
     skip: "跳到产品原理",
     "nav.verifier": "验证器",
     "nav.docs": "文档",
     "nav.download": "下载",
-    "hero.title": "让媒体带着<br />拍摄凭证离开相机。",
+    "hero.title": "在 AI 时代，记录<br />我们的生活",
     "hero.body":
       "媒体一旦离开拍摄设备，来源、完整性与空间上下文往往无法一起核验。TAPCam 将媒体内容、深度数据和由 App Attest 支持的采集凭证绑定在同一次捕获中，让原始文件仍能被独立检查。",
     "capture.title": "捕捉色彩，<br />记录纵深。",
@@ -44,9 +74,9 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "callout.depth": "深度数据",
     "callout.camera": "空间相机",
     "callout.subject": "被摄对象",
-    "sign.title": "数据包，<br />在离开相机前被绑定。",
+    "sign.title": "安全，<br />保证创作的真实性。",
     "sign.body":
-      "媒体、深度、清单与证明材料依次汇合；内容绑定与签名把这些资源固定在同一次捕获中。",
+      "我们使用苹果的 App Attest 技术来保证软件的安全性，从而确保每个人的拍摄都可以被验证。",
     "privacy.title": "验证属于每个人，<br />隐私仍属于你。",
     "privacy.body":
       "浏览器先执行本地内容绑定检查，再把证明材料交给明确的服务器验证边界。去中心化验证与零知识隐私证明是下一阶段研发方向。",
@@ -64,7 +94,7 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "nav.verifier": "VERIFIER",
     "nav.docs": "DOCS",
     "nav.download": "DOWNLOAD",
-    "hero.title": "Let media leave the camera<br />with its capture proof.",
+    "hero.title": "In the age of AI, record<br />our life",
     "hero.body":
       "Once media leaves the capture device, its origin, integrity, and spatial context rarely remain verifiable together. TAPCam binds media, depth data, and App Attest-backed capture evidence in one capture so the original file can still be independently inspected.",
     "capture.title": "Capture color. <br />Record depth.",
@@ -125,4 +155,8 @@ export function saveLandingLocale(locale: LandingLocale): void {
 
 export function landingCopy(locale: LandingLocale, key: LandingCopyKey): string {
   return copy[locale][key];
+}
+
+export function landingHeroCopy(locale: LandingLocale): LandingHeroCopy {
+  return heroCopy[locale];
 }
