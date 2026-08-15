@@ -232,7 +232,7 @@ async function loadVerifierWasm(): Promise<TapcamVerifierExports> {
 }
 
 async function instantiateVerifierWasm(): Promise<TapcamVerifierExports> {
-  const wasmUrl = new URL(`${import.meta.env.BASE_URL}wasm/tapcam_verifier_wasm.wasm`, window.location.href);
+  const wasmUrl = new URL("../wasm/tapcam_verifier_wasm.wasm", window.location.href);
   const response = await fetch(wasmUrl);
 
   if (!response.ok) {

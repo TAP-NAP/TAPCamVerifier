@@ -1,59 +1,96 @@
-# 3D point-cloud visual QA
+# TAPCam Landing Design QA
 
-- Date: 2026-08-13
-- Visual source: `/Users/harold/.codex/generated_images/019ffb25-50d7-7361-8291-65d7b278a4ad/exec-6a7fec36-9aff-4a5d-bcc5-7a9d60d6b333.png`
-- Source dimensions: 853 x 1844 px
-- Source role: material, particle, and cool/warm energy reference; not a one-to-one page-layout target
-- Test fixture: `/Users/harold/TAPCamVerifier/test/tap-depth-photo.HEIC`
-- Implementation screenshots:
-  - `/private/tmp/tapcam-verifier-design-qa/geometry-head-on.png`
-  - `/private/tmp/tapcam-verifier-design-qa/geometry-hover.png`
-  - `/private/tmp/tapcam-verifier-design-qa/geometry-pulse.png`
-  - `/private/tmp/tapcam-verifier-design-qa/geometry-rotated.png`
-  - `/private/tmp/tapcam-verifier-design-qa-in-place-roll/baseline.png`
-  - `/private/tmp/tapcam-verifier-design-qa-in-place-roll/roll-a.png`
-  - `/private/tmp/tapcam-verifier-design-qa-in-place-roll/roll-b.png`
-  - `/private/tmp/tapcam-verifier-design-qa-efficient-in-place-roll/baseline.png`
-  - `/private/tmp/tapcam-verifier-design-qa-efficient-in-place-roll/roll-a.png`
-  - `/private/tmp/tapcam-verifier-design-qa-efficient-in-place-roll/roll-b.png`
-- Side-by-side comparison: `/private/tmp/tapcam-verifier-design-qa/design-comparison.png`
-- Focused hover-state comparison: `/private/tmp/tapcam-verifier-design-qa-in-place-roll/focused-comparison.png`
-- Final efficient hover-state comparison: `/private/tmp/tapcam-verifier-design-qa-efficient-in-place-roll/focused-comparison.png`
-- Browser viewport: 1280 x 720 CSS px
-- Device pixel ratio: 2
-- UI state: locally verified HEIC with 110,592 projected points, sample step 2, metadata-pinhole camera model
+## Comparison setup
 
-## Visual comparison
+- Source visual truth:
+  - `/Users/harold/.codex/generated_images/01a00467-edbd-7381-948f-0db43cc079c5/exec-8c135a64-bdb4-4686-84d5-9955043376e5.png` — 862 × 1824 px.
+  - `/Users/harold/.codex/generated_images/01a00467-edbd-7381-948f-0db43cc079c5/exec-af756c29-44b5-4c97-a56f-36446346c563.png` — 864 × 1821 px.
+  - `/Users/harold/.codex/generated_images/01a00467-edbd-7381-948f-0db43cc079c5/exec-e36852a0-aa4f-42ea-b5a6-8b4d1580bd06.png` — 864 × 1821 px.
+- Rendered implementation: `http://127.0.0.1:4173/` from the production Vite build.
+- Desktop evidence: `Docs/Assets/LandingQA/desktop-{hero,capture,sign,privacy,actions}.jpg`.
+- Mobile evidence: `Docs/Assets/LandingQA/mobile-{hero,capture,sign,privacy,actions}.jpg`.
+- Full-view comparison evidence: `Docs/Assets/LandingQA/reference-comparison.png`.
+- Viewports and normalization:
+  - Desktop: 1440 × 900 CSS px; screenshot output 1440 × 900 px.
+  - Mobile: 390 × 844 CSS px; screenshot output 390 × 844 px.
+  - Browser viewport override produced one output pixel per CSS pixel. The tall source concepts are not same-state full-page specifications, so the user-selected source regions were aspect-fitted without stretching into 700 × 440 cells beside same-size implementation captures. The final contact sheet is 1400 × 1320 px.
+- States: black hero; capture scene; bound-and-signed package; open verification/privacy scene; final Download / Verify / Technology links; mobile equivalents.
 
-- Particle silhouette: passed. The renderer now uses circular, soft-edged splats instead of square point sprites.
-- Planar projection: passed. Initial and reset views use the capture camera origin and look directly through the recovered plane, avoiding the former decorative tilt.
-- Surface continuity: passed. Depth-aware splat sizing closes large gaps in the head-on view while individual particles remain legible after rotation.
-- Color treatment: passed. Neutral image color is retained, and interaction uses a brighter, slightly more saturated version of each particle's own source color. No fixed orange highlight remains.
-- Background and contrast: passed. The existing dark viewer surface continues to separate the cloud from the page chrome.
+## Findings
 
-## Interaction checks
+No actionable P0, P1, or P2 findings remain.
 
-- Pointer hover: passed; affected particle centers remain fixed while each circular splat's internal highlight rotates to create an in-place rolling-bead effect.
-- Pointer click: passed; a short concentric energy pulse expands from the selected point.
-- Pointer drag: passed; OrbitControls rotation remains direct and responsive.
-- Reset view: passed; returns to the calibrated, head-on projection.
-- Touch fallback: passed by code-path inspection; press targets a point and drag remains available.
-- Reduced motion: passed by code-path inspection; the rolling clock and click pulse are suppressed while self-color highlighting remains available.
+- [P3] The camera is a deliberate point-cloud concept model, not a scan-accurate TAPCam hardware mesh.
+  - Location: capture scene in `src/landingScene.ts`.
+  - Evidence: the references use a stylized camera/product object; the implementation uses two explicit point-cloud camera modules because no production camera mesh was supplied.
+  - Impact: the intended stereo-capture relationship is clear, but future marketing work could make the hardware silhouette more proprietary.
+  - Follow-up: replace only the camera modules with an approved GLB/GLTF asset when one exists; retain the current scroll lifecycle and photo/depth layout.
 
-## Runtime checks
+## Required fidelity surfaces
 
-- Browser console warnings/errors: none.
-- Local parsing and depth reconstruction: passed.
-- Motion cost boundary: passed by implementation inspection. Hover changes one shared direction uniform per frame only while active; it performs no per-point JavaScript updates, geometry translation, point-size animation, or GPU vertex trigonometry. This is not a device power-consumption measurement.
-- Remote verification request: unavailable in local preview because the configured verification server is not reachable from the preview origin; this does not affect the local geometry test.
+- Fonts and typography: the implementation preserves the references' oversized Chinese display type, condensed monospace metadata, hard line breaks, and high-contrast hierarchy. Desktop and mobile wraps were inspected; no clipping or orphaned wordmark remains.
+- Spacing and layout rhythm: hero, three long sticky chapters, and the horizontal final links follow the selected order. The desktop comparison keeps the subject right, twin camera modules centered, and photo/depth output left. Mobile collapses only the final link row and keeps all scene labels and copy readable.
+- Colors and tokens: black background is continuous. Warm white, lime, coral, and bright cobalt reproduce the young technical palette; cobalt was raised to `#5e78ff` for small-text contrast. There are no generic rounded cards, glass surfaces, or decorative gradients.
+- Image quality and asset fidelity: the real `launch_logo.png` asset is used for the brand. The point-cloud scene is live WebGL at capped device pixel ratio rather than a raster placeholder. The source concepts provide composition and motion direction rather than a production hardware asset; that intentional limitation is recorded as P3 above.
+- Copy and content: the hero explicitly states the post-capture verification problem and TAPCam's role. Current local checks and the server verification boundary are distinguished from decentralized verification and zero-knowledge privacy proofs, which are labeled R&D/future work.
+- Accessibility and interaction: skip link, semantic headings/links, visible focus treatments, reduced-motion handling, mobile tap targets, WebGL fallback, and context restore paths were checked. The Verify link was activated and reached `/verify/`; the existing file-drop verifier mounted successfully.
+
+## Focused region comparison
+
+Focused evidence was required because the tall source boards mix several states. `reference-comparison.png` places the user's selected exploded/depth regions beside the desktop capture state, and the selected horizontal footer region beside the final action row. Individual desktop and mobile captures were also inspected at readable scale for typography, contrast, and wrapping.
 
 ## Comparison history
 
-1. Baseline: square `PointsMaterial` sprites, fixed pixel size, decorative initial tilt.
-2. Iteration: circular shader splats, robust median-depth sizing, calibrated initial camera, hover lift, click pulse, and drag rotation.
-3. Final tuning: increased controlled overlap, softened particle edge, localized orange energy, and bounded pulse radius.
-4. User color refinement: removed the fixed orange energy color and changed hover to source-color self-illumination.
-5. User motion refinement: removed all hover translation and point-size oscillation; particle centers and geometry now remain fixed while only the internal highlight rotates. Focused before/after captures confirm a localized animated change, and the shader test guards against reintroducing displaced geometry.
-6. Energy refinement: replaced per-vertex sine/cosine work with one shared roll-direction uniform computed once per active frame. The final browser capture preserves the in-place rolling highlight with no console errors.
+### Pass 1 — blocked
+
+Earlier findings from the first browser-rendered inspection:
+
+- P1: near-viewport preloading also activated a hidden 60 fps scene on the hero.
+- P1: the mobile logo lockup could overflow at 320–390 px.
+- P1: sticky minimum height and progress geometry diverged on short viewports.
+- P1: the sign state faded before the seal animation had a readable hold.
+- P1: WebGL restore and bfcache return paths could leave a hidden or disposed scene.
+- P1: the original cobalt token was too dark for small metadata text.
+- P2: the hero described TAPCam but did not state the verification problem directly.
+- P2: the depth plane lacked the selected photo-to-point-cloud expansion cue.
+
+Fixes made:
+
+- Split scene preloading from true viewport activation.
+- Stacked and resized the mobile brand lockup; removed sticky minimum-height drift.
+- Added a completed-signature hold, context restore event, and persisted page lifecycle handling.
+- Raised cobalt to `#5e78ff`, increased the smallest metadata sizes, and added an explicit problem statement.
+- Added a live depth-bloom point cloud that expands from the depth output.
+- Rebalanced scene scale and camera distance independently for desktop and mobile.
+
+Post-fix evidence: all files under `Docs/Assets/LandingQA/`, especially `desktop-capture.jpg`, `desktop-sign.jpg`, `mobile-capture.jpg`, and `mobile-sign.jpg`.
+
+### Pass 2 — passed
+
+The normalized source/implementation contact sheet and focused desktop/mobile captures show no remaining P0/P1/P2 difference. The remaining hardware-model fidelity gap is non-blocking P3 because no approved production mesh exists.
+
+## Primary checks
+
+- Production routes: `/` 200; `/verify/` 200; `/wasm/tapcam_verifier_wasm.wasm` 200 with `application/wasm`.
+- Browser console: no error-level entries on the production landing or verifier routes.
+- Responsive checks: 1440 × 900 and 390 × 844; no horizontal overflow at mobile width.
+- Automated checks: 48 Rust tests and 67 Vitest tests passed; TypeScript and Vite production build passed.
+
+## Implementation checklist
+
+- [x] Black introductory hero with logo and explicit problem/solution copy.
+- [x] Stereo capture composition: outputs left, two capture modules center, subject right.
+- [x] Scroll-driven bind/sign animation with completed signature state.
+- [x] Open verification and privacy/R&D boundaries represented accurately.
+- [x] Horizontal Download / Verify / Technology destinations.
+- [x] Existing verifier isolated at `/verify/` and production WASM path verified.
+
+## Open questions
+
+- Non-blocking: provide an approved TAPCam camera GLB/GLTF later if the marketing scene should match final industrial design rather than the current point-cloud concept.
+
+## Follow-up polish
+
+- Replace the conceptual camera modules when production hardware geometry becomes available.
 
 final result: passed

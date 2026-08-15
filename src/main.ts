@@ -51,14 +51,14 @@ document.documentElement.lang = getLang();
 app.innerHTML = `
   <nav class="navbar" role="navigation" aria-label="Main navigation">
     <div class="navbar-inner">
-      <a class="navbar-brand" href="/" data-nav-brand>
-        <img src="./launch_logo.png" alt="" width="28" height="28" />
+      <a class="navbar-brand" href="../" data-nav-brand>
+        <img src="../launch_logo.png" alt="" width="28" height="28" />
         <span class="navbar-brand-text" data-nav-brand-text>${t("nav.brand")}</span>
       </a>
       <div class="navbar-links">
         <button class="navbar-link" type="button" data-nav-doc>${t("nav.doc")}</button>
         <button class="navbar-link" type="button" data-nav-blog>${t("nav.blog")}</button>
-        <a class="navbar-link navbar-link--active" href="/" data-nav-tool>${t("nav.tool")}</a>
+        <a class="navbar-link navbar-link--active" href="./" data-nav-tool>${t("nav.tool")}</a>
         <a class="navbar-link navbar-link--download" href="https://testflight.apple.com/join/bwcgjzNd" target="_blank" rel="noopener noreferrer" data-nav-download aria-label="${t("nav.downloadAria")}">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span data-nav-download-text>${t("nav.download")}</span>
@@ -262,7 +262,6 @@ function resetToHome(event?: Event): void {
 }
 
 navToolLink!.addEventListener("click", resetToHome);
-document.querySelector<HTMLAnchorElement>("[data-nav-brand]")!.addEventListener("click", resetToHome);
 
 navLangBtn!.addEventListener("click", () => {
   toggleLang();
