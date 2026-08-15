@@ -1180,7 +1180,7 @@ function refreshUI(): void {
   navDocLink!.textContent = topbarLabels.docs;
   navToolLink!.textContent = topbarLabels.verify;
   navDownloadLink!.textContent = topbarLabels.download;
-  navGithubLink!.textContent = topbarLabels.github;
+  navGithubLink!.setAttribute("aria-label", "GitHub");
   navLangBtn!.dataset.locale = getLang();
   navLangBtn!.setAttribute("aria-label", getLang() === "zh" ? "Switch to English" : "切换到中文");
 

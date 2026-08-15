@@ -54,8 +54,9 @@ landing.innerHTML = `
   })}
 
   <div class="scroll-cue" aria-hidden="true">
-    <span data-copy="scrollCue">继续向下探索</span>
-    <i></i>
+    <svg viewBox="0 0 96 24" focusable="false">
+      <path d="M2 2 48 22 94 2" />
+    </svg>
   </div>
 
   <nav class="landing-progress" aria-label="页面章节" data-page-progress>
@@ -201,13 +202,13 @@ landing.innerHTML = `
         <span class="action-index">01</span>
         <span class="action-type">DOWNLOAD</span>
         <strong data-copy="action.download.title">下载 TAPCam</strong>
-        <span data-copy="action.download.body">通过 TestFlight 体验捕获流程</span>
+        <span data-copy="action.download.body">现在参与 TestFlight 进行测试</span>
       </a>
       <a class="action-link action-link--verify" href="./verify/">
         <span class="action-index">02</span>
         <span class="action-type">VERIFY</span>
         <strong data-copy="action.verify.title">打开验证器</strong>
-        <span data-copy="action.verify.body">验证原始 TAPCam 照片与视频</span>
+        <span data-copy="action.verify.body">验证照片与视频是否使用了 TAPCam 进行创作</span>
       </a>
       <a class="action-link action-link--docs" href="https://github.com/TAP-NAP/TAPCamVerifier/blob/main/Docs/VerificationFlow.md" target="_blank" rel="noopener noreferrer">
         <span class="action-index">03</span>
@@ -217,12 +218,7 @@ landing.innerHTML = `
       </a>
     </div>
     <footer class="landing-footer">
-      <div class="footer-brand">
-        <img src="./launch_logo.png" alt="" width="30" height="30" />
-        <strong>TAPCam</strong>
-      </div>
-      <p>VERIFIABLE CAPTURE / RELATIVE SPATIAL MEDIA / PRIVATE PROOFS R&amp;D</p>
-      <a href="https://github.com/TAP-NAP" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <p>Build by Harold with love</p>
     </footer>
   </section>
 `;
