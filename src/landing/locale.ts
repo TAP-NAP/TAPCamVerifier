@@ -17,6 +17,7 @@ export type LandingCopyKey =
   | "sign.body"
   | "privacy.title"
   | "privacy.body"
+  | "privacy.tagsLabel"
   | "action.title"
   | "action.download.title"
   | "action.download.body"
@@ -36,7 +37,7 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "nav.download": "下载",
     "hero.title": "让媒体带着<br />拍摄凭证离开相机。",
     "hero.body":
-      "媒体一旦离开拍摄设备，来源、完整性与空间上下文往往无法一起核验。TAPCam 将媒体内容、深度数据和由 App Attest 支持的采集凭证绑定在同一次捕获中，让原始文件仍能被独立检查。",
+      "AI 时代下，摄影还有价值吗？<br />在充斥着 AI 内容的当下，我们如何让真实的内容被看见？<br />正如摄影不会替代绘画，而 AI 生图也无法取代摄影。<br />TAPCam 就是这样一款帮助你记录的摄影软件，让你的感受、表达在 AI 时代也能被看见。",
     "capture.title": "捕捉色彩，<br />记录纵深。",
     "capture.body":
       "TAPCam 不仅仅是一台相机，更是一台空间相机。我们利用此技术来记录被拍摄的照片的环境。从而确保我们所拍摄的内容是取自一个真实场景。",
@@ -44,12 +45,13 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "callout.depth": "深度数据",
     "callout.camera": "空间相机",
     "callout.subject": "被摄对象",
-    "sign.title": "数据包，<br />在离开相机前被绑定。",
+    "sign.title": "安全，<br />保证创作的真实性。",
     "sign.body":
-      "媒体、深度、清单与证明材料依次汇合；内容绑定与签名把这些资源固定在同一次捕获中。",
-    "privacy.title": "验证属于每个人，<br />隐私仍属于你。",
+      "我们使用苹果的 App Attest 技术来保证软件的安全性，从而确保每个人的拍摄都可以被验证。",
+    "privacy.title": "证明及验证，<br />是基本权利。",
     "privacy.body":
-      "浏览器先执行本地内容绑定检查，再把证明材料交给明确的服务器验证边界。去中心化验证与零知识隐私证明是下一阶段研发方向。",
+      "软件完全开源（在正式版上架后），因为我们认为，在 AI 时代下，证明自己是作者本人是一项基本权利。同时，我们欢迎更多人加入来进行维护。未来会引入 ZKP 技术，以提供更好的匿名性。",
+    "privacy.tagsLabel": "验证原则与后续能力",
     "action.title": "拍摄、验证，或者继续读下去。",
     "action.download.title": "下载 TAPCam",
     "action.download.body": "通过 TestFlight 体验捕获流程",
@@ -66,7 +68,7 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "nav.download": "DOWNLOAD",
     "hero.title": "Let media leave the camera<br />with its capture proof.",
     "hero.body":
-      "Once media leaves the capture device, its origin, integrity, and spatial context rarely remain verifiable together. TAPCam binds media, depth data, and App Attest-backed capture evidence in one capture so the original file can still be independently inspected.",
+      "Does photography still matter in the age of AI?<br />In a world saturated with AI-generated content, how can authentic work still be seen?<br />Photography did not replace painting, and AI-generated images cannot replace photography.<br />TAPCam is a photography app built to help you record, so your feelings and expression can still be seen in the age of AI.",
     "capture.title": "Capture color. <br />Record depth.",
     "capture.body":
       "TAPCam is more than a camera—it is a spatial camera. We use this technology to record the environment around a captured photo, helping ensure that the content comes from a real scene.",
@@ -74,12 +76,13 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "callout.depth": "DEPTH DATA",
     "callout.camera": "SPATIAL CAMERA",
     "callout.subject": "SUBJECT",
-    "sign.title": "The package is bound<br />before it leaves the camera.",
+    "sign.title": "Security ensures <br />creative authenticity.",
     "sign.body":
-      "Media, depth, manifest, and proof material converge in sequence. Content binding and signing fix those resources to the same capture.",
-    "privacy.title": "Verification belongs to everyone.<br />Privacy stays yours.",
+      "We use Apple's App Attest technology to secure the software so every capture can be verified.",
+    "privacy.title": "Proof and verification <br />are fundamental rights.",
     "privacy.body":
-      "The browser performs local content-binding checks before proof material crosses a clearly defined server-verification boundary. Decentralized verification and zero-knowledge privacy proofs remain next-stage R&D.",
+      "The software will be fully open source after the official release because we believe that, in the AI era, proving that you are the original author is a fundamental right. We welcome more people to help maintain it, and plan to introduce ZKP technology to provide stronger anonymity.",
+    "privacy.tagsLabel": "Verification principles and upcoming capability",
     "action.title": "Capture, verify, or keep reading.",
     "action.download.title": "Download TAPCam",
     "action.download.body": "Experience the capture flow through TestFlight",
