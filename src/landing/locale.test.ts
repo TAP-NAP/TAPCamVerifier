@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { landingCopy, resolveLandingLocale } from "./locale";
+import { landingCopy, landingHeroCopy, resolveLandingLocale } from "./locale";
 
 describe("landing locale", () => {
   it("prefers an explicit saved locale", () => {
@@ -67,5 +67,17 @@ describe("landing locale", () => {
     expect(landingCopy("en", "sign.body")).toBe(
       "We use Apple's App Attest technology to secure the software so every capture can be verified."
     );
+  });
+
+  it("offers every approved Chinese hero phrase combination", () => {
+    const hero = landingHeroCopy("zh");
+
+    expect(hero.lead).toBe("在 AI 时代，记录");
+    expect(hero.phrases).toHaveLength(20);
+    expect(hero.phrases[0]).toBe("我们的生活");
+    expect(hero.phrases).toContain("我们的瞬间");
+    expect(hero.phrases).toContain("真实的生活");
+    expect(hero.phrases).toContain("不可篡改的新闻");
+    expect(hero.phrases).toContain("可验的瞬间");
   });
 });

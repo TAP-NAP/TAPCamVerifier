@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import {
   LANDING_PRESENTATION_PROGRESS,
+  captureStageOpacity,
   rangeProgress,
   smoothstep
 } from "./landing/progress";
@@ -408,11 +409,13 @@ export class LandingScene {
   }
 
   private updateScene(progress: number, time: number): void {
-    const captureExit = smoothstep(rangeProgress(progress, 0.26, 0.38));
     const signEnter = smoothstep(rangeProgress(progress, 0.27, 0.4));
     const signExit = smoothstep(rangeProgress(progress, 0.64, 0.74));
     const privacyEnter = smoothstep(rangeProgress(progress, 0.62, 0.75));
-    setGroupOpacity(this.captureGroup, 1 - captureExit);
+    // Keep capture objects hidden while the sticky stage is still travelling
+    // into the viewport. Once pinned, reveal them through the capture timeline
+    // so mobile Safari does not show a completed scene sliding up the screen.
+    setGroupOpacity(this.captureGroup, captureStageOpacity(progress));
     setGroupOpacity(this.signingGroup, signEnter * (1 - signExit));
     setGroupOpacity(this.privacyGroup, privacyEnter);
 

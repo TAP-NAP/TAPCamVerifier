@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  LANDING_PRESENTATION_PROGRESS,
+  captureStageOpacity,
   directionalSnapTarget,
   landingStageForProgress,
   pageProgressForStoryProgress,
@@ -31,6 +33,13 @@ describe("landing scroll progress", () => {
     expect(smoothstep(0.5)).toBeCloseTo(0.5);
     expect(rangeProgress(0, 0.2, 0.6)).toBe(0);
     expect(rangeProgress(1, 0.2, 0.6)).toBe(1);
+  });
+
+  it("reveals capture objects only after the story stage is pinned", () => {
+    expect(captureStageOpacity(0)).toBe(0);
+    expect(captureStageOpacity(0.05)).toBeCloseTo(0.5);
+    expect(captureStageOpacity(LANDING_PRESENTATION_PROGRESS.capture)).toBe(1);
+    expect(captureStageOpacity(0.38)).toBe(0);
   });
 
   it("aligns story chapters to the five-step page rail", () => {

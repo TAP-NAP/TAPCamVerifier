@@ -1,5 +1,11 @@
 export type LandingLocale = "zh" | "en";
 
+export type LandingHeroCopy = {
+  lead: string;
+  leadParts: readonly [string, string];
+  phrases: readonly string[];
+};
+
 export type LandingCopyKey =
   | "skip"
   | "nav.verifier"
@@ -29,13 +35,37 @@ export type LandingCopyKey =
 
 const LANDING_LANGUAGE_STORAGE_KEY = "tapcam.landing.lang";
 
+const zhHeroPhrases = ["我们的", "真实的", "不可篡改的", "可验的"].flatMap((descriptor) =>
+  ["生活", "影像", "新闻", "回忆", "瞬间"].map((subject) => `${descriptor}${subject}`)
+);
+
+const heroCopy: Record<LandingLocale, LandingHeroCopy> = {
+  zh: {
+    lead: "在 AI 时代，记录",
+    leadParts: ["在 AI 时代，", "记录"],
+    phrases: zhHeroPhrases
+  },
+  en: {
+    lead: "In the age of AI, record",
+    leadParts: ["In the age of AI,", "record"],
+    phrases: [
+      "our life",
+      "real life",
+      "unaltered images",
+      "verifiable news",
+      "real memories",
+      "verifiable moments"
+    ]
+  }
+};
+
 const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
   zh: {
     skip: "跳到产品原理",
     "nav.verifier": "验证器",
     "nav.docs": "文档",
     "nav.download": "下载",
-    "hero.title": "让媒体带着<br />拍摄凭证离开相机。",
+    "hero.title": "在 AI 时代，记录<br />我们的生活",
     "hero.body":
       "AI 时代下，摄影还有价值吗？<br />在充斥着 AI 内容的当下，我们如何让真实的内容被看见？<br />正如摄影不会替代绘画，而 AI 生图也无法取代摄影。<br />TAPCam 就是这样一款帮助你记录的摄影软件，让你的感受、表达在 AI 时代也能被看见。",
     "capture.title": "捕捉色彩，<br />记录纵深。",
@@ -66,7 +96,7 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "nav.verifier": "VERIFIER",
     "nav.docs": "DOCS",
     "nav.download": "DOWNLOAD",
-    "hero.title": "Let media leave the camera<br />with its capture proof.",
+    "hero.title": "In the age of AI, record<br />our life",
     "hero.body":
       "Does photography still matter in the age of AI?<br />In a world saturated with AI-generated content, how can authentic work still be seen?<br />Photography did not replace painting, and AI-generated images cannot replace photography.<br />TAPCam is a photography app built to help you record, so your feelings and expression can still be seen in the age of AI.",
     "capture.title": "Capture color. <br />Record depth.",
@@ -128,4 +158,8 @@ export function saveLandingLocale(locale: LandingLocale): void {
 
 export function landingCopy(locale: LandingLocale, key: LandingCopyKey): string {
   return copy[locale][key];
+}
+
+export function landingHeroCopy(locale: LandingLocale): LandingHeroCopy {
+  return heroCopy[locale];
 }
