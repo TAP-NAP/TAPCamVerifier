@@ -234,7 +234,7 @@ landing.innerHTML = `
       </a>
     </div>
     <footer class="landing-footer">
-      <p>Build by Harold with love</p>
+      <p>Built by Harold with love</p>
     </footer>
   </section>
 `;
