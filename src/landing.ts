@@ -9,6 +9,8 @@ import {
   landingStageForProgress,
   LANDING_PANEL_TIMELINE,
   LANDING_PRESENTATION_PROGRESS,
+  mobileCapturePanelContentOpacity,
+  mobileCapturePanelLiftProgress,
   MOBILE_CAPTURE_PANEL_ENTRANCE,
   privacyStageOpacity,
   presentationTopForCopy,
@@ -55,17 +57,17 @@ landing.innerHTML = `
   <a class="skip-link" href="#capture-story" data-copy="skip">跳到产品原理</a>
 
   ${renderTapCamTopbar({
-    assetBase: "./",
-    homeHref: "#intro",
-    verifyHref: "./verify/",
-    locale: currentLocale,
-    navAriaLabel: currentLocale === "zh" ? "TAPCam 主导航" : "TAPCam navigation",
-    copyKeys: {
-      verify: "nav.verifier",
-      docs: "nav.docs",
-      download: "nav.download"
-    }
-  })}
+  assetBase: "./",
+  homeHref: "#intro",
+  verifyHref: "./verify/",
+  locale: currentLocale,
+  navAriaLabel: currentLocale === "zh" ? "TAPCam 主导航" : "TAPCam navigation",
+  copyKeys: {
+    verify: "nav.verifier",
+    docs: "nav.docs",
+    download: "nav.download"
+  }
+})}
 
   <nav class="landing-progress" aria-label="页面章节" data-page-progress>
     <span class="landing-progress__rail" aria-hidden="true"><i data-page-progress-line></i></span>
@@ -100,7 +102,7 @@ landing.innerHTML = `
       <span class="hero-wordmark" aria-label="TAPCam">TAPCam</span>
     </div>
     <div class="hero-copy">
-      <p class="hero-kicker">SPATIAL MEDIA</p>
+      <p class="hero-kicker">VERIFIABLE CAPTURE / SPATIAL MEDIA</p>
       <h1 id="landing-title">
         <span class="hero-title__accessible visually-hidden" data-hero-accessible>
           在 AI 时代，记录我们的生活
@@ -441,7 +443,7 @@ function applyLandingLocale(locale: LandingLocale): void {
   currentLocale = locale;
   landing!.dataset.locale = locale;
   document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
-  document.title = "type cam";
+  document.title = "TAPCam";
 
   document.querySelectorAll<HTMLElement>("[data-copy]").forEach((element) => {
     element.textContent = landingCopy(locale, element.dataset.copy as LandingCopyKey);
@@ -701,17 +703,17 @@ function layoutSceneCallouts(
     rgb: projectedBounds.rgb
       ? projectedRectToPixels(projectedBounds.rgb)
       : rectAround(
-          positions.rgb,
-          clampValue(width * 0.09, 54, 160),
-          clampValue(height * 0.06, 42, 100)
-        ),
+        positions.rgb,
+        clampValue(width * 0.09, 54, 160),
+        clampValue(height * 0.06, 42, 100)
+      ),
     depth: projectedBounds.depth
       ? projectedRectToPixels(projectedBounds.depth)
       : rectAround(
-          positions.depth,
-          clampValue(width * 0.09, 54, 160),
-          clampValue(height * 0.06, 42, 100)
-        ),
+        positions.depth,
+        clampValue(width * 0.09, 54, 160),
+        clampValue(height * 0.06, 42, 100)
+      ),
     camera: rectAround(
       positions.camera,
       clampValue(width * 0.06, 35, 105),
@@ -990,12 +992,12 @@ function updateChapterPanelPresentation(
     const copyStyle = window.getComputedStyle(copy);
     const naturalDocumentTop = chapterRect && chapterStyle
       ? chapterNaturalTop(
-          window.scrollY + chapterRect.bottom,
-          Number.parseFloat(chapterStyle.paddingBottom) || 0,
-          getChapterTransitionRunway(),
-          Number.parseFloat(copyStyle.marginBottom) || 0,
-          copy.offsetHeight
-        )
+        window.scrollY + chapterRect.bottom,
+        Number.parseFloat(chapterStyle.paddingBottom) || 0,
+        getChapterTransitionRunway(),
+        Number.parseFloat(copyStyle.marginBottom) || 0,
+        copy.offsetHeight
+      )
       : window.scrollY + copy.getBoundingClientRect().top;
     const exitPoint = exitPoints[index] ?? 1;
     const exitOpacity = chapterPanelOpacity(
@@ -1005,25 +1007,35 @@ function updateChapterPanelPresentation(
     );
     const entryRange = entryRanges[index];
     const entryOpacity = index === 0
-      ? mobileViewport
-        ? chapterPanelEntryOpacity(
-            entranceProgress,
-            MOBILE_CAPTURE_PANEL_ENTRANCE.start,
-            MOBILE_CAPTURE_PANEL_ENTRANCE.end,
-            1
-          )
-        : 1
+      ? 1
       : entryRange
         ? chapterPanelEntryOpacity(progress, entryRange[0], entryRange[1], 1)
         : 1;
     const opacity = exitOpacity * entryOpacity;
+
+    const isMobileCaptureEntrance = index === 0 && mobileViewport;
+    const capturePanelLift = isMobileCaptureEntrance
+      ? mobileCapturePanelLiftProgress(entranceProgress)
+      : 1;
+    const contentOpacity = isMobileCaptureEntrance
+      ? mobileCapturePanelContentOpacity(entranceProgress)
+      : 1;
+    const capturePanelOffset = isMobileCaptureEntrance
+      ? (1 - capturePanelLift) *
+      getStableViewportHeight() *
+      MOBILE_CAPTURE_PANEL_ENTRANCE.travelViewportFraction
+      : 0;
+    const panelHasEntered = !isMobileCaptureEntrance || capturePanelLift > 0.001;
 
     const fixedTopValue = `${fixedTop}px`;
     if (copy.style.getPropertyValue("--chapter-copy-fixed-top") !== fixedTopValue) {
       copy.style.setProperty("--chapter-copy-fixed-top", fixedTopValue);
     }
 
-    const shouldFix = naturalDocumentTop - window.scrollY <= fixedTop + 0.5 && opacity > 0.02;
+    const shouldFix = panelHasEntered && opacity > 0.02 && (
+      isMobileCaptureEntrance ||
+      naturalDocumentTop - window.scrollY <= fixedTop + 0.5
+    );
     if (shouldFix && copy.dataset.panelPosition !== "fixed") {
       const naturalRect = copy.getBoundingClientRect();
       copy.style.setProperty("--chapter-copy-fixed-left", `${naturalRect.left}px`);
@@ -1034,10 +1046,18 @@ function updateChapterPanelPresentation(
       copy.style.removeProperty("--chapter-copy-fixed-left");
       copy.style.removeProperty("--chapter-copy-fixed-width");
     }
+    copy.style.setProperty(
+      "--chapter-copy-entry-offset",
+      `${capturePanelOffset.toFixed(2)}px`
+    );
+    copy.style.setProperty(
+      "--chapter-copy-content-opacity",
+      contentOpacity.toFixed(4)
+    );
     copy.style.setProperty("--chapter-copy-opacity", opacity.toFixed(4));
-    copy.dataset.panelState = opacity <= 0.02
+    copy.dataset.panelState = !panelHasEntered || opacity <= 0.02
       ? "hidden"
-      : opacity < 0.98
+      : opacity < 0.98 || contentOpacity < 0.98 || capturePanelLift < 0.98
         ? "fading"
         : "visible";
   });

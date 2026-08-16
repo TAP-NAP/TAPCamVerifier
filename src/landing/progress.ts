@@ -41,8 +41,11 @@ export const LANDING_PANEL_TIMELINE = {
 } as const;
 
 export const MOBILE_CAPTURE_PANEL_ENTRANCE = {
-  start: 0.78,
-  end: 1
+  liftStart: 0.72,
+  liftEnd: 0.9,
+  contentStart: 0.9,
+  contentEnd: 1,
+  travelViewportFraction: 0.22
 } as const;
 
 export function clamp01(value: number): number {
@@ -142,6 +145,30 @@ export function chapterPanelEntryOpacity(
 
   const fadeEnd = entersAt + (settledAt - entersAt) * clamp01(entranceFraction);
   return smoothstep(rangeProgress(progress, entersAt, fadeEnd));
+}
+
+export function mobileCapturePanelLiftProgress(
+  entranceProgress: number
+): number {
+  return smoothstep(
+    rangeProgress(
+      entranceProgress,
+      MOBILE_CAPTURE_PANEL_ENTRANCE.liftStart,
+      MOBILE_CAPTURE_PANEL_ENTRANCE.liftEnd
+    )
+  );
+}
+
+export function mobileCapturePanelContentOpacity(
+  entranceProgress: number
+): number {
+  return smoothstep(
+    rangeProgress(
+      entranceProgress,
+      MOBILE_CAPTURE_PANEL_ENTRANCE.contentStart,
+      MOBILE_CAPTURE_PANEL_ENTRANCE.contentEnd
+    )
+  );
 }
 
 export function landingStageForProgress(progress: number): LandingStage {

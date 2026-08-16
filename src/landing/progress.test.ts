@@ -11,6 +11,8 @@ import {
   chapterPanelOpacity,
   directionalSnapTarget,
   landingStageForProgress,
+  mobileCapturePanelContentOpacity,
+  mobileCapturePanelLiftProgress,
   pageProgressForStoryProgress,
   presentationTopForCopy,
   privacyStageOpacity,
@@ -86,24 +88,17 @@ describe("landing scroll progress", () => {
     expect(privacyStageOpacity(0.68)).toBe(0);
   });
 
-  it("delays the mobile capture panel until the scene preview has settled", () => {
-    expect(MOBILE_CAPTURE_PANEL_ENTRANCE.start).toBeGreaterThan(0.72);
-    expect(
-      chapterPanelEntryOpacity(
-        0.77,
-        MOBILE_CAPTURE_PANEL_ENTRANCE.start,
-        MOBILE_CAPTURE_PANEL_ENTRANCE.end,
-        1
-      )
-    ).toBe(0);
-    expect(
-      chapterPanelEntryOpacity(
-        1,
-        MOBILE_CAPTURE_PANEL_ENTRANCE.start,
-        MOBILE_CAPTURE_PANEL_ENTRANCE.end,
-        1
-      )
-    ).toBe(1);
+  it("pulls the mobile capture panel into place before revealing its labels", () => {
+    expect(MOBILE_CAPTURE_PANEL_ENTRANCE.liftStart).toBe(0.72);
+    expect(MOBILE_CAPTURE_PANEL_ENTRANCE.liftEnd).toBeLessThanOrEqual(
+      MOBILE_CAPTURE_PANEL_ENTRANCE.contentStart
+    );
+    expect(mobileCapturePanelLiftProgress(0.71)).toBe(0);
+    expect(mobileCapturePanelLiftProgress(0.81)).toBeCloseTo(0.5);
+    expect(mobileCapturePanelLiftProgress(0.9)).toBe(1);
+    expect(mobileCapturePanelContentOpacity(0.9)).toBe(0);
+    expect(mobileCapturePanelContentOpacity(0.95)).toBeCloseTo(0.5);
+    expect(mobileCapturePanelContentOpacity(1)).toBe(1);
   });
 
   it("aligns story chapters to the five-step page rail", () => {

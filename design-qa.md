@@ -40,8 +40,6 @@
 
 final result: passed
 
----
-
 ## Comparison target
 
 - Source visual truth: `/Users/harold/.codex/generated_images/01a005a6-465e-7fd0-b598-2d5bd1b6763b/exec-f21130fd-6d9a-4e68-8f65-bfd9cbbbf4e1.png` for the empty state, `/Users/harold/.codex/generated_images/01a005a6-465e-7fd0-b598-2d5bd1b6763b/exec-384c53cc-2486-4666-9c50-34aef6edc531.png` for the loaded workbench, plus the later annotated browser requirements that supersede those images.
@@ -268,3 +266,35 @@ A separate crop was not required: the normalized `1438 x 1094` side-by-side imag
 - P3: the exact random glyph shown at any instant intentionally varies from the static concept frame; this is the behavior being designed, not fidelity drift.
 
 final result: passed
+
+---
+
+# Landing scroll transition round 4 design QA
+
+## Design intent
+
+- `00 → 01` is a three-part scroll transition on mobile: the cover opens and the Capture scene reaches its expected position; the empty Capture copy panel then pulls upward; only after the panel reaches its destination do its labels and body copy fade in.
+- The Capture panel keeps the same whole-panel fade-out behavior used by the other story panels after it is established.
+- `01 → 02` receives a dedicated, longer scroll runway because it carries more simultaneous scene motion. The Sign and Privacy chapter spans are unchanged.
+
+## Implementation evidence
+
+- The mobile Capture scene preview completes at entrance progress `0.72`. Panel lift runs from `0.72` to `0.90`, and panel content fades from `0.90` to `1.00`.
+- The panel shell uses a scroll-linked `translateY` offset of up to `22%` of the stable viewport height. Child content has an independent opacity channel, so the shell is visibly pulled into place without prematurely revealing labels.
+- The Capture chapter span increases from `130svh` to `158svh` on desktop and from `115svh` to `140svh` on mobile. This adds physical scroll distance only before the Sign chapter while geometry-derived chapter anchors continue to drive the animation timeline.
+- Existing baseline captures remain available under `/Users/harold/TAPCamVerifier/artifacts/product-design-audit/2026-08-16-scroll-timing/`, including `11-mobile-after-visual-first.png` and `12-mobile-after-copy.png`.
+
+## Automated validation
+
+- TypeScript typecheck passed.
+- `48` Rust tests and `119` Vitest tests passed.
+- Production build passed.
+- `git diff --check` passed.
+
+## Browser comparison status
+
+- Intended QA viewport: `390 × 844` CSS pixels.
+- The in-app browser's URL policy blocked DOM and screenshot access to the current local preview at `http://127.0.0.1:5173/` after the implementation reload.
+- Because no current same-state implementation screenshots could be captured and combined with the baseline evidence, this round cannot honestly receive a visual pass. Physical iPhone Safari behavior also remains an owner/device acceptance check.
+
+final result: blocked
