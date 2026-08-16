@@ -1,8 +1,11 @@
 import * as THREE from "three";
 import {
   LANDING_PRESENTATION_PROGRESS,
+  LANDING_SCENE_TIMELINE,
   captureStageOpacity,
+  privacyStageOpacity,
   rangeProgress,
+  signStageOpacity,
   smoothstep
 } from "./landing/progress";
 
@@ -19,7 +22,6 @@ const MOBILE_MEDIA_QUERY = "(max-width: 780px)";
 const DESKTOP_MAX_FPS = 60;
 const MOBILE_MAX_FPS = 30;
 const CALLOUT_MAX_FPS = 20;
-const PROGRESS_DAMPING_PER_SECOND = 4.68;
 const SCENE_HORIZONTAL_FILL = 0.94;
 const CAPTURE_DESIGN_WIDTH = 8.3;
 const SIGNING_DESIGN_WIDTH = 5.35;
@@ -198,9 +200,9 @@ export class LandingScene {
     }
 
     this.lastRenderTimeMs = timeMs;
-    const deltaSeconds = Math.min(elapsedMs, 100) / 1000;
-    const progressBlend = 1 - Math.exp(-PROGRESS_DAMPING_PER_SECOND * deltaSeconds);
-    this.renderedProgress += (this.targetProgress - this.renderedProgress) * progressBlend;
+    // Scene, labels, and copy all follow the same scroll clock. Easing lives
+    // inside each phase, so the visual never trails the panel on quick swipes.
+    this.renderedProgress = this.targetProgress;
     this.updateScene(this.renderedProgress, timeMs * 0.001);
     this.renderer.render(this.scene, this.camera);
     this.animationFrame = window.requestAnimationFrame(this.tick);
@@ -408,19 +410,16 @@ export class LandingScene {
   }
 
   private updateScene(progress: number, time: number): void {
-    const signEnter = smoothstep(rangeProgress(progress, 0.27, 0.4));
-    const signExit = smoothstep(rangeProgress(progress, 0.64, 0.74));
-    const privacyEnter = smoothstep(rangeProgress(progress, 0.62, 0.75));
     // Keep capture objects hidden while the sticky stage is still travelling
     // into the viewport. Once pinned, reveal them through the capture timeline
     // so mobile Safari does not show a completed scene sliding up the screen.
     setGroupOpacity(this.captureGroup, captureStageOpacity(progress));
-    setGroupOpacity(this.signingGroup, signEnter * (1 - signExit));
-    setGroupOpacity(this.privacyGroup, privacyEnter);
+    setGroupOpacity(this.signingGroup, signStageOpacity(progress));
+    setGroupOpacity(this.privacyGroup, privacyStageOpacity(progress));
 
     // The Capture node represents the presented state: the intro has finished,
     // the objects are settled, and the explanatory copy/callouts are readable.
-    // Hold that state until the capture group starts leaving at 0.26.
+    // Hold that state until the capture group reaches its exit phase.
     const captureProgress = smoothstep(
       rangeProgress(progress, 0, LANDING_PRESENTATION_PROGRESS.capture)
     );
@@ -452,7 +451,11 @@ export class LandingScene {
     }
 
     const signingProgress = smoothstep(
-      rangeProgress(progress, 0.3, LANDING_PRESENTATION_PROGRESS.sign)
+      rangeProgress(
+        progress,
+        LANDING_SCENE_TIMELINE.sign.enterStart,
+        LANDING_PRESENTATION_PROGRESS.sign
+      )
     );
     if (this.signingGroup.visible) {
       for (const [index, layer] of this.packageLayers.entries()) {
@@ -484,7 +487,11 @@ export class LandingScene {
     }
 
     const privacyProgress = smoothstep(
-      rangeProgress(progress, 0.66, LANDING_PRESENTATION_PROGRESS.privacy)
+      rangeProgress(
+        progress,
+        LANDING_SCENE_TIMELINE.privacy.enterStart,
+        LANDING_PRESENTATION_PROGRESS.privacy
+      )
     );
     if (this.privacyGroup.visible) {
       const proofCore = this.privacyGroup.getObjectByName("proof-core");
@@ -516,7 +523,11 @@ export class LandingScene {
 
     const calloutOpacity =
       smoothstep(rangeProgress(progress, 0.04, LANDING_PRESENTATION_PROGRESS.capture)) *
-      (1 - smoothstep(rangeProgress(progress, 0.26, 0.34)));
+      (1 - smoothstep(rangeProgress(
+        progress,
+        LANDING_SCENE_TIMELINE.capture.exitStart,
+        LANDING_SCENE_TIMELINE.capture.exitEnd
+      )));
     this.updateCallouts(calloutOpacity, time * 1000);
   }
 

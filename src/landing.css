@@ -479,7 +479,6 @@ canvas {
   font-weight: 720;
   visibility: hidden;
   opacity: 0;
-  transition: opacity 240ms ease;
   pointer-events: none;
 }
 
@@ -489,7 +488,6 @@ canvas {
   height: 0;
   opacity: 0;
   white-space: nowrap;
-  transition: opacity 160ms linear;
 }
 
 .scene-callout::after {
@@ -567,7 +565,6 @@ canvas {
   font-size: clamp(0.58rem, 0.72vw, 0.72rem);
   font-weight: 700;
   opacity: 0;
-  transition: opacity 240ms ease;
   pointer-events: none;
 }
 
@@ -604,10 +601,16 @@ canvas {
   color: var(--coral);
 }
 
-.story[data-stage="capture"][data-stage-pinned="true"] .scene-callouts--capture,
-.story[data-stage="sign"] .scene-labels--sign,
-.story[data-stage="privacy"] .scene-labels--privacy {
+.story[data-stage="capture"][data-stage-pinned="true"] .scene-callouts--capture {
   opacity: 1;
+}
+
+.scene-labels--sign {
+  opacity: var(--sign-label-opacity, 0);
+}
+
+.scene-labels--privacy {
+  opacity: var(--privacy-label-opacity, 0);
 }
 
 .story[data-stage="capture"][data-stage-pinned="true"] .scene-callouts--capture {

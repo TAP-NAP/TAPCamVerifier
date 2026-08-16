@@ -7,11 +7,14 @@ import {
   chapterPanelOpacity,
   directionalSnapTarget,
   landingStageForProgress,
+  LANDING_PANEL_TIMELINE,
   LANDING_PRESENTATION_PROGRESS,
-  LANDING_STAGE_TRANSITIONS,
-  PROGRESS_NAVIGATION_DURATION_MS,
+  MOBILE_CAPTURE_PANEL_ENTRANCE,
+  privacyStageOpacity,
   presentationTopForCopy,
   progressForActiveStep,
+  progressNavigationDuration,
+  signStageOpacity,
   storyEntranceProgressFromGeometry,
   storyPresentationProgress,
   storyProgressFromGeometry,
@@ -97,7 +100,7 @@ landing.innerHTML = `
       <span class="hero-wordmark" aria-label="TAPCam">TAPCam</span>
     </div>
     <div class="hero-copy">
-      <p class="hero-kicker">VERIFIABLE CAPTURE / SPATIAL MEDIA</p>
+      <p class="hero-kicker">SPATIAL MEDIA</p>
       <h1 id="landing-title">
         <span class="hero-title__accessible visually-hidden" data-hero-accessible>
           在 AI 时代，记录我们的生活
@@ -438,7 +441,7 @@ function applyLandingLocale(locale: LandingLocale): void {
   currentLocale = locale;
   landing!.dataset.locale = locale;
   document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
-  document.title = locale === "zh" ? "TAPCam — 可验证捕获" : "TAPCam — Verifiable Capture";
+  document.title = "type cam";
 
   document.querySelectorAll<HTMLElement>("[data-copy]").forEach((element) => {
     element.textContent = landingCopy(locale, element.dataset.copy as LandingCopyKey);
@@ -949,12 +952,15 @@ function getChapterPresentationProgresses(
   return [progresses[0]!, progresses[1]!, progresses[2]!];
 }
 
-function updateChapterPanelPresentation(progress: number): void {
+function updateChapterPanelPresentation(
+  progress: number,
+  entranceProgress: number
+): void {
   const mobileViewport = window.matchMedia("(max-width: 780px)").matches;
   const progressTop = getProgressAnchorTop();
   const exitPoints = [
-    LANDING_STAGE_TRANSITIONS.sign,
-    LANDING_STAGE_TRANSITIONS.privacy,
+    LANDING_PANEL_TIMELINE.captureExitEnd,
+    LANDING_PANEL_TIMELINE.signExitEnd,
     1
   ];
   const settledPoints = [
@@ -962,7 +968,11 @@ function updateChapterPanelPresentation(progress: number): void {
     LANDING_PRESENTATION_PROGRESS.sign,
     LANDING_PRESENTATION_PROGRESS.privacy
   ];
-  const entryPoints = [0, LANDING_STAGE_TRANSITIONS.sign, LANDING_STAGE_TRANSITIONS.privacy];
+  const entryRanges = [
+    null,
+    [LANDING_PANEL_TIMELINE.signEnterStart, LANDING_PANEL_TIMELINE.signEnterEnd],
+    [LANDING_PANEL_TIMELINE.privacyEnterStart, LANDING_PANEL_TIMELINE.privacyEnterEnd]
+  ] as const;
 
   chapterCopies.forEach((copy, index) => {
     const desiredTop = presentationTopForCopy(
@@ -993,13 +1003,19 @@ function updateChapterPanelPresentation(progress: number): void {
       settledPoints[index] ?? LANDING_PRESENTATION_PROGRESS.privacy,
       exitPoint
     );
+    const entryRange = entryRanges[index];
     const entryOpacity = index === 0
-      ? 1
-      : chapterPanelEntryOpacity(
-          progress,
-          entryPoints[index] ?? 0,
-          settledPoints[index] ?? LANDING_PRESENTATION_PROGRESS.privacy
-        );
+      ? mobileViewport
+        ? chapterPanelEntryOpacity(
+            entranceProgress,
+            MOBILE_CAPTURE_PANEL_ENTRANCE.start,
+            MOBILE_CAPTURE_PANEL_ENTRANCE.end,
+            1
+          )
+        : 1
+      : entryRange
+        ? chapterPanelEntryOpacity(progress, entryRange[0], entryRange[1], 1)
+        : 1;
     const opacity = exitOpacity * entryOpacity;
 
     const fixedTopValue = `${fixedTop}px`;
@@ -1182,7 +1198,11 @@ pageProgressLinks.forEach((link, index) => {
     alignedNodeIndex = index;
     progressNavigationTargetIndex = index;
     scheduleStoryUpdate();
-    animateScrollTo(getNodeStatePoints()[index], PROGRESS_NAVIGATION_DURATION_MS);
+    const target = getNodeStatePoints()[index];
+    animateScrollTo(
+      target,
+      progressNavigationDuration(target - window.scrollY, getStableViewportHeight())
+    );
     window.history.replaceState(null, "", link.hash);
   });
 });
@@ -1228,7 +1248,9 @@ function updateStory(): void {
   story!.dataset.stagePinned = rect.top <= 0 ? "true" : "false";
   const stage = landingStageForProgress(progress);
   story!.dataset.stage = stage;
-  updateChapterPanelPresentation(progress);
+  story!.style.setProperty("--sign-label-opacity", signStageOpacity(progress).toFixed(4));
+  story!.style.setProperty("--privacy-label-opacity", privacyStageOpacity(progress).toFixed(4));
+  updateChapterPanelPresentation(progress, entranceProgress);
   updatePageProgress(rect, progress, stage);
   updateActionCardHighlights();
   scene?.setProgress(storySceneProgress(progress, entranceProgress));
@@ -1438,7 +1460,7 @@ window.addEventListener("pageshow", (event) => {
 
 updateStory();
 
-function alignHashToNode(duration: number): void {
+function alignHashToNode(instant = false): void {
   const nodeIndex = pageProgressLinks.findIndex((link) => link.hash === window.location.hash);
   if (nodeIndex < 0) {
     alignedNodeIndex = null;
@@ -1447,17 +1469,21 @@ function alignHashToNode(duration: number): void {
 
   cancelDirectionalSnap();
   alignedNodeIndex = nodeIndex;
-  animateScrollTo(getNodeStatePoints()[nodeIndex], duration);
+  const target = getNodeStatePoints()[nodeIndex];
+  animateScrollTo(
+    target,
+    instant
+      ? 1
+      : progressNavigationDuration(target - window.scrollY, getStableViewportHeight())
+  );
 }
 
-window.addEventListener("hashchange", () =>
-  alignHashToNode(PROGRESS_NAVIGATION_DURATION_MS)
-);
+window.addEventListener("hashchange", () => alignHashToNode());
 
 if (pageProgressLinks.some((link) => link.hash === window.location.hash)) {
   const alignInitialHash = (): void => {
     window.setTimeout(() => {
-      window.requestAnimationFrame(() => alignHashToNode(1));
+      window.requestAnimationFrame(() => alignHashToNode(true));
     }, 120);
   };
 

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   LANDING_PRESENTATION_PROGRESS,
+  LANDING_SCENE_TIMELINE,
   LANDING_STAGE_TRANSITIONS,
-  PROGRESS_NAVIGATION_DURATION_MS,
+  MOBILE_CAPTURE_PANEL_ENTRANCE,
   captureStageOpacity,
   chapterNaturalTop,
   chapterPanelBoundary,
@@ -12,9 +13,12 @@ import {
   landingStageForProgress,
   pageProgressForStoryProgress,
   presentationTopForCopy,
+  privacyStageOpacity,
   progressForActiveStep,
+  progressNavigationDuration,
   rangeProgress,
   smoothstep,
+  signStageOpacity,
   stableFixedControlTop,
   storyEntranceProgressFromGeometry,
   storyPresentationProgress,
@@ -72,7 +76,34 @@ describe("landing scroll progress", () => {
     expect(captureStageOpacity(0)).toBe(0);
     expect(captureStageOpacity(0.05)).toBeCloseTo(0.5);
     expect(captureStageOpacity(LANDING_PRESENTATION_PROGRESS.capture)).toBe(1);
-    expect(captureStageOpacity(0.38)).toBe(0);
+    expect(captureStageOpacity(LANDING_SCENE_TIMELINE.capture.exitEnd)).toBe(0);
+  });
+
+  it("uses the same breathing window between both scene changes", () => {
+    expect(captureStageOpacity(0.32)).toBe(0);
+    expect(signStageOpacity(0.32)).toBe(0);
+    expect(signStageOpacity(0.68)).toBe(0);
+    expect(privacyStageOpacity(0.68)).toBe(0);
+  });
+
+  it("delays the mobile capture panel until the scene preview has settled", () => {
+    expect(MOBILE_CAPTURE_PANEL_ENTRANCE.start).toBeGreaterThan(0.72);
+    expect(
+      chapterPanelEntryOpacity(
+        0.77,
+        MOBILE_CAPTURE_PANEL_ENTRANCE.start,
+        MOBILE_CAPTURE_PANEL_ENTRANCE.end,
+        1
+      )
+    ).toBe(0);
+    expect(
+      chapterPanelEntryOpacity(
+        1,
+        MOBILE_CAPTURE_PANEL_ENTRANCE.start,
+        MOBILE_CAPTURE_PANEL_ENTRANCE.end,
+        1
+      )
+    ).toBe(1);
   });
 
   it("aligns story chapters to the five-step page rail", () => {
@@ -90,8 +121,11 @@ describe("landing scroll progress", () => {
     expect(progressForActiveStep(4, 5)).toBe(1);
   });
 
-  it("uses one 2.5 second duration for progress-node navigation", () => {
-    expect(PROGRESS_NAVIGATION_DURATION_MS).toBe(2500);
+  it("scales progress-node navigation to the actual travel distance", () => {
+    expect(progressNavigationDuration(0, 900)).toBe(620);
+    expect(progressNavigationDuration(900, 900)).toBe(1040);
+    expect(progressNavigationDuration(1800, 900)).toBe(1560);
+    expect(progressNavigationDuration(5000, 900)).toBe(1800);
   });
 
   it("keeps fixed progress geometry independent of visual viewport translation", () => {

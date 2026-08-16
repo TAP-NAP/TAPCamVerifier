@@ -12,7 +12,38 @@ export const LANDING_STAGE_TRANSITIONS = {
   privacy: 0.68
 } as const;
 
-export const PROGRESS_NAVIGATION_DURATION_MS = 2500;
+export const LANDING_SCENE_TIMELINE = {
+  capture: {
+    enterStart: 0,
+    enterEnd: 0.1,
+    exitStart: 0.24,
+    exitEnd: 0.3
+  },
+  sign: {
+    enterStart: 0.34,
+    enterEnd: 0.44,
+    exitStart: 0.6,
+    exitEnd: 0.66
+  },
+  privacy: {
+    enterStart: 0.7,
+    enterEnd: 0.8
+  }
+} as const;
+
+export const LANDING_PANEL_TIMELINE = {
+  captureExitEnd: 0.3,
+  signEnterStart: 0.39,
+  signEnterEnd: 0.43,
+  signExitEnd: 0.66,
+  privacyEnterStart: 0.75,
+  privacyEnterEnd: 0.79
+} as const;
+
+export const MOBILE_CAPTURE_PANEL_ENTRANCE = {
+  start: 0.78,
+  end: 1
+} as const;
 
 export function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
@@ -32,10 +63,48 @@ export function smoothstep(value: number): number {
 
 export function captureStageOpacity(progress: number): number {
   const enter = smoothstep(
-    rangeProgress(progress, 0, LANDING_PRESENTATION_PROGRESS.capture)
+    rangeProgress(
+      progress,
+      LANDING_SCENE_TIMELINE.capture.enterStart,
+      LANDING_SCENE_TIMELINE.capture.enterEnd
+    )
   );
-  const exit = smoothstep(rangeProgress(progress, 0.26, 0.38));
+  const exit = smoothstep(
+    rangeProgress(
+      progress,
+      LANDING_SCENE_TIMELINE.capture.exitStart,
+      LANDING_SCENE_TIMELINE.capture.exitEnd
+    )
+  );
   return enter * (1 - exit);
+}
+
+export function signStageOpacity(progress: number): number {
+  const enter = smoothstep(
+    rangeProgress(
+      progress,
+      LANDING_SCENE_TIMELINE.sign.enterStart,
+      LANDING_SCENE_TIMELINE.sign.enterEnd
+    )
+  );
+  const exit = smoothstep(
+    rangeProgress(
+      progress,
+      LANDING_SCENE_TIMELINE.sign.exitStart,
+      LANDING_SCENE_TIMELINE.sign.exitEnd
+    )
+  );
+  return enter * (1 - exit);
+}
+
+export function privacyStageOpacity(progress: number): number {
+  return smoothstep(
+    rangeProgress(
+      progress,
+      LANDING_SCENE_TIMELINE.privacy.enterStart,
+      LANDING_SCENE_TIMELINE.privacy.enterEnd
+    )
+  );
 }
 
 export function storySceneProgress(
@@ -105,6 +174,14 @@ export function progressForActiveStep(activeIndex: number, stepCount: number): n
     return 0;
   }
   return clamp01(activeIndex / (stepCount - 1));
+}
+
+export function progressNavigationDuration(
+  distance: number,
+  viewportHeight: number
+): number {
+  const distanceInViewports = Math.abs(distance) / Math.max(1, viewportHeight);
+  return Math.round(Math.min(1800, Math.max(620, 520 + distanceInViewports * 520)));
 }
 
 export function stableFixedControlTop(
