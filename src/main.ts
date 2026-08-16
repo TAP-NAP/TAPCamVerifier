@@ -174,7 +174,7 @@ if (!workspaceEl) {
   throw new Error("Verifier workspace did not mount.");
 }
 
-const emptyParticleField = mountEmptyParticleField(dropzoneParticles);
+const emptyParticleField = mountEmptyParticleField(dropzoneParticles, { revealCats: true });
 
 dropzone.addEventListener("click", () => fileInput.click());
 dropzone.addEventListener("dragover", (event) => {

@@ -1,5 +1,47 @@
 # TAPCam Verifier design QA
 
+## Round 4 — shared particle-cat timing and discovery aid
+
+### Source and implementation evidence
+
+- Selected source visual: `/Users/harold/.codex/generated_images/01a0070e-4036-7710-816b-592068be33c9/exec-f9bb822b-e4b8-49a6-9638-5408ec9dab1d.png` (`1254 × 1254` pixels).
+- Mobile implementation: `/private/tmp/tapcam-particle-cat-qa/design-qa-hero-cat-mobile-random-hold.png` (`393 × 852` CSS and image pixels).
+- Mobile excitation transition: `/private/tmp/tapcam-particle-cat-qa/design-qa-hero-cat-mobile-random-hover.png` (`393 × 852` CSS and image pixels).
+- 4K implementation: `/private/tmp/tapcam-particle-cat-qa/design-qa-hero-cat-4k-random-hover.png` (`3840 × 2160` CSS and image pixels).
+- Same-input focused comparison: `/private/tmp/tapcam-particle-cat-qa/design-qa-hero-cat-comparison.png`. The left side is the selected source and the right side is the live particle implementation crop.
+- Four-expression source sheet: `/private/tmp/tapcam-particle-cat-qa/cat-candidates/particle-cat-expression-sheet-v3.png`.
+- Four-expression same-input comparison: `/private/tmp/tapcam-particle-cat-qa/design-qa-hero-cat-four-comparison.png`; selected expression sources are on the left and the live shared particle field is on the right.
+
+### Required fidelity surfaces
+
+- Fonts and typography: the cat remains a canvas-only ambient layer. It does not enter layout, change the Hero type metrics, or affect the scramble row's safe width.
+- Spacing and layout rhythm: the cat is sized in screen pixels, placed in normalized viewport coordinates, and keeps a square scale at every aspect ratio. New placements exclude the preceding illumination-diameter area. On coarse-pointer layouts, placement candidates also exclude the rendered rectangles of the top bar, Hero wordmark and copy, scroll cue, progress rail, verifier progress, and dropzone copy.
+- Colors and visual tokens: source paper, cobalt, coral, and lime points are sampled into the live geometry. The normal ambient opacity is `0.09`; only every seventh unresolved appearance uses the subtle `0.12` hint. Excitation still reaches the established full peak.
+- Image quality and asset fidelity: four optimized WebP runtime sources are sampled into real point geometries: smile, sleepy with a larger acid-lime bubble, crying, and the user-selected pouting face. The comparison confirms that ears, eyes, nose, mouth, whiskers, tears, and the sleep bubble remain legible without rendering the rasters themselves.
+- Copy and content: no product copy changed in this round.
+- Interaction and accessibility: one cat exists globally. It fades in for one second, holds for eight seconds while unexcited, fades out for one second, stays fully off for one second, then moves. Its first B/C excitation may reset the timer once and chooses a weighted `1–8` second hold, concentrated around `4–6` seconds; later excitation in the same appearance cannot reset it again. Expressions are weighted `60%` smile, `15%` sleepy, `10%` crying, and `15%` pouting. Coarse-pointer devices use a `0.9s` click spotlight and never launch a random automatic spotlight. Reduced motion keeps a stable decorative state.
+
+### Comparison findings and history
+
+1. The earlier implementation used one fixed post-excitation hold, so a discovered cat became predictable. The reset now samples a discrete weighted distribution with a `4–6` second majority and a slightly longer mean.
+2. Repeated excitation previously needed an explicit lifecycle guard. Each appearance now owns one reset flag; the first qualifying excitation consumes it.
+3. A user who misses six consecutive appearances now receives one subtle seventh-appearance hint. The eighth returns to normal, and any excitation immediately clears the missed-appearance counter.
+4. The 4K browser measurement reports `hostWidth = canvasWidth = scrollWidth = innerWidth = 3840`; the particle surface therefore fills the window without horizontal overflow.
+5. The focused source/implementation comparison has no actionable P0, P1, or P2 shape, aspect-ratio, clipping, or contrast findings.
+6. Sliding the Hero away interpolates the normal ambient opacity from `0.09` to the same `0.12` used by the seventh-miss discovery aid, without changing the excitation peak.
+7. The automatic mobile spotlight was removed. A click now activates the same circular, screen-space-correct spotlight for `0.9s`.
+
+### Validation
+
+- `npm test`: 48 Rust tests and 117 Vitest tests passed.
+- `npm run build`: TypeScript, WASM, and Vite production build passed.
+- `git diff --check`: passed.
+- Final browser state: `http://127.0.0.1:5173/` at `393 × 852`, marked as the deliverable preview.
+
+final result: passed
+
+---
+
 ## Comparison target
 
 - Source visual truth: `/Users/harold/.codex/generated_images/01a005a6-465e-7fd0-b598-2d5bd1b6763b/exec-f21130fd-6d9a-4e68-8f65-bfd9cbbbf4e1.png` for the empty state, `/Users/harold/.codex/generated_images/01a005a6-465e-7fd0-b598-2d5bd1b6763b/exec-384c53cc-2486-4666-9c50-34aef6edc531.png` for the loaded workbench, plus the later annotated browser requirements that supersede those images.
