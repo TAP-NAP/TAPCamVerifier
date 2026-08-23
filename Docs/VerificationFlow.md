@@ -9,7 +9,7 @@ input routing, implementation stages, report scopes, presentation, and server
 orchestration.
 
 This flow adopts shared revision
-[`63f96b31de193c3ad456ffa500cc0db03fb97142`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/63f96b31de193c3ad456ffa500cc0db03fb97142).
+[`ca3b223e0717242ce1016b34dc34f04ef2417936`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/ca3b223e0717242ce1016b34dc34f04ef2417936).
 
 ## Local Flow
 
@@ -28,10 +28,10 @@ after a TAP Video local gate passes:
 ```
 
 The required ordering and rejection relationships live in the shared
-[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/bindings/capture-binding-and-proof-v1.md).
-Known implementation gaps are recorded in the shared
-[divergence ledger](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/KNOWN_DIVERGENCES.md)
-rather than normalized into another local wire contract.
+[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/bindings/capture-binding-and-proof-v1.md).
+Verifier-specific implementation gaps are recorded in the local
+[Shared Contract Adoption Follow-Ups](Roadmap.md#shared-contract-adoption-follow-ups);
+they do not redefine the shared wire contract.
 
 The browser keeps original media bytes local and submits only the shared
 capture-signature request shape. A local relationship pass is not cryptographic
@@ -54,7 +54,7 @@ received media.
   embedded manifest, proof slot, and assertion material.
 
 Current `.tapnap` layout and rejection rules live in the shared
-[transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/transport/tapnap-v1.md).
+[transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/transport/tapnap-v1.md).
 This source revision also retains a local legacy ZIP compatibility route. That
 route does not define a current shared format.
 

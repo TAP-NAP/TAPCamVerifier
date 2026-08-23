@@ -186,13 +186,11 @@ fake product mockup, approximate logo, ungrounded claims about truth or AI detec
   - 放弃约 `(19.2%, 26.7%)` 的额外问题说明章节。
   - 采用约 `(63.4%, 92.1%)` 的横向入口展示。
 
-对应实现与对照证据见：
+对应实现见：
 
-- `src/landing.css`
-- `src/landing.ts`
-- `src/landingScene.ts`
-- `design-qa.md`
-- `Docs/Assets/LandingQA/reference-comparison.png`
+- [`src/landing.css`](../src/landing.css)
+- [`src/landing.ts`](../src/landing.ts)
+- [`src/landingScene.ts`](../src/landingScene.ts)
 
 ## 11. 为什么这套方向成立
 

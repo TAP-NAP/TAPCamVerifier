@@ -67,11 +67,36 @@ Current point-cloud inspection constraints:
 - Keep visualization failures non-fatal for `LocalVerificationReport.status` and
   final `valid` / `invalid` semantics.
 
-Completed verification coverage:
+## Shared Contract Adoption Follow-Ups
 
-- Signed JPEG fixture coverage now exercises ImageIO RDF-attribute XMP manifest
-  extraction, the fixed APP11 proof-slot parser, and the full local
-  content-binding path against `test/tap-depth-photo.JPG`.
+This verifier implements but does not redefine the shared
+[binding/proof](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/bindings/capture-binding-and-proof-v1.md),
+[TAP Video manifest](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/manifests/tap-video-v1.md),
+[container](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/containers/tap-video-container-v1.md),
+and [`.tapnap` transport](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/transport/tapnap-v1.md)
+contracts. Remaining consumer work is deliberately local:
+
+- reconstruct the explicit unavailable `depthResource` form for no-depth
+  Still/Live captures;
+- enforce the complete TAP Video v1 semantic field groups and resolve each
+  `mebx` local key through the track metadata-key table rather than accepting any
+  non-zero ID;
+- require every KLV `FRAM` value to equal its contiguous zero-based timed-depth
+  MP4 sample ordinal instead of merely decoding it;
+- preserve and hash the exact embedded TAP Video `payload` JSON value bytes as
+  required by the shared
+  [canonical-JSON contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/bindings/capture-binding-and-proof-v1.md#tap-capture-canonical-json);
+  the current TypeScript path parses and reserializes that value before hashing;
+- enforce every current `.tapnap` sidecar field plus package-kind/resource-set,
+  media-type, unknown-role, and trust-boundary relationships;
+- treat padded base64url and non-zero proof-header reserved bytes as permissive
+  compatibility behavior, not producer permission, until an explicit runtime
+  tightening decision is made; and
+- keep package/MP4 safety budgets and native-media codec support local to this
+  browser; producer H.264/AAC choices must not become verifier guarantees.
+
+Until these items close, family routing and partial semantic checks must not be
+reported as complete field-level v1 conformance.
 
 ## Deferred TODO
 
@@ -90,11 +115,11 @@ Completed verification coverage:
   The old mesh direction was: use the depth grid to build a triangle mesh, skip
   triangles across large depth discontinuities, and attach RGB as vertex color
   or UV texture.
-- Browser drag/drop automation against `test/tap-depth-photo.HEIC` is deferred
-  after manual verification. This repo should not add Playwright, Puppeteer, or
-  another browser automation dependency for this item unless the TODO is
-  explicitly reopened. While deferred, preserve the existing `src/main.ts`
-  dropzone workflow unless there is a direct product need to change it.
+- Browser drag/drop automation is deferred after manual verification. This repo
+  should not add Playwright, Puppeteer, or another browser automation dependency
+  for this item unless the TODO is explicitly reopened. While deferred, preserve
+  the existing [`src/main.ts`](../src/main.ts) dropzone workflow unless there is
+  a direct product need to change it.
 - Real worker-thread separation for verification and analysis is deferred. The
   current UI starts visual analysis work and local/server verification as
   independent async paths, then reveals valid analysis results after the
@@ -110,8 +135,8 @@ consistency: large disagreement between RGB-predicted geometry and embedded
 depth can indicate a suspicious or non-real-world capture.
 
 Depth Pro is the preferred research target because it can produce a dense depth
-map from a single RGB image. The current research report is
-`Docs/Research/2026-06-25-depth-pro-rgb-depth-consistency.md`.
+map from a single RGB image. See the
+[Depth Pro research report](Research/2026-06-25-depth-pro-rgb-depth-consistency.md).
 
 ## Research TODO: 3D Gaussian Splatting Reconstruction
 

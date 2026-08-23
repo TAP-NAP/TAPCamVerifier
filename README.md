@@ -25,21 +25,23 @@ implementation, bounded-input policy, local scopes, reports, playback, and UI;
 it implements but does not redefine those conventions.
 
 This adoption was reviewed against shared revision
-[`63f96b31de193c3ad456ffa500cc0db03fb97142`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/63f96b31de193c3ad456ffa500cc0db03fb97142).
+[`ca3b223e0717242ce1016b34dc34f04ef2417936`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/ca3b223e0717242ce1016b34dc34f04ef2417936).
 
 ## Current Status
 
 Rust/WASM owns photo and Live Photo local verification. TypeScript owns TAP
 Video verification, package routing, server orchestration, and the browser UI.
 The exact required relationships live in the shared
-[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/bindings/capture-binding-and-proof-v1.md).
-Known implementation gaps remain explicit in the shared
-[divergence ledger](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/KNOWN_DIVERGENCES.md).
+[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/bindings/capture-binding-and-proof-v1.md).
+Known consumer gaps remain explicit in the local
+[Roadmap](Docs/Roadmap.md).
 
-The source revision underlying this documentation commit still contains older
-photo/Live content-binding and TAP Video family identifiers plus legacy ZIP
-routing. Those are local compatibility facts, not a second format authority;
-the shared repository defines the current v1 contract.
+The consumer evidence baseline for extraction was Verifier revision
+`20972aff2675cab4a8bb9936bd7fba9115d21951` with pre-existing tracked and
+untracked work; it was evidence, not a clean release qualification. That base
+still contains older photo/Live content-binding and TAP Video family identifiers
+plus legacy ZIP routing. These are local compatibility facts, not a second
+format authority.
 
 After input selection, bounded visual analysis and signature verification may
 run independently over the same resolved bytes. The original preview first
@@ -61,24 +63,35 @@ The browser accepts current `.tapnap` input and this revision's legacy ZIP
 compatibility route. It bounds ZIP-compatible input before extraction and
 passes byte-preserved resources to the family verifier. Current layout,
 identifiers, unsigned sidecar roles, and rejection rules live in the shared
-[transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/transport/tapnap-v1.md).
+[transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/transport/tapnap-v1.md).
 Routing metadata cannot determine the signed family or verdict.
+
+The browser's local extraction budgets are 512 MiB of package bytes, 16 archive
+entries, 384 MiB per media resource, 512 MiB of aggregate extracted bytes, and
+256 KiB for `tapcam-export.json`. These are consumer safety limits, not wire
+fields or evidence about the media.
 
 ## TAP Video MP4
 
 Raw MP4 input uses the shared
-[TAP Video manifest](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/manifests/tap-video-v1.md),
-[container/KLV](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/containers/tap-video-container-v1.md),
+[TAP Video manifest](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/manifests/tap-video-v1.md),
+[container/KLV](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/containers/tap-video-container-v1.md),
 and binding/proof contracts. TAP Video is not routed through `.tapnap`.
 
 After the local binding gate passes, native browser playback may start while
-the server result is pending. The verifier indexes the selected timed-metadata
-track from bounded MP4 sample tables, decodes supported raw and zstd1
-depth/disparity frames on demand, keeps at most two decoded frames, and aligns
-them to player time. It applies the signed RGB display transform to the depth
-canvas. LZFSE remains readable in the Apple app but is not supported by this
-browser build. Playback and depth inspection remain untrusted until the server
-gate also passes.
+the server result is pending. Standard RGB/audio playback is delegated to the
+HTML media stack; this verifier makes no H.264 or AAC compatibility guarantee.
+The producer's current codec choices therefore do not define this browser's
+runtime support.
+
+The verifier indexes the selected timed-metadata track from bounded MP4 sample
+tables and reads `mebx` KLV records. It recognizes raw, zstd1, and LZFSE record
+labels, but this browser build decodes only raw and zstd1 and rejects LZFSE.
+Additional local limits are 512 MiB per MP4, 4,096 boxes in one parsed box list,
+10,800 depth samples, 16,777,216 pixels per rendered depth frame, and two cached
+decoded frames. It aligns decoded frames to player time and applies the signed
+RGB display transform to the depth canvas. Playback and depth inspection remain
+untrusted until the server gate also passes.
 
 The 3D point-cloud pane is deliberately disabled for TAP Video. This release
 provides video playback with synchronized 2D depth frames and does not claim
@@ -135,10 +148,12 @@ explicitly allowed.
 - `src/verifier/serverVerify.ts` calls the server after local success.
 - `crates/tapcam-verifier-wasm/` owns photo/Live parsing, local binding checks,
   and preview normalization for already-decoded planes.
-- `Docs/VerificationFlow.md` owns Verifier-local routing, scopes, presentation,
-  and server orchestration.
-- `Docs/AITrace/`, `Docs/DevLog/`, `Docs/Roadmap.md`, `Docs/Research/`, and
-  `Docs/Scorecard.md` retain their existing repository-local responsibilities.
+- [Docs/VerificationFlow.md](Docs/VerificationFlow.md) owns Verifier-local
+  routing, scopes, presentation, and server orchestration.
+- [Docs/Roadmap.md](Docs/Roadmap.md) owns the active depth-to-geometry roadmap.
+- [Docs/LandingDesignPrompt.zh-CN.md](Docs/LandingDesignPrompt.zh-CN.md) owns the
+  retained landing visual direction and public-claim language boundaries.
+- [Docs/Research/](Docs/Research/) owns active depth/geometry research reports.
 
 ## Local Fixtures
 
@@ -146,7 +161,7 @@ Ignored real-device files under `test/` remain local implementation fixtures.
 They exercise container decoding, primary-only Live Photo scope, and legacy
 package compatibility without becoming shared public examples. Shared synthetic
 examples and exact cross-repository vectors live in
-[TAPArtifactContracts examples](https://github.com/TAP-NAP/TAPArtifactContracts/tree/63f96b31de193c3ad456ffa500cc0db03fb97142/examples).
+[TAPArtifactContracts examples](https://github.com/TAP-NAP/TAPArtifactContracts/tree/ca3b223e0717242ce1016b34dc34f04ef2417936/examples).
 
 ## Test
 
