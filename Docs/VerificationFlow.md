@@ -1,207 +1,111 @@
 # Verification Flow
 
-The verifier follows TAPCamDemo still-photo `content-binding:v2` and Live Photo
-`content-binding:v3`. Still photos bind the native HEIC/JPG file bytes excluding
-the fixed proof slot plus the exact TAP manifest payload JSON bytes embedded in
-XMP. Live Photos keep that primary-photo binding and add the complete
-`paired-video.mov` bytes as a signed resource. Verification is scoped: a full
-Live Photo `.tapnap` or legacy ZIP package verifies the primary photo and MOV,
-while a primary-only transfer can still verify the signed Live Photo primary
-photo and submit the embedded signing binding to the server. The browser does
-not decode RGB pixels, video frames, or metric depth Float32 values for the base
-signature.
+The documentation-only
+[TAPArtifactContracts](https://github.com/TAP-NAP/TAPArtifactContracts)
+repository is the authority for current Still/Live/Video manifests,
+canonicalization, containers/KLV, proof slots, signing, verification, hash
+participation, and `.tapnap` transport. This page owns only TAPCamVerifier's
+input routing, implementation stages, report scopes, presentation, and server
+orchestration.
 
-## Hash Flow
+This flow adopts shared revision
+[`63f96b31de193c3ad456ffa500cc0db03fb97142`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/63f96b31de193c3ad456ffa500cc0db03fb97142).
 
-```mermaid
-flowchart TD
-    A["Upload signed HEIC/JPG, .tapnap, or legacy ZIP"] --> B["Rust/WASM reads primary photo bytes"]
-    A --> Z["Package reader preserves primary-photo.* and optional paired-video.mov bytes"]
-    Z --> B
-    Z --> Y["Hash paired-video.mov full file for Live Photo v3"]
-    B --> C["Detect HEIC/BMFF or JPEG container"]
-    B --> D["Locate exactly one TAP proof slot"]
-    D --> E["Validate slot magic, version, envelope length, zero padding"]
-    E --> F["Parse proof envelope JSON"]
-    F --> G["Decode proof.value base64url JSON"]
-    B --> H["Read XMP tapdepth:Manifest"]
-    H --> I["Require schema and empty manifest.proofs"]
-    I --> J["Validate Release profile policy"]
-    B --> K["SHA-256 native file bytes excluding proof slot container range"]
-    I --> L["Extract exact embedded manifest.payload JSON bytes"]
-    L --> M["SHA-256 payload bytes without reserialization"]
-    D --> N["Rebuild proofSlot object"]
-    K --> O["Rebuild CaptureContentBinding"]
-    M --> O
-    Y --> O
-    N --> O
-    O --> P["Compare with proofValue.contentDigest"]
-    O --> Q["Canonical contentDigest JSON"]
-    Q --> R["SHA-256 signingBinding.bodySHA256"]
-    R --> S["Rebuild CaptureSigningBinding"]
-    S --> T["Compare with proofValue.signingBinding"]
-    T --> U["Local valid if a supported hard-binding scope passes"]
-    U --> V["POST keyId + assertionObject + signingBinding to server"]
-    V --> W["Server verifies App Attest assertion"]
-    W --> X["Final valid only if local and server checks pass"]
+## Local Flow
+
+```text
+selected HEIC/JPG, TAP Video MP4, .tapnap, or legacy ZIP
+  -> bounded input and package resolution
+  -> photo/Live Rust/WASM verifier or TAP Video TypeScript verifier
+  -> reconstruct and compare the binding required for the reported local scope
+  -> if that local gate passes: submit the shared App Attest request
+  -> join local scope + server response into final valid / invalid
+
+after input resolution:
+  -> bounded photo preview/depth/geometry work may run independently
+after a TAP Video local gate passes:
+  -> bounded playback/KLV inspection may start while the server is pending
 ```
 
-## Capture Package Resolution
+The required ordering and rejection relationships live in the shared
+[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/bindings/capture-binding-and-proof-v1.md).
+Known implementation gaps are recorded in the shared
+[divergence ledger](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/KNOWN_DIVERGENCES.md)
+rather than normalized into another local wire contract.
 
-The preferred transport filename is `TAPNAP-Capture.tapnap`. Its identifiers
-are UTI `net.tapnap.capture-package` and MIME
-`application/vnd.tapnap.capture-package+zip`. The browser recognizes `.tapnap`,
-the TAPNAP MIME, legacy `.zip` / `application/zip`, and ZIP magic; raw
-HEIC/HEIF/JPG/JPEG input remains unchanged.
+The browser keeps original media bytes local and submits only the shared
+capture-signature request shape. A local relationship pass is not cryptographic
+App Attest validity; a server-valid response alone is not a verdict about the
+received media.
 
-Both still and Live Photo packages use the existing
-`urn:tapnap:tapcam:verification-export:v1` sidecar. The sidecar is an untrusted
-resource index only. `packageKind` is informational and is limited by the
-producer contract to `stillPhoto` or `livePhotoPackage`. Resource roles may
-point the reader to a supported photo or MOV entry, but `packageKind`, declared
-media types, and other sidecar fields cannot define the verification scope. If
-the sidecar is absent, malformed, or maps a role to an unsupported entry, the reader falls back to
-`primary-photo.heic|heif|jpg|jpeg` and `paired-video.mov`.
+## Input And Scope Ownership
 
-The resolved primary-photo bytes are passed unchanged to Rust/WASM. MOV bytes
-are passed only when the package contains a paired video. Therefore a still
-`.tapnap` package without a MOV follows the ordinary still-photo verification
-path, while a signed Live Photo primary without a MOV follows the existing
-`primaryPhotoFromLivePhoto` path. No TypeScript package metadata can reclassify
-the signed media type.
+- Rust/WASM owns HEIC/JPEG proof-slot/XMP parsing, Still/Live local binding
+  reconstruction, and the photo/paired-MOV report.
+- TypeScript owns bounded package resolution, TAP Video MP4 parsing and local
+  binding reconstruction, server orchestration, playback, and UI state.
+- The unsigned package sidecar may locate resources but cannot classify signed
+  media or provide trusted hash/verdict values.
+- A complete matching Live Photo package may report `fullLivePhoto`.
+- A proof-bearing Live Photo primary without a matching MOV may report
+  `primaryPhotoFromLivePhoto`; the report must state that motion/video bytes
+  were not verified.
+- MOV-only input remains unsupported because it lacks the primary artifact's
+  embedded manifest, proof slot, and assertion material.
 
-Package parsing is bounded before extraction: oversized inputs, excessive ZIP
-entries, oversized resources, and ambiguous primary-photo or paired-video
-matches are rejected. Only the root sidecar and supported photo/MOV candidates
-are materialized in browser memory.
+Current `.tapnap` layout and rejection rules live in the shared
+[transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/transport/tapnap-v1.md).
+This source revision also retains a local legacy ZIP compatibility route. That
+route does not define a current shared format.
 
-## Implemented Checks
+## Report And Presentation
 
-- HEIC/BMFF and JPEG container detection.
-- BMFF `uuid` proof slot and JPEG APP11 proof slot location.
-- Proof slot magic `TAPCAM-PROOF-SLOT-V1`, version `1`, envelope length, and
-  zero-filled padding.
-- Proof envelope JSON parse.
-- `proof.value` base64url decode and JSON parse.
-- XMP `tapdepth:Manifest` extraction, including element-style XMP and
-  ImageIO/RDF attribute-style XMP.
-- Exact TAP depth manifest schema check.
-- Empty `manifest.proofs`; proof bodies must live in the fixed proof slot.
-- Release capture profile policy:
-  - HEIC uses requested codec `hvc1`;
-  - JPEG uses requested codec `jpeg`;
-  - depth delivery is enabled;
-  - depth is embedded in the photo;
-  - depth is filtered;
-  - photo quality prioritization is `quality`.
-- `assetHash`: SHA-256 over uploaded bytes excluding the proof slot container
-  range.
-- `metadataHash`: SHA-256 over the exact `manifest.payload` JSON bytes extracted
-  from XMP after XML entity decoding. The verifier must not parse and
-  reserialize the payload before hashing because that can change high-precision
-  location number lexemes.
-- Rebuilt `CaptureContentBinding` equality.
-- Live Photo `signedResources` checks for:
-  - `primaryPhoto`;
-  - `tapDepthManifestPayload`;
-  - `pairedLivePhotoVideo` descriptor;
-  - full `pairedLivePhotoVideo` bytes when MOV bytes are supplied and match.
-- Rebuilt `CaptureSigningBinding` equality.
-- `signingBindingSHA256` as a browser-recomputed diagnostic hash of the exact
-  `signingBinding` sent to the server. If the server echoes the same field, the
-  UI compares it to catch integration drift; this is not a server-side native
-  file hash check.
+The final result is `valid` or `invalid`. A result is valid only when the
+required local scope passes and the server returns a valid App Attest result.
+Local failure, missing server material, server rejection, and network failure
+cannot produce a valid result.
 
-## Scoped Verifier Rule
+Warnings are an attached list, not a third final state. A missing or mismatched
+Live Photo MOV limits the report to the primary-photo scope and must never be
+presented as full Live Photo verification. Preview, depth, geometry, or
+playback warnings do not become signature inputs and do not upgrade a failed
+verification.
 
-The verifier does not reclassify Live Photos as still photos. Unsupported
-containers, missing slots, malformed padding, non-empty manifest proofs, profile
-drift, primary-photo hash mismatch, manifest hash mismatch, malformed v3 signed
-resource descriptors, or signing-binding mismatch produce `invalid`.
+## Parallel Analysis Boundary
 
-For Live Photo v2/v3 captures, the verifier reports one of two valid scopes:
+After input resolution, photo preview, auxiliary-depth/disparity analysis,
+relative geometry, and signature verification may run as independent bounded
+paths over the same bytes. The valid-signature modal controls when completed
+analysis becomes visible; it does not make that analysis part of the signature.
 
-- `fullLivePhoto`: the primary photo, manifest payload, paired MOV, embedded
-  content digest, signing binding, and server App Attest verification passed.
-- `primaryPhotoFromLivePhoto`: the primary photo and manifest payload match the
-  embedded v3 content digest, the digest declares a paired MOV resource, and the
-  embedded signing binding passes server App Attest verification, but
-  `paired-video.mov` was missing or did not match. The UI must state that
-  video/motion bytes were not verified.
-
-There is no `blocked` state for RGB/depth decoding in the base signature path
-because decoded pixels are not signature inputs. MOV-only input remains
-unsupported because the TAP proof slot, manifest payload, assertion object, and
-signing binding live in the primary HEIC/JPG.
+For TAP Video, playback and bounded sample-table/KLV inspection may begin after
+the local binding relationship passes while the server request is pending.
+Those semantic results remain untrusted until the App Attest gate passes and
+cannot produce the final authenticated result. A later signature failure does
+not turn visualization output into signed evidence or a scene-truth claim.
 
 ## Server Boundary
 
-The browser never uploads the original HEIC/JPG. After local hard-binding checks
-pass, the page posts to:
+After the local gate passes, the browser posts the shared request shape to:
 
 ```text
 https://www.tapnap.net/tapcam/capture-signatures/verify
 ```
 
-The request body is:
-
-```json
-{
-  "keyId": "...",
-  "assertionObject": "...",
-  "signingBinding": {
-    "bodySHA256": "...",
-    "captureID": "...",
-    "operation": "tapcam.capture.sign",
-    "schemaID": "urn:tapnap:tapcam:app-attest-capture-signing:v1"
-  }
-}
-```
-
 The production page origin is `https://verifier.tapnap.net`. Local development
-origins such as `http://127.0.0.1:4174` are expected to fail server verification
-unless the server CORS allowlist includes them.
+origins are expected to fail server verification unless the server CORS
+allowlist explicitly includes them. Network/CORS failure is reported
+separately from a local binding failure.
 
-## Parallel Analysis And Verification
+## Implementation Entry Points
 
-The browser resolves the selected input into primary photo bytes once, then runs
-visual analysis and signature verification as independent async paths:
-
-- Verification reads the proof slot, manifest, content binding, and server App
-  Attest result, then updates the verification result panel.
-- Analysis reads the same primary photo bytes for original preview, embedded
-  depth/disparity decoding, and relative 3D point-cloud inspection. The work may
-  run while verification is still in flight.
-- For valid signatures, the success modal is shown before the visual panes are
-  revealed. The already-running analysis results become visible only after the
-  modal auto-dismisses or the user clicks through it.
-- Missing `paired-video.mov` does not block verification. The verifier checks the
-  remaining Live Photo primary-photo scope and continues to server verification
-  when that scope passes.
-- A failed signature result does not cancel already-running visual analysis.
-
-The original preview, depth panel, and 3D point-cloud panel remain downstream
-inspection tools. They are not inputs to the base signature verdict.
-
-## TAP Video Flow
-
-Raw `.mp4` / `video/mp4` input takes the TAP Video path rather than the photo or
-Live Photo package path. The browser requires exactly one
-`TAPCAMVIDEOMANF1` UUID box and one fixed `TAPCAMPROOFSLOT1` UUID box, validates
-the proof envelope and zero padding, hashes the full MP4 excluding exactly the
-proof-slot box, hashes canonical manifest-v2 payload JSON, and compares the
-reconstructed `content-binding:v4` and signing binding with the proof value.
-The existing App Attest server endpoint receives only `keyId`,
-`assertionObject`, and `signingBinding` after those local checks pass.
-
-Video analysis is downstream of that hard-binding gate. The native browser
-player renders RGB/audio while the verifier reads the manifest-selected MP4
-metadata track's `stsz`, `stsc`, and `stco`/`co64` tables. Each Apple `mebx`
-sample unwraps one KLV-v2 depth frame. Player time selects the nearest signed
-depth timestamp, and seeks invalidate stale work. Raw and zstd1 frames are
-decoded on demand with a two-frame cache. Every depth frame applies the signed
-`payload.rgbTrack.transform` (`rotation:0/90/180/270` plus optional `mirrored`)
-used by TAPCamDemo, covering all eight display orientations without guessing
-from aspect ratio. Video mode explicitly disables the
-3D point-cloud pane; it does not reinterpret a time series as a still-photo
-point cloud.
+- `src/input/` resolves supported files and packages.
+- `crates/tapcam-verifier-wasm/` implements photo/Live local verification.
+- `src/video/tapVideo.ts` implements TAP Video local verification and bounded
+  depth inspection.
+- `src/video/videoPlayback.ts` owns synchronized browser playback.
+- `src/verifier/serverVerify.ts` submits the server request after local success.
+- `src/verifier/serverBoundaryDiagnostic.ts` compares the server's diagnostic
+  signing-binding hash; that diagnostic is not an artifact field.
+- `src/main.ts` coordinates local verification, server response, analysis,
+  playback, and final UI state.
