@@ -21,10 +21,8 @@ fn main() {
             std::process::exit(1);
         })
     });
-    let report = tapcam_verifier_wasm::verify_capture_package_bytes(
-        &bytes,
-        paired_video.as_deref(),
-    );
+    let report =
+        tapcam_verifier_wasm::verify_capture_package_bytes(&bytes, paired_video.as_deref());
     println!(
         "{}",
         serde_json::to_string_pretty(&report).expect("report JSON")

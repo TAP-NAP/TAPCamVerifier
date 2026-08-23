@@ -126,7 +126,7 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
       throw new Error("TAP video manifest exceeds the bounded payload limit.");
     }
     const manifest = parseManifest(bytes.subarray(manifestBox.payloadStart, manifestBox.payloadEnd));
-    checks.push(pass("video-container", "TAP Video container", "Found one v2 video manifest and one fixed proof slot."));
+    checks.push(pass("video-container", "TAP Video container", "Found one v1 video manifest and one fixed proof slot."));
 
     const proof = parseProofEnvelope(bytes, proofBox);
     const proofValue = parseProofValue(proof);
@@ -137,10 +137,10 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
     const digestMatches = canonicalJSON(suppliedDigest) === canonicalJSON(recomputedDigest);
     checks.push(check(
       "video-content-binding",
-      "TAP Video v4 content binding",
+      "TAP Video v1 content binding",
       digestMatches,
       digestMatches
-        ? "MP4 bytes outside the proof slot and canonical manifest payload match the signed v4 binding."
+        ? "MP4 bytes outside the proof slot and canonical manifest payload match the signed v1 binding."
         : "Signed TAP Video content binding does not match the supplied MP4 bytes."
     ));
 
@@ -424,9 +424,9 @@ function parseManifest(bytes: Uint8Array): TapVideoManifest {
     throw new Error("Invalid TAP Video manifest JSON.");
   }
   if (
-    value.schema.id !== "urn:tapnap:tapcam:video-manifest:v2" ||
-    value.schema.version !== 2 ||
-    value.schema.mediaType !== "application/vnd.tapnap.video-manifest+json;version=2" ||
+    value.schema.id !== "urn:tapnap:tapcam:video-manifest:v1" ||
+    value.schema.version !== 1 ||
+    value.schema.mediaType !== "application/vnd.tapnap.video-manifest+json;version=1" ||
     !Array.isArray(value.proofs) || value.proofs.length !== 0
   ) {
     throw new Error("Unsupported TAP Video manifest schema or non-empty manifest proofs.");
@@ -517,7 +517,7 @@ async function buildContentDigest(bytes: Uint8Array, proofBox: Box, manifest: Ta
       payloadLength: proofBox.payloadEnd - proofBox.payloadStart,
       payloadOffset: proofBox.payloadStart
     },
-    schemaID: "urn:tapnap:tapcam:content-binding:v4"
+    schemaID: "urn:tapnap:tapcam:video-content-binding:v1"
   };
 }
 
@@ -551,7 +551,7 @@ function decodeMebxDepthSample(sample: Uint8Array): TapVideoDepthFrame {
   const compressionBytes = requireRecord(records, "COMP");
   const uncompressed = requireRecord(records, "ULEN", 4);
   const payload = requireRecord(records, "DPTH");
-  if (readU32(version, 0) !== 2) {
+  if (readU32(version, 0) !== 1) {
     throw new Error("Unsupported TAP depth KLV schema.");
   }
   const compression = ascii(compressionBytes, 0, compressionBytes.length);

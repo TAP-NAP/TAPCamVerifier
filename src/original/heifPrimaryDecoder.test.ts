@@ -7,7 +7,7 @@ const fixturePath = resolve(process.cwd(), "test/tap-depth-photo.HEIC");
 const fixtureIt = existsSync(fixturePath) ? it : it.skip;
 
 describe("decodeHeifPrimaryRgba", () => {
-  fixtureIt("decodes the current fixture's primary HEIC image", async () => {
+  fixtureIt("decodes the physical-device fixture's primary HEIC image", async () => {
     const bytes = new Uint8Array(readFileSync(fixturePath));
     const image = await decodeHeifPrimaryRgba(bytes);
 

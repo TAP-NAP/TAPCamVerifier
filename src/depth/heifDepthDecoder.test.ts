@@ -13,13 +13,13 @@ const jpegFixturePath = resolve(process.cwd(), "test/tap-depth-photo.JPG");
 const jpegFixtureIt = existsSync(jpegFixturePath) ? it : it.skip;
 
 describe("findHeifAuxiliaryDepthItemId", () => {
-  fixtureIt("finds the current fixture's hidden auxiliary depth item", () => {
+  fixtureIt("finds the physical-device fixture's hidden auxiliary depth item", () => {
     const bytes = new Uint8Array(readFileSync(fixturePath));
 
     expect(findHeifAuxiliaryDepthItemId(bytes)).toBe(64);
   });
 
-  fixtureIt("decodes the current fixture's auxiliary luma plane", async () => {
+  fixtureIt("decodes the physical-device fixture's auxiliary luma plane", async () => {
     const bytes = new Uint8Array(readFileSync(fixturePath));
     const plane = await decodeHeifAuxiliaryDepthPlane(bytes);
 
@@ -36,7 +36,7 @@ describe("findHeifAuxiliaryDepthItemId", () => {
 });
 
 describe("findJpegAuxiliaryDepthImage", () => {
-  jpegFixtureIt("finds the current fixture's embedded disparity JPEG", () => {
+  jpegFixtureIt("finds the physical-device fixture's embedded disparity JPEG", () => {
     const bytes = new Uint8Array(readFileSync(jpegFixturePath));
     const image = findJpegAuxiliaryDepthImage(bytes);
 

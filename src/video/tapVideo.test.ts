@@ -13,7 +13,7 @@ describe("TAP Video browser support", () => {
   it("extracts a timed mebx KLV sample and preserves its presentation time", () => {
     const packedDepth = new Uint8Array([0x00, 0x3c, 0x00, 0x40]);
     const klv = concat(
-      record("TVER", u32(2)),
+      record("TVER", u32(1)),
       record("FRAM", u32(7)),
       record("PTS ", concat(i64(300n), i32(600))),
       record("COMP", encoder.encode("raw")),
@@ -121,7 +121,7 @@ describe("TAP Video browser support", () => {
     expect(redChannels(rightMirrored.rgba)).toEqual([6, 3, 5, 2, 4, 1]);
   });
 
-  it("verifies a synthetic v4 MP4 content binding and produces the server request", async () => {
+  it("verifies a synthetic v1 MP4 content binding and produces the server request", async () => {
     const manifest = makeManifest({ trackID: null, sampleCount: 0, format: null });
     const ftyp = box("ftyp", encoder.encode("mp42"));
     const manifestBox = uuidBox("TAPCAMVIDEOMANF1", encoder.encode(canonical(manifest)));
@@ -151,7 +151,7 @@ describe("TAP Video browser support", () => {
       metadataHash: {
         algorithm: "SHA-256",
         kind: "canonical-json",
-        mediaType: "application/vnd.tapnap.video-manifest.payload+json;version=2",
+        mediaType: "application/vnd.tapnap.video-manifest.payload+json;version=1",
         value: metadataValue
       },
       proofSlot: {
@@ -162,7 +162,7 @@ describe("TAP Video browser support", () => {
         payloadLength: 60 * 1024,
         payloadOffset: proofOffset + 24
       },
-      schemaID: "urn:tapnap:tapcam:content-binding:v4"
+      schemaID: "urn:tapnap:tapcam:video-content-binding:v1"
     };
     const signingBinding = {
       bodySHA256: await sha256Base64Url(encoder.encode(canonical(contentDigest))),
@@ -208,9 +208,9 @@ describe("TAP Video browser support", () => {
 function makeManifest(depthCoverage: Record<string, unknown>) {
   return {
     schema: {
-      id: "urn:tapnap:tapcam:video-manifest:v2",
-      version: 2,
-      mediaType: "application/vnd.tapnap.video-manifest+json;version=2"
+      id: "urn:tapnap:tapcam:video-manifest:v1",
+      version: 1,
+      mediaType: "application/vnd.tapnap.video-manifest+json;version=1"
     },
     payload: {
       id: "synthetic-video",

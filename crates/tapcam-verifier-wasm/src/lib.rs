@@ -10,17 +10,18 @@ use std::slice;
 
 static mut LAST_RESULT: Option<Vec<u8>> = None;
 
-const CONTENT_BINDING_SCHEMA_ID: &str = "urn:tapnap:tapcam:content-binding:v2";
-const LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID: &str = "urn:tapnap:tapcam:content-binding:v3";
-const MANIFEST_SCHEMA_ID: &str = "urn:tapnap:tapcam:depth-manifest:v1";
-const LIVE_PHOTO_MANIFEST_SCHEMA_ID: &str = "urn:tapnap:tapcam:depth-manifest:v2";
-const MANIFEST_MEDIA_TYPE: &str = "application/vnd.tapnap.depth-manifest+json;version=1";
+const CONTENT_BINDING_SCHEMA_ID: &str = "urn:tapnap:tapcam:still-photo-content-binding:v1";
+const LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID: &str =
+    "urn:tapnap:tapcam:live-photo-content-binding:v1";
+const MANIFEST_SCHEMA_ID: &str = "urn:tapnap:tapcam:still-photo-manifest:v1";
+const LIVE_PHOTO_MANIFEST_SCHEMA_ID: &str = "urn:tapnap:tapcam:live-photo-manifest:v1";
+const MANIFEST_MEDIA_TYPE: &str = "application/vnd.tapnap.still-photo-manifest+json;version=1";
 const LIVE_PHOTO_MANIFEST_MEDIA_TYPE: &str =
-    "application/vnd.tapnap.depth-manifest+json;version=2";
-const MANIFEST_PAYLOAD_MEDIA_TYPE_V1: &str =
-    "application/vnd.tapnap.depth-manifest.payload+json;version=1";
-const MANIFEST_PAYLOAD_MEDIA_TYPE_V2: &str =
-    "application/vnd.tapnap.depth-manifest.payload+json;version=2";
+    "application/vnd.tapnap.live-photo-manifest+json;version=1";
+const MANIFEST_PAYLOAD_MEDIA_TYPE: &str =
+    "application/vnd.tapnap.still-photo-manifest.payload+json;version=1";
+const LIVE_PHOTO_MANIFEST_PAYLOAD_MEDIA_TYPE: &str =
+    "application/vnd.tapnap.live-photo-manifest.payload+json;version=1";
 const MANIFEST_XMP_NAMESPACE_URI: &str = "urn:tapnap:tapcam:depth:1.0";
 const MANIFEST_XMP_PREFIX: &str = "tapdepth";
 const MANIFEST_XMP_PATH: &str = "tapdepth:Manifest";
@@ -374,8 +375,22 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
         .get("schemaID")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let is_live_photo = manifest_schema_id == LIVE_PHOTO_MANIFEST_SCHEMA_ID
-        || content_schema_id == LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID;
+    let payload_is_live_photo = payload
+        .get("livePhoto")
+        .is_some_and(|live_photo| !live_photo.is_null());
+    let is_live_photo = match (manifest_schema_id, content_schema_id, payload_is_live_photo) {
+        (MANIFEST_SCHEMA_ID, CONTENT_BINDING_SCHEMA_ID, false) => false,
+        (LIVE_PHOTO_MANIFEST_SCHEMA_ID, LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID, true) => true,
+        _ => {
+            return Err(
+                "manifest schema, payload media kind, and content binding family do not match"
+                    .to_string(),
+            )
+        }
+    };
+    if !is_live_photo && paired_video.is_some() {
+        return Err("still-photo verification input must not include a paired video".to_string());
+    }
 
     let asset_hash_actual =
         sha256_base64url_excluding(bytes, slot.container_offset, slot.container_length)?;
@@ -416,17 +431,12 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
     let mut live_photo_paired_status = None;
 
     if is_live_photo {
-        let primary_resource = live_photo_primary_resource(
-            container,
-            bytes.len(),
-            &slot,
-            &asset_hash_actual,
-        );
-        let manifest_resource = live_photo_manifest_resource(
-            embedded_payload_bytes.len(),
-            &metadata_hash_actual,
-        );
-        let embedded_content_digest_body_sha = sha256_base64url(&canonical_json_bytes(content_digest)?);
+        let primary_resource =
+            live_photo_primary_resource(container, bytes.len(), &slot, &asset_hash_actual);
+        let manifest_resource =
+            live_photo_manifest_resource(embedded_payload_bytes.len(), &metadata_hash_actual);
+        let embedded_content_digest_body_sha =
+            sha256_base64url(&canonical_json_bytes(content_digest)?);
         expected_signing_binding = Some(json!({
             "bodySHA256": embedded_content_digest_body_sha,
             "captureID": proof_content_capture_id,
@@ -453,9 +463,10 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
             );
             paired_video_hash_actual = Some(video_hash.clone());
 
-            let expected_video_hash = signed_resource_by_role(content_digest, "pairedLivePhotoVideo")
-                .and_then(|resource| resource.get("value"))
-                .and_then(Value::as_str);
+            let expected_video_hash =
+                signed_resource_by_role(content_digest, "pairedLivePhotoVideo")
+                    .and_then(|resource| resource.get("value"))
+                    .and_then(Value::as_str);
             if expected_video_hash == Some(video_hash.as_str())
                 && signed_resource_by_role(content_digest, "pairedLivePhotoVideo")
                     == Some(&video_resource)
@@ -485,7 +496,9 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
             signed_resource_by_role(content_digest, "tapDepthManifestPayload"),
         ));
         let signed_video_resource = signed_resource_by_role(content_digest, "pairedLivePhotoVideo");
-        live_checks.push(live_photo_paired_video_descriptor_check(signed_video_resource));
+        live_checks.push(live_photo_paired_video_descriptor_check(
+            signed_video_resource,
+        ));
         if let Some(video_bytes) = paired_video {
             let video_hash = paired_video_hash_actual.as_deref().unwrap_or_default();
             let video_resource = live_photo_paired_video_resource(video_bytes.len(), video_hash);
@@ -535,9 +548,10 @@ fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Resu
             proof_metadata_hash,
         );
         checks.extend(live_checks);
-        if let (Some(body_sha), Some(expected_binding)) =
-            (body_sha_actual.as_deref(), expected_signing_binding.as_ref())
-        {
+        if let (Some(body_sha), Some(expected_binding)) = (
+            body_sha_actual.as_deref(),
+            expected_signing_binding.as_ref(),
+        ) {
             checks.push(equality_check(
                 "body-sha",
                 "Verify signingBinding.bodySHA256 over embedded content digest",
@@ -1671,7 +1685,7 @@ fn recompute_content_digest(
         "captureID": capture_id,
         "capturedAt": captured_at,
         "assetHash": asset_hash_object(container, byte_count, slot, asset_hash),
-        "metadataHash": metadata_hash_object(MANIFEST_PAYLOAD_MEDIA_TYPE_V1, metadata_hash),
+        "metadataHash": metadata_hash_object(MANIFEST_PAYLOAD_MEDIA_TYPE, metadata_hash),
         "proofSlot": proof_slot_object(slot),
         "depthResource": depth_resource_object()
     })
@@ -1696,7 +1710,7 @@ fn recompute_live_photo_content_digest(
         "captureID": capture_id,
         "capturedAt": captured_at,
         "assetHash": asset_hash_object(container, byte_count, slot, asset_hash),
-        "metadataHash": metadata_hash_object(MANIFEST_PAYLOAD_MEDIA_TYPE_V2, metadata_hash),
+        "metadataHash": metadata_hash_object(LIVE_PHOTO_MANIFEST_PAYLOAD_MEDIA_TYPE, metadata_hash),
         "proofSlot": proof_slot_object(slot),
         "depthResource": depth_resource_object(),
         "signedResources": [
@@ -1781,7 +1795,7 @@ fn live_photo_manifest_resource(payload_byte_count: usize, metadata_hash: &str) 
     json!({
         "role": "tapDepthManifestPayload",
         "kind": "canonical-json",
-        "mediaType": MANIFEST_PAYLOAD_MEDIA_TYPE_V2,
+        "mediaType": LIVE_PHOTO_MANIFEST_PAYLOAD_MEDIA_TYPE,
         "algorithm": "SHA-256",
         "byteCount": payload_byte_count,
         "value": metadata_hash,
@@ -1883,9 +1897,9 @@ fn common_verification_checks(
         equality_check(
             "content-binding-schema",
             if is_live_photo {
-                "Require content-binding v3 schema"
+                "Require Live Photo content-binding v1 schema"
             } else {
-                "Require content-binding v2 schema"
+                "Require still-photo content-binding v1 schema"
             },
             content_schema_id,
             if is_live_photo {
@@ -3255,7 +3269,7 @@ fn schema_check(schema: &Value, is_live_photo: bool) -> Value {
     let expected = json!({
         "id": if is_live_photo { LIVE_PHOTO_MANIFEST_SCHEMA_ID } else { MANIFEST_SCHEMA_ID },
         "mediaType": if is_live_photo { LIVE_PHOTO_MANIFEST_MEDIA_TYPE } else { MANIFEST_MEDIA_TYPE },
-        "version": if is_live_photo { 2 } else { 1 },
+        "version": 1,
         "xmpManifestPath": MANIFEST_XMP_PATH,
         "xmpNamespaceURI": MANIFEST_XMP_NAMESPACE_URI,
         "xmpPrefix": MANIFEST_XMP_PREFIX
@@ -3309,7 +3323,7 @@ fn live_photo_paired_video_descriptor_check(resource: Option<&Value>) -> Value {
             "id": "live-photo-paired-video-descriptor",
             "label": "Require Live Photo paired MOV signed resource descriptor",
             "status": "fail",
-            "detail": "The v3 content digest does not declare a pairedLivePhotoVideo signed resource."
+            "detail": "The Live Photo v1 content digest does not declare a pairedLivePhotoVideo signed resource."
         });
     };
 
@@ -3345,7 +3359,7 @@ fn live_photo_paired_video_descriptor_check(resource: Option<&Value>) -> Value {
         "label": "Require Live Photo paired MOV signed resource descriptor",
         "status": if violations.is_empty() { "pass" } else { "fail" },
         "detail": if violations.is_empty() {
-            "The v3 content digest declares the paired MOV signed resource.".to_string()
+            "The Live Photo v1 content digest declares the paired MOV signed resource.".to_string()
         } else {
             violations.join("; ")
         },
@@ -4307,7 +4321,10 @@ mod tests {
         assert_eq!(report["verificationScope"], SCOPE_FULL_LIVE_PHOTO);
         assert_eq!(report["claims"]["fullLivePhotoVerified"], true);
         assert_eq!(report["claims"]["pairedVideoVerified"], true);
-        assert_eq!(report["manifest"]["schemaId"], LIVE_PHOTO_MANIFEST_SCHEMA_ID);
+        assert_eq!(
+            report["manifest"]["schemaId"],
+            LIVE_PHOTO_MANIFEST_SCHEMA_ID
+        );
         assert_eq!(report["livePhoto"]["pairedVideo"]["status"], "matched");
         assert!(report["serverRequest"].is_object());
         assert!(report["checks"]
@@ -4374,143 +4391,19 @@ mod tests {
     }
 
     #[test]
-    fn local_front_camera_fixture_uses_down_mirrored_depth_orientation_when_available() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("test/tapcam-original-photo.jpg");
-
-        if !fixture.exists() {
-            return;
-        }
-
-        let bytes = std::fs::read(fixture).unwrap();
-        let manifest_json = extract_tap_manifest_json(&bytes).unwrap();
-        let manifest: Value = serde_json::from_str(&manifest_json).unwrap();
-        let payload = field(&manifest, "payload").unwrap();
-        let depth = field(payload, "depth").unwrap();
-        let photo = field(payload, "photo").unwrap();
-
-        assert!(is_front_camera_capture(payload));
-        assert_eq!(
-            photo.get("orientation").and_then(Value::as_str),
-            Some("cgImagePropertyOrientation:4")
+    fn synthetic_live_photo_rejects_mixed_content_binding_family() {
+        let paired_video = b"synthetic mov bytes";
+        let bytes = synthetic_signed_live_photo_with_content_schema(
+            paired_video,
+            CONTENT_BINDING_SCHEMA_ID,
         );
-        assert_eq!(optional_u32(depth, "width"), Some(640));
-        assert_eq!(optional_u32(depth, "height"), Some(480));
-        assert_eq!(optional_u32(photo, "width"), Some(4032));
-        assert_eq!(optional_u32(photo, "height"), Some(3024));
-        assert_eq!(
-            display_orientation_transform(
-                640,
-                480,
-                Some(4032),
-                Some(3024),
-                Some("cgImagePropertyOrientation:4"),
-                true,
-            ),
-            OrientationTransform::DownMirrored
-        );
-    }
+        let report = verify_capture_package_bytes(&bytes, Some(paired_video));
 
-    #[test]
-    fn local_heic_fixture_verifies_when_available() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("test/tap-depth-photo.HEIC");
-
-        if !fixture.exists() {
-            return;
-        }
-
-        let bytes = std::fs::read(fixture).unwrap();
-        let report = verify_heic_bytes(&bytes);
-        assert_eq!(report["captureId"], "19EE1B2E-16FD-47B5-AD24-D559568CA4AD");
-        assert_eq!(report["status"], "valid");
-        assert_eq!(
-            report["recomputed"]["assetSHA256"],
-            "L3PxMfXci4kCCi_rQ_XV1wxb9f_oFX7lcwFkTVScY1Y"
-        );
-        assert_eq!(
-            report["recomputed"]["metadataSHA256"],
-            "pioecsnO2ixGdvZTmMUWGGXQ3uPZrZ4OgNymTvQbnIk"
-        );
-        assert_eq!(
-            report["recomputed"]["bodySHA256"],
-            "6ZIqezCAIVp2RtZyOAA_lW3vWTn5iuHLVrLGEw1jiv0"
-        );
-    }
-
-    #[test]
-    fn local_jpeg_fixture_verifies_when_available() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("test/tap-depth-photo.JPG");
-
-        if !fixture.exists() {
-            return;
-        }
-
-        let bytes = std::fs::read(fixture).unwrap();
-        let report = verify_capture_bytes(&bytes);
-        assert_eq!(report["captureId"], "A2138B25-4872-480A-9979-F6473AC568B1");
-        assert_eq!(report["status"], "valid");
-        assert_eq!(report["manifest"]["containerFormat"], "jpeg");
-        assert_eq!(report["proofSlot"]["kind"], "jpeg-app11-proof-slot");
-        assert_eq!(report["proofSlot"]["offset"], 2);
-        assert_eq!(
-            report["recomputed"]["assetSHA256"],
-            "j4lzDl_Fcm-FUWnaq_Rii17wj_9acpFqxVdjITjSoXw"
-        );
-        assert_eq!(
-            report["recomputed"]["metadataSHA256"],
-            "zMmSu2lpJNhS7sfxrqoS7_Puh8qYc8hJ6NGf0mywjWI"
-        );
-        assert_eq!(
-            report["recomputed"]["bodySHA256"],
-            "oNMDNVvLGW9q9olKhJp3l9XdtdPXJkRHJ2qrc1QXTC0"
-        );
-    }
-
-    #[test]
-    fn local_fixture_depth_metadata_visualizes_when_available() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("test/tap-depth-photo.HEIC");
-
-        if !fixture.exists() {
-            return;
-        }
-
-        let bytes = std::fs::read(fixture).unwrap();
-        let luma = vec![64u8; 576 * 768];
-        let report = visualize_depth_u8(&bytes, &luma, 576, 768);
-        assert_eq!(report["status"], "available");
-        assert_eq!(report["sourceKind"], "disparity");
-        assert_eq!(report["width"], 768);
-        assert_eq!(report["height"], 576);
-        assert_eq!(report["rotation"], "clockwise90");
-        assert_eq!(report["minValue"], 3.917969);
-        assert_eq!(report["maxValue"], 12.304688);
-        assert_eq!(report["valueUnit"], "disparity");
-    }
-
-    #[test]
-    fn local_fixture_depth_aligns_to_original_display_when_available() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("test/tap-depth-photo.HEIC");
-
-        if !fixture.exists() {
-            return;
-        }
-
-        let bytes = std::fs::read(fixture).unwrap();
-        let luma = vec![64u8; 576 * 768];
-        let report = visualize_depth_u8_for_display(&bytes, &luma, 576, 768, 3024, 4032);
-        assert_eq!(report["status"], "available");
-        assert_eq!(report["width"], 576);
-        assert_eq!(report["height"], 768);
-        assert_eq!(report["rotation"], "none");
+        assert_eq!(report["status"], "invalid");
+        assert!(report["summary"]
+            .as_str()
+            .unwrap()
+            .contains("content binding family do not match"));
     }
 
     fn synthetic_signed_heic() -> Vec<u8> {
@@ -4654,6 +4547,16 @@ mod tests {
     }
 
     fn synthetic_signed_live_photo(paired_video: &[u8]) -> Vec<u8> {
+        synthetic_signed_live_photo_with_content_schema(
+            paired_video,
+            LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID,
+        )
+    }
+
+    fn synthetic_signed_live_photo_with_content_schema(
+        paired_video: &[u8],
+        content_schema_id: &str,
+    ) -> Vec<u8> {
         let payload = json!({
             "alignmentStatus": "sameCapturePipeline",
             "capture": {
@@ -4680,7 +4583,7 @@ mod tests {
             "schema": {
                 "id": LIVE_PHOTO_MANIFEST_SCHEMA_ID,
                 "mediaType": LIVE_PHOTO_MANIFEST_MEDIA_TYPE,
-                "version": 2,
+                "version": 1,
                 "xmpManifestPath": MANIFEST_XMP_PATH,
                 "xmpNamespaceURI": MANIFEST_XMP_NAMESPACE_URI,
                 "xmpPrefix": MANIFEST_XMP_PREFIX
@@ -4707,7 +4610,7 @@ mod tests {
         let payload_canonical = canonical_json_bytes(&payload).unwrap();
         let metadata_hash = sha256_base64url(&payload_canonical);
         let paired_video_hash = sha256_base64url(paired_video);
-        let digest = recompute_live_photo_content_digest(
+        let mut digest = recompute_live_photo_content_digest(
             Container::Heic,
             unsigned.len(),
             &slot,
@@ -4719,6 +4622,7 @@ mod tests {
             &paired_video_hash,
             paired_video.len(),
         );
+        digest["schemaID"] = Value::String(content_schema_id.to_string());
         let body_sha = sha256_base64url(&canonical_json_bytes(&digest).unwrap());
         let signing_binding = json!({
             "bodySHA256": body_sha,

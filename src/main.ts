@@ -102,7 +102,7 @@ app.innerHTML = `
     </section>
     <section class="onboarding" data-onboarding>
       <div class="dropzone" id="dropzone">
-        <input id="fileInput" class="file-input" type="file" accept=".heic,.heif,.jpg,.jpeg,.mp4,.tapnap,.zip,image/heic,image/heif,image/jpeg,video/mp4,${TAPNAP_CAPTURE_PACKAGE_MIME_TYPE},application/zip" />
+        <input id="fileInput" class="file-input" type="file" accept=".heic,.heif,.jpg,.jpeg,.mp4,.tapnap,image/heic,image/heif,image/jpeg,video/mp4,${TAPNAP_CAPTURE_PACKAGE_MIME_TYPE}" />
         <div class="dropzone-copy">
           <strong class="dropzone-action" data-dropzone-select>${t("dropzone.select")}</strong>
           <p data-dropzone-instruction>${t("dropzone.instruction")}</p>

@@ -25,20 +25,12 @@ export interface PhotoCaptureInput extends CaptureInputBase {
   photoBytes: Uint8Array;
   pairedVideoBytes?: Uint8Array;
   pairedVideoName?: string;
-  videoFile?: File;
-  videoBytes?: Uint8Array;
 }
 
 export interface VideoCaptureInput extends CaptureInputBase {
   kind: "tap-video";
   videoFile: File;
   videoBytes: Uint8Array;
-  // Aliases keep the legacy CaptureInput read shape source-compatible. Video
-  // call sites must still branch on `kind` before choosing an analysis path.
-  photoFile: File;
-  photoBytes: Uint8Array;
-  pairedVideoBytes?: Uint8Array;
-  pairedVideoName?: string;
 }
 
 export type CaptureInput = PhotoCaptureInput | VideoCaptureInput;
@@ -50,13 +42,14 @@ export function resolveCaptureInput(file: File, fileBytes: Uint8Array): CaptureI
       fileName: file.name,
       fileSize: file.size,
       videoFile: file,
-      videoBytes: fileBytes,
-      photoFile: file,
-      photoBytes: fileBytes
+      videoBytes: fileBytes
     };
   }
 
-  if (!isCapturePackage(file, fileBytes)) {
+  if (!isCapturePackage(file)) {
+    if (!isSupportedPhotoFile(file)) {
+      throw new Error("Unsupported capture input. Select HEIC, HEIF, JPG, JPEG, MP4, or TAPNAP.");
+    }
     return {
       kind: "single-photo",
       fileName: file.name,
@@ -68,30 +61,23 @@ export function resolveCaptureInput(file: File, fileBytes: Uint8Array): CaptureI
 
   const entries = unzipCapturePackage(fileBytes);
   const sidecar = parseVerificationSidecar(entries["tapcam-export.json"]);
-  const primaryPhotoName =
-    resolveSidecarResource(entries, sidecar, "primaryPhoto", isSupportedPhotoName) ??
-    resolveUniqueEntry(entries, (name) => {
-      const basename = entryBasename(name).toLowerCase();
-      return (
-        basename === "primary-photo.heic" ||
-        basename === "primary-photo.heif" ||
-        basename === "primary-photo.jpg" ||
-        basename === "primary-photo.jpeg"
-      );
-    });
+  const primaryPhotoName = resolveSidecarResource(
+    entries,
+    sidecar,
+    "primaryPhoto",
+    isSupportedPhotoName
+  );
 
-  if (!primaryPhotoName || !entries[primaryPhotoName]) {
-    throw new Error(
-      "Capture package does not contain primary-photo.heic, primary-photo.heif, primary-photo.jpg, or primary-photo.jpeg."
-    );
+  if (!primaryPhotoName) {
+    throw new Error("Capture package requires a valid current v1 sidecar.");
   }
 
-  const pairedVideoName =
-    resolveSidecarResource(entries, sidecar, "pairedLivePhotoVideo", isQuickTimeMovieName) ??
-    resolveUniqueEntry(
-      entries,
-      (name) => entryBasename(name).toLowerCase() === "paired-video.mov"
-    );
+  const pairedVideoName = resolveSidecarResource(
+    entries,
+    sidecar,
+    "pairedLivePhotoVideo",
+    isQuickTimeMovieName
+  );
   const photoBytes = entries[primaryPhotoName];
   const pairedVideoBytes = pairedVideoName ? entries[pairedVideoName] : undefined;
   const photoFileName = entryBasename(primaryPhotoName);
@@ -163,28 +149,10 @@ function unzipCapturePackage(fileBytes: Uint8Array): Unzipped {
   });
 }
 
-function isCapturePackage(file: File, fileBytes: Uint8Array): boolean {
+function isCapturePackage(file: File): boolean {
   const lowerName = file.name.toLowerCase();
   const lowerType = file.type.toLowerCase();
-  return (
-    lowerName.endsWith(".tapnap") ||
-    lowerName.endsWith(".zip") ||
-    lowerType === TAPNAP_CAPTURE_PACKAGE_MIME_TYPE ||
-    lowerType === "application/zip" ||
-    hasZipMagic(fileBytes)
-  );
-}
-
-function hasZipMagic(bytes: Uint8Array): boolean {
-  if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
-    return false;
-  }
-
-  return (
-    (bytes[2] === 0x03 && bytes[3] === 0x04) ||
-    (bytes[2] === 0x05 && bytes[3] === 0x06) ||
-    (bytes[2] === 0x07 && bytes[3] === 0x08)
-  );
+  return lowerName.endsWith(".tapnap") || lowerType === TAPNAP_CAPTURE_PACKAGE_MIME_TYPE;
 }
 
 interface VerificationExportSidecar {
@@ -194,36 +162,44 @@ interface VerificationExportSidecar {
   }>;
 }
 
-function parseVerificationSidecar(bytes: Uint8Array | undefined): VerificationExportSidecar | null {
+function parseVerificationSidecar(bytes: Uint8Array | undefined): VerificationExportSidecar {
   if (!bytes) {
-    return null;
+    throw new Error("Capture package requires a valid current v1 sidecar.");
   }
 
+  let value: unknown;
   try {
-    const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
-    if (
-      !isRecord(value) ||
-      value.schemaID !== VERIFICATION_SIDECAR_SCHEMA_ID ||
-      value.version !== VERIFICATION_SIDECAR_VERSION ||
-      !Array.isArray(value.resources)
-    ) {
-      return null;
-    }
+    value = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new Error("Capture package requires a valid current v1 sidecar.");
+  }
 
-    const resources = value.resources.flatMap((resource) => {
-      if (
+  if (
+    !isRecord(value) ||
+    value.schemaID !== VERIFICATION_SIDECAR_SCHEMA_ID ||
+    value.version !== VERIFICATION_SIDECAR_VERSION ||
+    !Array.isArray(value.resources) ||
+    value.resources.some(
+      (resource) =>
         !isRecord(resource) ||
         typeof resource.role !== "string" ||
         typeof resource.filename !== "string"
-      ) {
-        return [];
-      }
-      return [{ role: resource.role, filename: resource.filename }];
-    });
-    return { resources };
-  } catch {
-    return null;
+    )
+  ) {
+    throw new Error("Capture package requires a valid current v1 sidecar.");
   }
+
+  const resources = value.resources.map((resource) => ({
+    role: resource.role as string,
+    filename: resource.filename as string
+  }));
+  if (
+    resources.filter((resource) => resource.role === "primaryPhoto").length !== 1 ||
+    resources.filter((resource) => resource.role === "pairedLivePhotoVideo").length > 1
+  ) {
+    throw new Error("Capture package requires a valid current v1 sidecar.");
+  }
+  return { resources };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -232,7 +208,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function resolveSidecarResource(
   entries: Record<string, Uint8Array>,
-  sidecar: VerificationExportSidecar | null,
+  sidecar: VerificationExportSidecar,
   role: string,
   isAllowedName: (name: string) => boolean
 ): string | null {
@@ -241,27 +217,10 @@ function resolveSidecarResource(
     return null;
   }
 
-  if (entries[filename] && isAllowedName(entryBasename(filename))) {
-    return filename;
+  if (!entries[filename] || !isAllowedName(entryBasename(filename))) {
+    throw new Error("Capture package requires a valid current v1 sidecar.");
   }
-
-  const basename = entryBasename(filename);
-  if (!isAllowedName(basename)) {
-    return null;
-  }
-
-  return resolveUniqueEntry(entries, (name) => entryBasename(name) === basename);
-}
-
-function resolveUniqueEntry(
-  entries: Record<string, Uint8Array>,
-  predicate: (name: string) => boolean
-): string | null {
-  const matches = Object.keys(entries).filter(predicate);
-  if (matches.length > 1) {
-    throw new Error("Capture package contains ambiguous media resources.");
-  }
-  return matches[0] ?? null;
+  return filename;
 }
 
 function entryBasename(name: string): string {
@@ -275,6 +234,16 @@ function isSupportedPhotoName(name: string): boolean {
     lower.endsWith(".heif") ||
     lower.endsWith(".jpg") ||
     lower.endsWith(".jpeg")
+  );
+}
+
+function isSupportedPhotoFile(file: File): boolean {
+  const lowerType = file.type.toLowerCase();
+  return (
+    isSupportedPhotoName(file.name) ||
+    lowerType === "image/heic" ||
+    lowerType === "image/heif" ||
+    lowerType === "image/jpeg"
   );
 }
 
