@@ -12,8 +12,7 @@ Before changing files:
 1. Read this file.
 2. Search the sibling [TAPCamKanban Project Board](../TAPCamKanban/ProjectBoard.md)
    and read the complete matching Task and dependencies.
-3. Read [README.md](README.md), [Docs/VerificationFlow.md](Docs/VerificationFlow.md),
-   and [Docs/Roadmap.md](Docs/Roadmap.md).
+3. Read [README.md](README.md).
 4. Read the pinned TAPArtifactContracts revision for wire behavior.
 5. For public authenticity claims, read TAPCamDemo
    `Docs/ProductContract.md` claim boundaries.
@@ -24,7 +23,7 @@ Before changing files:
 
 - Keep shared wire/schema/signing/container rules in TAPArtifactContracts. Keep
   Verifier-local coverage, compatibility choices, and any implementation gaps
-  in `Docs/Roadmap.md`.
+  in [README.md](README.md).
 - Fail closed at input and verification boundaries; do not infer authenticity,
   scene truth, author identity, time, location, or non-AI origin from depth or a
   valid cryptographic binding.

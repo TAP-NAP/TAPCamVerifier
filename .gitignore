@@ -8,6 +8,5 @@ public/wasm/*.wasm
 Docs/Assets/LandingQA/
 artifacts/design-qa/**/*.png
 
-# Local real-device TAPCam samples. Keep README tracked, keep photos local.
+# Local real-device TAPCam samples.
 test/*
-!test/README.md

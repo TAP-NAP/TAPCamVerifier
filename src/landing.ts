@@ -225,7 +225,7 @@ landing.innerHTML = `
         <strong data-copy="action.verify.title">打开验证器</strong>
         <span data-copy="action.verify.body">检查 TAPCam 媒体的签名凭证与内容绑定</span>
       </a>
-      <a class="action-link action-link--docs" href="https://github.com/TAP-NAP/TAPCamVerifier/blob/main/Docs/VerificationFlow.md" target="_blank" rel="noopener noreferrer">
+      <a class="action-link action-link--docs" href="https://github.com/TAP-NAP/TAPCamVerifier#verification-flow" target="_blank" rel="noopener noreferrer">
         <span class="action-index">03</span>
         <span class="action-type">TECHNOLOGY</span>
         <strong data-copy="action.docs.title">阅读技术文档</strong>
