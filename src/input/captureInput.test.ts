@@ -6,6 +6,8 @@ import {
 } from "./captureInput";
 
 const textEncoder = new TextEncoder();
+const trustBoundary =
+  "This sidecar is not signed. Verify primary photo and paired video bytes against the TAP signature embedded in the photo.";
 
 function verificationSidecar(
   packageKind: "stillPhoto" | "livePhotoPackage",
@@ -16,7 +18,10 @@ function verificationSidecar(
       schemaID: "urn:tapnap:tapcam:verification-export:v1",
       version: 1,
       packageKind,
-      resources
+      resources,
+      warningLabels: [],
+      warnings: [],
+      trustBoundary
     })
   );
 }
@@ -126,6 +131,20 @@ describe("resolveCaptureInput", () => {
     expect(input.pairedVideoBytes).toBeUndefined();
   });
 
+  it("accepts string-array presentation warnings without treating them as evidence", () => {
+    const sidecar = JSON.parse(new TextDecoder().decode(verificationSidecar("stillPhoto", [
+      { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" }
+    ])));
+    sidecar.warningLabels = ["adjustment-data", "thumbnail"];
+    sidecar.warnings = ["Photos presentation resources detected."];
+    const zipBytes = zipSync({
+      "primary-photo.heic": new Uint8Array([1]),
+      "tapcam-export.json": textEncoder.encode(JSON.stringify(sidecar))
+    });
+
+    expect(requirePhotoInput(resolveTapnap(zipBytes)).kind).toBe("capture-package");
+  });
+
   it("rejects missing or invalid current-v1 sidecars and resources", () => {
     const invalidPackages: Array<Record<string, Uint8Array>> = [
       { "primary-photo.heic": new Uint8Array([80]) },
@@ -207,6 +226,163 @@ describe("resolveCaptureInput", () => {
     }
   });
 
+  it("rejects missing, mistyped, unknown, or authenticity-bearing sidecar fields", () => {
+    const valid = {
+      schemaID: "urn:tapnap:tapcam:verification-export:v1",
+      version: 1,
+      packageKind: "stillPhoto",
+      resources: [
+        { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" }
+      ],
+      warningLabels: [],
+      warnings: [],
+      trustBoundary
+    };
+    const invalidSidecars = [
+      { ...valid, packageKind: undefined },
+      { ...valid, version: "1" },
+      { ...valid, warningLabels: "adjusted" },
+      { ...valid, trustBoundary: "signed routing metadata" },
+      { ...valid, signingBinding: {} },
+      {
+        ...valid,
+        resources: [{ ...valid.resources[0], digest: "unsigned" }]
+      }
+    ];
+
+    for (const sidecar of invalidSidecars) {
+      const zipBytes = zipSync({
+        "primary-photo.heic": new Uint8Array([1]),
+        "tapcam-export.json": textEncoder.encode(JSON.stringify(sidecar))
+      });
+      expect(() => resolveTapnap(zipBytes)).toThrow();
+    }
+  });
+
+  it("rejects package-kind, role, ordering, media-type, and path mismatches", () => {
+    const invalidPackages: Array<Record<string, Uint8Array>> = [
+      {
+        "primary-photo.heic": new Uint8Array([1]),
+        "tapcam-export.json": verificationSidecar("livePhotoPackage", [
+          { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" }
+        ])
+      },
+      {
+        "primary-photo.heic": new Uint8Array([1]),
+        "paired-video.mov": new Uint8Array([2]),
+        "tapcam-export.json": verificationSidecar("stillPhoto", [
+          { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" },
+          {
+            role: "pairedLivePhotoVideo",
+            filename: "paired-video.mov",
+            mediaType: "com.apple.quicktime-movie"
+          }
+        ])
+      },
+      {
+        "primary-photo.heic": new Uint8Array([1]),
+        "paired-video.mov": new Uint8Array([2]),
+        "tapcam-export.json": verificationSidecar("livePhotoPackage", [
+          {
+            role: "pairedLivePhotoVideo",
+            filename: "paired-video.mov",
+            mediaType: "com.apple.quicktime-movie"
+          },
+          { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" }
+        ])
+      },
+      {
+        "primary-photo.heic": new Uint8Array([1]),
+        "tapcam-export.json": verificationSidecar("stillPhoto", [
+          { role: "tapDepthManifestPayload", filename: "primary-photo.heic", mediaType: "public.heic" }
+        ])
+      },
+      {
+        "primary-photo.jpg": new Uint8Array([1]),
+        "tapcam-export.json": verificationSidecar("stillPhoto", [
+          { role: "primaryPhoto", filename: "primary-photo.jpg", mediaType: "public.heic" }
+        ])
+      },
+      {
+        "nested/primary-photo.heic": new Uint8Array([1]),
+        "tapcam-export.json": verificationSidecar("stillPhoto", [
+          { role: "primaryPhoto", filename: "nested/primary-photo.heic", mediaType: "public.heic" }
+        ])
+      }
+    ];
+
+    for (const entries of invalidPackages) {
+      expect(() => resolveTapnap(zipSync(entries))).toThrow();
+    }
+  });
+
+  it("rejects malformed ZIP magic, versions, headers, and lengths", () => {
+    const makePackage = () => zipSync({
+      "primary-photo.heic": new Uint8Array([1, 2, 3]),
+      "tapcam-export.json": verificationSidecar("stillPhoto", [
+        { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" }
+      ])
+    });
+
+    const invalidMagic = makePackage().slice();
+    invalidMagic[0] = 0;
+
+    const invalidVersion = makePackage().slice();
+    writeUint16(invalidVersion, 4, 45);
+    writeUint16(invalidVersion, findSignature(invalidVersion, 0x02014b50) + 6, 45);
+
+    const invalidCentralHeader = makePackage().slice();
+    invalidCentralHeader[findSignature(invalidCentralHeader, 0x02014b50)] = 0;
+
+    const invalidLength = makePackage().slice();
+    writeUint16(invalidLength, findSignature(invalidLength, 0x06054b50) + 20, 1);
+
+    for (const bytes of [invalidMagic, invalidVersion, invalidCentralHeader, invalidLength]) {
+      expect(() => resolveTapnap(bytes)).toThrow();
+    }
+  });
+
+  it("rejects sidecars and declared resources beyond local size budgets", () => {
+    const oversizedSidecar = verificationSidecar("stillPhoto", [
+      { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" }
+    ]);
+    const paddedSidecar = new Uint8Array(256 * 1024 + 1);
+    paddedSidecar.set(oversizedSidecar);
+    expect(() => resolveTapnap(zipSync({
+      "primary-photo.heic": new Uint8Array([1]),
+      "tapcam-export.json": paddedSidecar
+    }))).toThrow();
+
+    const oversizedResource = zipSync({
+      "primary-photo.heic": new Uint8Array([1]),
+      "tapcam-export.json": oversizedSidecar
+    });
+    const centralHeader = findSignature(oversizedResource, 0x02014b50);
+    writeUint32(oversizedResource, centralHeader + 24, 384 * 1024 * 1024 + 1);
+    expect(() => resolveTapnap(oversizedResource)).toThrow();
+  });
+
+  it("rejects a non-UTF-8 routing sidecar", () => {
+    const zipBytes = zipSync({
+      "primary-photo.heic": new Uint8Array([1]),
+      "tapcam-export.json": new Uint8Array([0xc3, 0x28])
+    });
+    expect(() => resolveTapnap(zipBytes)).toThrow();
+  });
+
+  it("rejects duplicate root sidecar archive entries", () => {
+    const zipBytes = zipSync({
+      "primary-photo.heic": new Uint8Array([1]),
+      "tapcam-export.json": verificationSidecar("stillPhoto", [
+        { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" }
+      ]),
+      "tapcam-export.jsox": new Uint8Array([1])
+    });
+    replaceAscii(zipBytes, "tapcam-export.jsox", "tapcam-export.json");
+
+    expect(() => resolveTapnap(zipBytes)).toThrow();
+  });
+
   it("rejects packages with excessive archive entries", () => {
     const entries: Record<string, Uint8Array> = {
       "primary-photo.heic": new Uint8Array([87]),
@@ -238,4 +414,48 @@ describe("resolveCaptureInput", () => {
 function requirePhotoInput(input: ReturnType<typeof resolveCaptureInput>) {
   if (input.kind === "tap-video") throw new Error("expected photo input");
   return input;
+}
+
+function resolveTapnap(bytes: Uint8Array) {
+  return resolveCaptureInput(
+    new File([new Uint8Array(bytes)], "TAPNAP-Capture.tapnap"),
+    bytes
+  );
+}
+
+function findSignature(bytes: Uint8Array, signature: number): number {
+  for (let offset = 0; offset <= bytes.length - 4; offset += 1) {
+    if (
+      bytes[offset] === (signature & 0xff) &&
+      bytes[offset + 1] === ((signature >>> 8) & 0xff) &&
+      bytes[offset + 2] === ((signature >>> 16) & 0xff) &&
+      bytes[offset + 3] === ((signature >>> 24) & 0xff)
+    ) {
+      return offset;
+    }
+  }
+  throw new Error("ZIP signature not found in test fixture");
+}
+
+function writeUint16(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >>> 8) & 0xff;
+}
+
+function writeUint32(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >>> 8) & 0xff;
+  bytes[offset + 2] = (value >>> 16) & 0xff;
+  bytes[offset + 3] = (value >>> 24) & 0xff;
+}
+
+function replaceAscii(bytes: Uint8Array, source: string, replacement: string): void {
+  const sourceBytes = textEncoder.encode(source);
+  const replacementBytes = textEncoder.encode(replacement);
+  if (sourceBytes.length !== replacementBytes.length) throw new Error("test names must match");
+  for (let offset = 0; offset <= bytes.length - sourceBytes.length; offset += 1) {
+    if (sourceBytes.every((byte, index) => bytes[offset + index] === byte)) {
+      bytes.set(replacementBytes, offset);
+    }
+  }
 }

@@ -31,6 +31,7 @@ import {
   renderVerificationResult,
   type ResultModalType
 } from "./ui/rendering";
+import { ResultModalCoordinator } from "./ui/resultModalCoordinator";
 import { getTapCamTopbarLabels, renderTapCamTopbar } from "./ui/topbar";
 import { verifyCapturePackageLocally, visualizeDepthPlane } from "./wasm/tapcamVerifier";
 import { verifyCaptureSignature } from "./verifier/serverVerify";
@@ -144,6 +145,7 @@ const workspaceEl = app.querySelector<HTMLElement>(".workspace");
 let activeRunId = 0;
 let activeObjectUrl: string | null = null;
 let activeFileBytes: Uint8Array | null = null;
+let activeDepthPlaneProbe: Promise<DecodedDepthPlane | null> | null = null;
 let activeDepthPlane: DecodedDepthPlane | null = null;
 let activeRgbImage: DecodedRgbImage | null = null;
 let activeOriginalDisplayReference: DisplayOrientationReference | null = null;
@@ -169,6 +171,7 @@ let currentGeometryState: PixelProjectionState | null = null;
 type VerificationProgressStatus = "idle" | "running" | "valid" | "invalid";
 let currentProgressPhase = 0;
 let currentProgressStatus: VerificationProgressStatus = "idle";
+const resultModalCoordinator = new ResultModalCoordinator();
 
 if (!workspaceEl) {
   throw new Error("Verifier workspace did not mount.");
@@ -346,16 +349,18 @@ function syncFileSummary(): void {
 
 function resetToHome(event?: Event): void {
   event?.preventDefault();
+  activeRunId += 1;
   restoreDynamicPanels();
   cleanupGeometryViewer();
   cleanupVideoPlayback();
-  document.querySelector("[data-result-modal]")?.remove();
+  resultModalCoordinator.dismiss();
   if (activeObjectUrl) {
     URL.revokeObjectURL(activeObjectUrl);
   }
   activeObjectUrl = null;
   activeInputKind = null;
   activeFileBytes = null;
+  activeDepthPlaneProbe = null;
   activeDepthPlane = null;
   activeRgbImage = null;
   activeOriginalDisplayReference = null;
@@ -454,10 +459,10 @@ async function verifyFile(file: File): Promise<void> {
     return;
   }
 
-  startAnalysis(runId, captureInput);
+  const depthPlaneProbe = startAnalysis(runId, captureInput);
 
   try {
-    const result = await verifyFileBytes(runId, captureInput);
+    const result = await verifyFileBytes(runId, captureInput, depthPlaneProbe);
     if (runId !== activeRunId) {
       return;
     }
@@ -494,35 +499,29 @@ async function verifyFile(file: File): Promise<void> {
 }
 
 function showResultModal(type: ResultModalType, config: { title: string; desc: string; detail?: string; buttonText: string }): Promise<void> {
-  return new Promise((resolve) => {
-    const existing = document.querySelector("[data-result-modal]");
-    if (existing) existing.remove();
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderResultModal(type, config);
+  const modalEl = wrapper.firstElementChild as HTMLElement;
+  const closeBtn = modalEl.querySelector<HTMLButtonElement>("[data-result-modal-close]");
+  let dismiss = (): void => {};
 
-    const wrapper = document.createElement("div");
-    wrapper.innerHTML = renderResultModal(type, config);
-    const modalEl = wrapper.firstElementChild as HTMLElement;
-    document.body.appendChild(modalEl);
-
-    const closeBtn = modalEl.querySelector<HTMLButtonElement>("[data-result-modal-close]");
-
-    function dismiss(): void {
-      modalEl.remove();
-      document.removeEventListener("keydown", handleKey);
-      resolve();
+  function handleKey(event: KeyboardEvent): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      dismiss();
     }
+  }
 
-    function handleKey(e: KeyboardEvent): void {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        dismiss();
-      }
-    }
-
-    closeBtn?.addEventListener("click", dismiss);
-    document.addEventListener("keydown", handleKey);
-
-    closeBtn?.focus();
+  const session = resultModalCoordinator.replace(() => {
+    modalEl.remove();
+    document.removeEventListener("keydown", handleKey);
   });
+  dismiss = session.dismiss;
+  closeBtn?.addEventListener("click", dismiss, { once: true });
+  document.addEventListener("keydown", handleKey);
+  document.body.appendChild(modalEl);
+  closeBtn?.focus();
+  return session.closed;
 }
 
 function resultModalFor(result: CombinedVerificationResult): {
@@ -591,8 +590,9 @@ function resultModalFor(result: CombinedVerificationResult): {
 function beginSelectedFile(file: File): number {
   activeRunId += 1;
   restoreDynamicPanels();
-  document.querySelector("[data-result-modal]")?.remove();
+  resultModalCoordinator.dismiss();
   activeFileBytes = null;
+  activeDepthPlaneProbe = null;
   activeDepthPlane = null;
   activeRgbImage = null;
   activeOriginalDisplayReference = null;
@@ -635,24 +635,29 @@ function beginSelectedFile(file: File): number {
   return activeRunId;
 }
 
-function startAnalysis(runId: number, captureInput: CaptureInput): void {
+function startAnalysis(
+  runId: number,
+  captureInput: CaptureInput
+): Promise<DecodedDepthPlane | null> | null {
   if (runId !== activeRunId) {
-    return;
+    return null;
   }
 
   setVerificationProgress(1, "running");
   activeInputKind = captureInput.kind;
   if (captureInput.kind === "tap-video") {
     renderVideoVisualizationScaffold(captureInput.videoFile);
-    return;
+    return null;
   }
 
   activeFileBytes = captureInput.photoBytes;
+  activeDepthPlaneProbe = decodeEmbeddedDepthPlane(captureInput.photoBytes);
   activeObjectUrl = URL.createObjectURL(captureInput.photoFile);
   renderVisualizationScaffold(captureInput.photoFile, activeObjectUrl);
   requestOriginalFallback(runId, captureInput.photoFile.name);
   requestDepthVisualization(runId);
   requestRgbAnalysis(runId, captureInput.photoFile);
+  return activeDepthPlaneProbe;
 }
 
 function revealVisualization(runId: number): void {
@@ -676,13 +681,19 @@ function requestDepthVisualization(runId: number): void {
     runId !== activeRunId ||
     depthStartedRunId === runId ||
     !activeFileBytes ||
+    !activeDepthPlaneProbe ||
     originalDisplayResolvedRunId !== runId
   ) {
     return;
   }
 
   depthStartedRunId = runId;
-  void visualizeSelectedDepth(runId, activeFileBytes, activeOriginalDisplayReference ?? undefined);
+  void visualizeSelectedDepth(
+    runId,
+    activeFileBytes,
+    activeDepthPlaneProbe,
+    activeOriginalDisplayReference ?? undefined
+  );
 }
 
 function requestRgbAnalysis(runId: number, file: File): void {
@@ -765,10 +776,11 @@ async function visualizeSelectedOriginalFallback(
 async function visualizeSelectedDepth(
   runId: number,
   fileBytes: Uint8Array,
+  depthPlaneProbe: Promise<DecodedDepthPlane | null>,
   displayReference?: DisplayOrientationReference
 ): Promise<void> {
   try {
-    const depthPlane = await decodeEmbeddedDepthPlane(fileBytes);
+    const depthPlane = await depthPlaneProbe;
     if (runId !== activeRunId) {
       return;
     }
@@ -1090,10 +1102,20 @@ function cleanupVideoPlayback(): void {
   activeVideoPlaybackCleanup = null;
 }
 
-async function verifyFileBytes(runId: number, captureInput: CaptureInput): Promise<CombinedVerificationResult> {
-  const local = captureInput.kind === "tap-video"
-    ? await verifyTapVideoLocally(captureInput.videoBytes)
-    : await verifyPhotoInputLocally(captureInput);
+async function verifyFileBytes(
+  runId: number,
+  captureInput: CaptureInput,
+  depthPlaneProbe: Promise<DecodedDepthPlane | null> | null
+): Promise<CombinedVerificationResult> {
+  let local: LocalVerificationReport;
+  if (captureInput.kind === "tap-video") {
+    local = await verifyTapVideoLocally(captureInput.videoBytes);
+  } else {
+    if (!depthPlaneProbe) {
+      throw new Error("Missing auxiliary depth readback probe.");
+    }
+    local = await verifyPhotoInputLocally(captureInput, depthPlaneProbe);
+  }
   const localFailure = hasLocalFailure(local);
 
   if (runId === activeRunId) {
@@ -1147,8 +1169,16 @@ async function verifyFileBytes(runId: number, captureInput: CaptureInput): Promi
   };
 }
 
-function verifyPhotoInputLocally(captureInput: PhotoCaptureInput): Promise<LocalVerificationReport> {
-  return verifyCapturePackageLocally(captureInput.photoBytes, captureInput.pairedVideoBytes);
+async function verifyPhotoInputLocally(
+  captureInput: PhotoCaptureInput,
+  depthPlaneProbe: Promise<DecodedDepthPlane | null>
+): Promise<LocalVerificationReport> {
+  const depthPlane = await depthPlaneProbe;
+  return verifyCapturePackageLocally(
+    captureInput.photoBytes,
+    depthPlane !== null,
+    captureInput.pairedVideoBytes
+  );
 }
 
 function finalStatus(

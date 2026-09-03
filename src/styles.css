@@ -8,114 +8,6 @@
   text-rendering: optimizeLegibility;
 }
 
-.navbar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 100;
-  height: 56px;
-  background: #ffffff;
-  border-bottom: 1px solid #e3e7eb;
-  backdrop-filter: blur(8px);
-}
-
-.navbar-inner {
-  max-width: 1040px;
-  margin: 0 auto;
-  padding: 0 16px;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.navbar-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  text-decoration: none;
-  color: #171717;
-  font-weight: 700;
-  font-size: 1.05rem;
-}
-
-.navbar-brand img {
-  border-radius: 6px;
-}
-
-.navbar-links {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.navbar-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 0 12px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: #4a5560;
-  cursor: pointer;
-  font-size: 0.88rem;
-  font-weight: 600;
-  text-decoration: none;
-  transition: background 120ms ease, color 120ms ease;
-}
-
-.navbar-link:hover {
-  background: #f0f2f5;
-  color: #171717;
-}
-
-.navbar-link--active {
-  color: #1b6f8f;
-  background: #e8f6fa;
-}
-
-.navbar-link--active:hover {
-  background: #d9eff5;
-  color: #16627e;
-}
-
-.navbar-link--github {
-  padding: 0 8px;
-  color: #4a5560;
-}
-
-.navbar-link--download {
-  gap: 5px;
-  padding: 0 12px;
-  border-radius: 6px;
-  background: #1b6f8f;
-  color: #ffffff !important;
-  font-weight: 700;
-}
-
-.navbar-link--download:hover {
-  background: #16627e;
-  color: #ffffff !important;
-}
-
-.navbar-lang {
-  padding: 0 10px;
-  border: 1px solid #d7dde3;
-  border-radius: 6px;
-  font-size: 0.8rem;
-  font-weight: 700;
-  min-width: 44px;
-  justify-content: center;
-}
-
-.navbar-lang:hover {
-  border-color: #1b6f8f;
-  color: #1b6f8f;
-}
-
 .toast {
   position: fixed;
   top: 72px;
@@ -192,61 +84,6 @@ input {
   margin-bottom: 28px;
 }
 
-.onboarding-title {
-  margin: 0 0 10px;
-  font-size: clamp(1.3rem, 3vw, 1.75rem);
-  font-weight: 700;
-  color: #171717;
-  letter-spacing: -0.01em;
-}
-
-.onboarding-desc {
-  margin: 0 0 20px;
-  color: #4a5560;
-  font-size: 0.95rem;
-  line-height: 1.6;
-  max-width: 680px;
-}
-
-.onboarding-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.onboarding-card {
-  padding: 16px;
-  border: 1px solid #e3e7eb;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.onboarding-card-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: #e8f4f8;
-  color: #1b6f8f;
-  margin-bottom: 10px;
-}
-
-.onboarding-card h3 {
-  margin: 0 0 6px;
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: #1a202c;
-}
-
-.onboarding-card p {
-  margin: 0;
-  font-size: 0.88rem;
-  color: #3d4650;
-  line-height: 1.5;
-}
-
 .dropzone {
   position: relative;
   display: grid;
@@ -296,12 +133,6 @@ input {
 
 .visualization {
   margin-top: 24px;
-}
-
-.visual-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
 }
 
 .visual-pane {
@@ -541,13 +372,6 @@ input {
 .geometry-rotate-hint__arrow--right { animation-delay: 0.25s; }
 .geometry-rotate-hint__arrow--down { animation-delay: 0.5s; }
 .geometry-rotate-hint__arrow--left { animation-delay: 0.75s; }
-
-.geometry-rotate-hint__center {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: rgb(255 255 255 / 8%);
-}
 
 .geometry-rotate-hint__label {
   color: #c8d1da;
@@ -1216,35 +1040,6 @@ input {
 }
 
 @media (max-width: 680px) {
-  .navbar-inner {
-    padding: 0 10px;
-  }
-
-  .navbar-link {
-    padding: 0 8px;
-    min-height: 32px;
-    font-size: 0.82rem;
-  }
-
-  .navbar-link--github {
-    padding: 0 6px;
-  }
-
-  .navbar-link--download {
-    padding: 0 8px;
-    font-size: 0.82rem;
-  }
-
-  .navbar-brand-text {
-    display: none;
-  }
-
-  .navbar-lang {
-    min-width: 38px;
-    padding: 0 8px;
-    font-size: 0.76rem;
-  }
-
   .workspace {
     width: min(100vw - 20px, 1040px);
     padding: 16px 0;
@@ -1254,19 +1049,7 @@ input {
     margin-bottom: 20px;
   }
 
-  .onboarding-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .onboarding-card {
-    padding: 12px 14px;
-  }
-
   .summary-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .visual-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1364,75 +1147,6 @@ summary {
 
 [hidden] {
   display: none !important;
-}
-
-.navbar {
-  top: 14px;
-  right: 16px;
-  left: 16px;
-  height: 54px;
-  border: 1px solid var(--tap-rule);
-  border-radius: 999px;
-  background: rgb(10 10 10 / 96%);
-  backdrop-filter: blur(14px);
-}
-
-.navbar-inner {
-  width: 100%;
-  max-width: none;
-  padding: 0 14px 0 12px;
-}
-
-.navbar-brand {
-  gap: 9px;
-  color: var(--tap-ink);
-  font-size: 0.96rem;
-  font-weight: 760;
-  letter-spacing: -0.02em;
-}
-
-.navbar-brand img {
-  border-radius: 2px;
-}
-
-.navbar-links {
-  gap: 4px;
-}
-
-.navbar-link {
-  min-height: 34px;
-  padding: 0 14px;
-  border-radius: 999px;
-  color: #bebfba;
-  font-family: var(--tap-mono);
-  font-size: 0.7rem;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.navbar-link:hover {
-  background: #151515;
-  color: var(--tap-ink);
-}
-
-.navbar-link--active,
-.navbar-link--active:hover {
-  padding-inline: 22px;
-  background: var(--tap-lime);
-  color: #050505;
-}
-
-.navbar-link--github {
-  padding-inline: 14px;
-  color: #bebfba;
-}
-
-.navbar-lang {
-  min-width: 44px;
-  border: 0;
-  border-left: 1px solid var(--tap-rule);
-  border-radius: 0;
 }
 
 .workspace {
@@ -1920,10 +1634,6 @@ summary {
   color: var(--tap-lime);
 }
 
-.geometry-rotate-hint__center {
-  display: none;
-}
-
 .geometry-rotate-hint__label {
   color: #c3c4be;
   font-family: var(--tap-mono);
@@ -2303,45 +2013,6 @@ summary {
 @media (max-width: 680px) {
   body {
     padding-top: 72px;
-  }
-
-  .navbar {
-    top: 9px;
-    right: 8px;
-    left: 8px;
-    height: 50px;
-  }
-
-  .navbar-inner {
-    padding: 0 8px;
-  }
-
-  .navbar-brand img {
-    width: 34px;
-    height: 34px;
-  }
-
-  .navbar-links {
-    gap: 0;
-  }
-
-  .navbar-link {
-    min-height: 32px;
-    padding: 0 7px;
-    font-size: 0.58rem;
-  }
-
-  .navbar-link--active,
-  .navbar-link--active:hover {
-    padding-inline: 12px;
-  }
-
-  .navbar-link--github {
-    display: none;
-  }
-
-  .navbar-lang {
-    min-width: 36px;
   }
 
   .workspace {

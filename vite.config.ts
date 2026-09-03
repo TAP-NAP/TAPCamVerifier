@@ -15,8 +15,5 @@ export default defineConfig({
         verify: `${projectRoot}verify/index.html`
       }
     }
-  },
-  test: {
-    environment: "node"
   }
 });

@@ -9,15 +9,17 @@ owns only TAPCamVerifier's input routing, implementation stages, report scopes,
 presentation, and server-call orchestration.
 
 This flow adopts shared revision
-[`63f96b31de193c3ad456ffa500cc0db03fb97142`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/63f96b31de193c3ad456ffa500cc0db03fb97142).
+[`ca3b223e0717242ce1016b34dc34f04ef2417936`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/ca3b223e0717242ce1016b34dc34f04ef2417936).
 
 ## Local Flow
 
 ```text
 selected HEIC/JPG, TAP Video MP4, or current .tapnap
   -> bounded input/package resolution
+  -> photo/Live only: one browser auxiliary-depth readback probe
   -> Rust/WASM photo/Live verifier or TypeScript TAP Video verifier
   -> reconstruct and compare the binding required for the reported local scope
+  -> TAP Video only: bounded manifest, MP4/KLV, and decompression semantic gate
   -> scoped local report
   -> if local gate passed: server App Attest request
   -> join local scope + server result into final valid / invalid
@@ -29,10 +31,10 @@ after a TAP Video local gate passes:
 ```
 
 The required ordering and rejection relationships live in the shared
-[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/bindings/capture-binding-and-proof-v1.md).
-Known implementation gaps remain in the shared
-[divergence ledger](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/KNOWN_DIVERGENCES.md)
-rather than being normalized into another local wire contract.
+[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/bindings/capture-binding-and-proof-v1.md).
+Verifier-specific coverage and compatibility choices are recorded in the local
+[Shared Contract Adoption Status](Roadmap.md#shared-contract-adoption-status);
+they do not redefine the shared wire contract.
 
 The browser keeps original media bytes local and submits only the shared
 capture-signature request shape. A local relationship pass is not cryptographic
@@ -42,7 +44,9 @@ the received media.
 ## Input And Scope Ownership
 
 - Rust/WASM owns HEIC/JPEG proof-slot/XMP parsing, Still/Live local binding
-  reconstruction, and the photo/paired-MOV report.
+  reconstruction, and the photo/paired-MOV report. It receives the browser's
+  explicit auxiliary-depth present/unavailable readback and rejects disagreement
+  with either signed availability field or the reconstructed descriptor.
 - TypeScript owns current `.tapnap` resolution, TAP Video MP4 parsing and local
   binding reconstruction, and server-request orchestration.
 - Package parsing is bounded before extraction. The unsigned sidecar locates
@@ -55,7 +59,7 @@ the received media.
 
 Transport layout and rejection rules are not repeated here; they live in the
 shared
-[`.tapnap` contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/transport/tapnap-v1.md).
+[`.tapnap` contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/transport/tapnap-v1.md).
 
 ## Report And Presentation Rules
 
@@ -70,15 +74,19 @@ upgrade a failed verification.
 
 ## Parallel Analysis Boundary
 
-After input resolution, visual analysis and signature verification may run as
-independent bounded paths over the same primary bytes. Decoded RGB, auxiliary
-depth/disparity, point clouds, and video frames are never base-signature inputs.
+After input resolution, photo visual analysis and signature verification may run as
+independent bounded paths over the same primary bytes. Photo/Live verification
+and depth visualization share one auxiliary-depth readback promise: the
+present/unavailable result validates signed availability, while decoded pixels,
+preview rendering, point clouds, and video frames are never base-signature
+inputs.
 
-For TAP Video, the player may start bounded sample-table/KLV inspection after
-the local binding relationship gate while the server request is pending. Those
-semantic results remain untrusted until the App Attest gate passes and cannot
-produce the final authenticated result. A signature failure does not make an
-already bounded visualization a signature input or scene-truth claim.
+For TAP Video, bounded sample-table/KLV inspection runs after the local binding
+relationship gate and before local success or server submission. Playback may
+start while the server request is pending only after that semantic gate passes.
+Those results remain untrusted until App Attest succeeds and cannot produce the
+final authenticated result. A signature failure does not make already bounded
+visualization a signature input or scene-truth claim.
 
 ## Server Boundary
 

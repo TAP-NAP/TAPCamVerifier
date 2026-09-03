@@ -4,6 +4,10 @@ TAPCamVerifier is a static web verifier for TAPCam signed HEIC/JPG captures,
 signed TAP Video MP4 files, TAPNAP capture packages, and Live Photo primary
 photos that lost their paired MOV during transport.
 
+Start with [Verification Flow](Docs/VerificationFlow.md) for the runtime path,
+use [Roadmap](Docs/Roadmap.md) for local visualization direction and contract
+coverage, and use [test/README.md](test/README.md) for validation fixtures.
+
 The page accepts a dropped image, TAP Video MP4, or `.tapnap` package and runs
 the appropriate local hard-binding verifier. When the local checks pass, the
 page posts the proof material to the TAP-NAP server:
@@ -23,20 +27,25 @@ browser implementation, bounded-input policy, verification reports, and UI; it
 implements but does not redefine those shared conventions.
 
 This adoption was reviewed against shared revision
-[`63f96b31de193c3ad456ffa500cc0db03fb97142`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/63f96b31de193c3ad456ffa500cc0db03fb97142).
+[`ca3b223e0717242ce1016b34dc34f04ef2417936`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/ca3b223e0717242ce1016b34dc34f04ef2417936).
 
 ## Current Status
 
-Rust/WASM implements the shared Still/Live contract; TypeScript implements TAP
-Video and package routing. Both paths reconstruct and compare the binding
-required for the reported local scope before a server request. The exact
-fields, hashes, resource roles, and failure order live in the shared
-[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/bindings/capture-binding-and-proof-v1.md),
-not in this README.
+Rust/WASM owns photo and Live Photo local verification. TypeScript owns TAP
+Video verification, package routing, server orchestration, and the browser UI.
+Both implement the reviewed v1 consumer gates in their current bounded scopes;
+the exact coverage and two deliberate input-compatibility choices are recorded
+in the local [Roadmap](Docs/Roadmap.md). The required relationships live in the
+shared
+[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/bindings/capture-binding-and-proof-v1.md).
 
 The page also includes a downstream visual inspection path. After selection, the
-browser resolves the primary photo bytes once, then starts visual analysis and
-signature verification as independent async paths. Verification results update
+browser resolves the primary photo bytes once and starts one auxiliary-depth
+readback promise shared by local verification and visualization. The actual
+present/unavailable result must agree with both signed availability fields and
+the reconstructed depth descriptor; decoded depth pixels are not signature
+inputs. Visual analysis and signature verification then continue as independent
+async paths. Verification results update
 the result panel when local/server checks finish. For a valid signature, the UI
 shows the TAPCam verification modal first, while analysis work may continue in
 the background; original/depth/geometry panes are revealed after that modal
@@ -65,37 +74,43 @@ The browser accepts the current `.tapnap` transport, resolves it with bounded
 ZIP-compatible input handling, and passes byte-preserved resources to the
 family verifier. Layout, identifiers, sidecar fields/roles, and rejection rules
 live in the shared
-[transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/transport/tapnap-v1.md).
+[transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/transport/tapnap-v1.md).
 The sidecar remains untrusted routing metadata and cannot determine the signed
 family or verdict.
 
 ## TAP Video MP4
 
-The raw MP4 route implements the shared
-[TAP Video manifest](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/manifests/tap-video-v1.md),
-[container/KLV](https://github.com/TAP-NAP/TAPArtifactContracts/blob/63f96b31de193c3ad456ffa500cc0db03fb97142/containers/tap-video-container-v1.md),
+The raw MP4 route consumes the shared
+[TAP Video manifest](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/manifests/tap-video-v1.md),
+[container/KLV](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/containers/tap-video-container-v1.md),
 and binding/proof contracts. TAP Video is not routed through `.tapnap`.
 
-Only after the local hard binding passes does downstream playback begin. The
-standard RGB/audio tracks use the native browser player. The selected timed-
-metadata track is indexed from bounded MP4 sample tables; supported raw and
-zstd1 depth or disparity frames are decoded on demand and synchronized to the
-player's current time. At most two decoded frames are retained. The signed RGB-
-track display transform is applied to the depth canvas as well, so both panes
-keep the same direction. LZFSE remains readable in the Apple app but is not
-supported by this browser build.
+Only after the local artifact-binding relationship passes does the verifier run
+its bounded MP4/KLV semantic gate; downstream playback begins after that local
+result passes. The standard RGB/audio tracks use the native browser player.
+The selected timed-metadata track is indexed from bounded MP4 sample tables;
+raw, LZFSE, and zstd1 depth or disparity frames are decoded on demand and
+synchronized to the player's current time. LZFSE uses the same bounded Rust/WASM
+module as photo verification. At most two decoded frames are retained. The
+signed RGB-track display transform is applied to the depth canvas as well, so
+both panes keep the same direction.
 
 The 3D point-cloud pane is deliberately disabled for TAP Video. This release
-provides verified video playback plus synchronized 2D depth frames and does not
-claim video 3D reconstruction.
+provides browser video playback plus synchronized 2D depth frames and does not
+claim video 3D reconstruction. Playback and depth inspection do not expand the
+local binding result into a physical-scene claim.
 
 ## Run
 
 ```sh
-npm install
-rustup target add wasm32-unknown-unknown
+nvm use
+rustup show
+npm ci
 npm run dev
 ```
+
+The repository pins Node `22.23.2` in `.nvmrc` and Rust `1.98.0` plus the
+`wasm32-unknown-unknown` target in `rust-toolchain.toml`.
 
 Build the static site:
 
@@ -111,9 +126,10 @@ production Pages origin.
 ## Deploy To GitHub Pages
 
 The repository includes `.github/workflows/deploy-pages.yml`. On every push to
-`main`, GitHub Actions installs locked Node dependencies with `npm ci`, installs
-the Rust WASM target, builds the WASM module, builds the static Vite site,
-uploads `dist/`, and deploys it through GitHub Pages.
+`main`, GitHub Actions selects the repository-pinned Node and Rust toolchains,
+installs locked Node dependencies with `npm ci`, runs the Rust and Vitest suites,
+builds the WASM module and static Vite site, uploads `dist/`, and deploys it
+through GitHub Pages.
 
 First-time setup:
 
@@ -150,8 +166,8 @@ CORS allowlist.
 
 - `src/main.ts` owns the simple drag-and-drop workflow.
 - `src/input/` owns single-photo, TAP Video, and current TAPNAP package input resolution.
-- `src/depth/` owns HEIF/JPEG auxiliary depth discovery and visual preview
-  orchestration.
+- `src/depth/` owns HEIF/JPEG auxiliary-depth discovery used by the local
+  availability gate and downstream preview.
 - `src/geometry/` owns signed depth pixel back-projection, decoded RGB analysis
   input, and the Three.js point-cloud viewer.
 - `src/original/` owns the HEIC primary-image fallback path for browsers that
@@ -163,19 +179,18 @@ CORS allowlist.
 - `crates/tapcam-verifier-wasm/` owns proof-slot parsing, manifest parsing,
   canonical JSON hashing, asset hashing, local content-binding self-checks, and
   original/depth preview normalization for decoded image planes.
-- `src/decorations/` is intentionally empty for future designer-owned UI layers.
 - `Docs/VerificationFlow.md` documents Verifier-local routing, report scopes,
   presentation, and server orchestration.
 - `Docs/Roadmap.md` records the depth-to-geometry roadmap.
 - `Docs/Research/` records depth/geometry research reports before implementation.
-- `Docs/DevLog/` records decisions and handoff context.
 
 ## Test
 
 ```sh
-npm run test:rust
+npm test
 npm run typecheck
-npm run test
+npm run build
 ```
 
-`npm run build` also builds the WASM module before producing the static site.
+`npm test` runs both the Rust and Vitest suites. `npm run build` rebuilds the
+WASM module and runs TypeScript checking before producing the static site.

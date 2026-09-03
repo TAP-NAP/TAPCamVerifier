@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeBase64Uint16 } from "./tapcamVerifier";
+import { decodeBase64Uint16, decodeLzfseFrame } from "./tapcamVerifier";
 
 describe("decodeBase64Uint16", () => {
   it("decodes little-endian risk flags", () => {
@@ -7,5 +7,13 @@ describe("decodeBase64Uint16", () => {
     const value = btoa(String.fromCharCode(...bytes));
 
     expect(Array.from(decodeBase64Uint16(value))).toEqual([1, 16, 64]);
+  });
+});
+
+describe("decodeLzfseFrame bounds", () => {
+  it("rejects invalid lengths before loading WASM", async () => {
+    await expect(decodeLzfseFrame(new Uint8Array(), 1)).rejects.toThrow("bounds");
+    await expect(decodeLzfseFrame(new Uint8Array([1]), 0)).rejects.toThrow("bounds");
+    await expect(decodeLzfseFrame(new Uint8Array([1]), 32 * 1024 * 1024 + 1)).rejects.toThrow("bounds");
   });
 });

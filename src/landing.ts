@@ -118,10 +118,9 @@ landing.innerHTML = `
         </span>
       </h1>
       <p class="hero-body" data-copy-html="hero.body">
-        AI 时代下，摄影还有价值吗？<br />
-        在充斥着 AI 内容的当下，我们如何让真实的内容被看见？<br />
-        正如摄影不会替代绘画，而 AI 生图也无法取代摄影。<br />
-        TAPCam 就是这样一款帮助你记录的摄影软件，让你的感受、表达在 AI 时代也能被看见。
+        AI 时代下，摄影仍然承载感受与表达。<br />
+        TAPCam 将相机采集的媒体与设备凭证绑定，让接收者可以检查签名以及明确资源字节与签名绑定是否一致。<br />
+        验证结果不证明真实场景、作者身份或非 AI 来源。
       </p>
       <div class="scroll-cue" aria-hidden="true">
         <svg viewBox="0 0 96 24" focusable="false">
@@ -164,7 +163,7 @@ landing.innerHTML = `
         <span>MEDIA</span><span>DEPTH</span><span>ATTESTATION</span><span>SIGNATURE</span>
       </div>
       <div class="scene-labels scene-labels--privacy">
-        <span>LOCAL FIRST</span><span>OPEN SOURCE</span><span>ZKP (COMING SOON)</span>
+        <span>LOCAL FIRST</span><span>OPEN SOURCE</span><span>BOUND-BYTE CHECKS</span>
       </div>
     </div>
 
@@ -174,18 +173,18 @@ landing.innerHTML = `
           <p class="chapter-number">01 / CAPTURE</p>
           <h2 data-copy-html="capture.title">捕捉色彩，<br />记录纵深。</h2>
           <p data-copy="capture.body">
-            TAPCam 不仅仅是一台相机，更是一台空间相机。我们利用此技术来记录被拍摄的照片的环境。从而确保我们所拍摄的内容是取自一个真实场景。
+            TAPCam 同时记录影像与设备提供的深度数据，并把明确的资源集合纳入内容绑定。深度用于可视化，不证明物理场景或深度本身正确。
           </p>
-          <p class="chapter-note">DEPTH PHOTO &lt;- SPATIAL CAM &lt;- REAL WORLD</p>
+          <p class="chapter-note">DEPTH PHOTO &lt;- SPATIAL CAM &lt;- CAMERA INPUT</p>
         </div>
       </article>
 
       <article class="story-chapter story-chapter--sign" id="bind-sign" data-chapter="sign">
         <div class="chapter-copy chapter-copy--right">
           <p class="chapter-number">02 / BIND &amp; SIGN</p>
-          <h2 data-copy-html="sign.title">安全，<br />保证创作的真实性。</h2>
+          <h2 data-copy-html="sign.title">凭证绑定，<br />可被独立检查。</h2>
           <p data-copy="sign.body">
-            我们使用苹果的 App Attest 技术；我们把影像数据、深度数据、可验证凭证绑定在一起，从而确保每个人的拍摄都可以被验证。
+            TAPCam 使用 Apple App Attest 生成签名凭证，把媒体、深度可用性与明确资源集合纳入同一内容绑定；验证器检查收到的字节是否与该绑定一致。
           </p>
           <p class="chapter-note">MEDIA · DEPTH · ATTESTATION · SIGNATURE</p>
         </div>
@@ -194,14 +193,14 @@ landing.innerHTML = `
       <article class="story-chapter story-chapter--privacy" id="open-verification" data-chapter="privacy">
         <div class="chapter-copy chapter-copy--left">
           <p class="chapter-number">03 / OPEN VERIFICATION</p>
-          <h2 data-copy-html="privacy.title">证明及验证，<br />是基本权利。</h2>
+          <h2 data-copy-html="privacy.title">验证边界，<br />应当清晰可查。</h2>
           <p data-copy="privacy.body">
-            软件完全开源（在正式版上架后），因为我们认为，在 AI 时代下，证明自己是作者本人是一项基本权利。同时，我们欢迎更多人加入来进行维护。未来会引入 ZKP 技术，以提供更好的匿名性。
+            原始媒体留在浏览器本地，服务器只接收签名验证材料。公开的实现与协议让验证范围可以被检查；尚未实现的隐私能力不会作为当前保证。
           </p>
-          <div class="research-tags" data-copy-aria-label="privacy.tagsLabel" aria-label="验证原则与后续能力">
+          <div class="research-tags" data-copy-aria-label="privacy.tagsLabel" aria-label="验证原则与当前边界">
             <span>LOCAL FIRST</span>
             <span>OPEN SOURCE</span>
-            <span>ZKP (COMING SOON)</span>
+            <span>BOUND-BYTE CHECKS</span>
           </div>
         </div>
       </article>
@@ -224,7 +223,7 @@ landing.innerHTML = `
         <span class="action-index">02</span>
         <span class="action-type">VERIFY</span>
         <strong data-copy="action.verify.title">打开验证器</strong>
-        <span data-copy="action.verify.body">验证照片与视频是否使用了 TAPCam 进行创作</span>
+        <span data-copy="action.verify.body">检查 TAPCam 媒体的签名凭证与内容绑定</span>
       </a>
       <a class="action-link action-link--docs" href="https://github.com/TAP-NAP/TAPCamVerifier/blob/main/Docs/VerificationFlow.md" target="_blank" rel="noopener noreferrer">
         <span class="action-index">03</span>

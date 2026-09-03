@@ -7,12 +7,14 @@ interface TapcamVerifierExports extends WebAssembly.Exports {
   memory: WebAssembly.Memory;
   tapcam_verify_alloc(len: number): number;
   tapcam_verify_dealloc(ptr: number, len: number): void;
-  tapcam_verify_file(ptr: number, len: number): number;
+  tapcam_decode_lzfse(encodedPtr: number, encodedLen: number, decodedPtr: number, decodedLen: number): number;
+  tapcam_verify_file(ptr: number, len: number, actualDepthPresent: number): number;
   tapcam_verify_file_with_paired_video(
     filePtr: number,
     fileLen: number,
     videoPtr: number,
-    videoLen: number
+    videoLen: number,
+    actualDepthPresent: number
   ): number;
   tapcam_visualize_depth_u8(
     filePtr: number,
@@ -52,15 +54,40 @@ interface TapcamVerifierExports extends WebAssembly.Exports {
 }
 
 const ORIGINAL_PREVIEW_MAX_EDGE = 1200;
+const MAX_TAP_DEPTH_FRAME_BYTES = 32 * 1024 * 1024;
 
 let exportsPromise: Promise<TapcamVerifierExports> | null = null;
 
-export async function verifyCaptureLocally(fileBytes: Uint8Array): Promise<LocalVerificationReport> {
-  return verifyCapturePackageLocally(fileBytes);
+export async function decodeLzfseFrame(encoded: Uint8Array, decodedLength: number): Promise<Uint8Array> {
+  if (
+    encoded.byteLength === 0 ||
+    encoded.byteLength > MAX_TAP_DEPTH_FRAME_BYTES ||
+    !Number.isSafeInteger(decodedLength) ||
+    decodedLength <= 0 ||
+    decodedLength > MAX_TAP_DEPTH_FRAME_BYTES
+  ) {
+    throw new Error("LZFSE input or output is outside the TAP depth-frame bounds.");
+  }
+
+  const wasm = await loadVerifierWasm();
+  const encodedPtr = wasm.tapcam_verify_alloc(encoded.byteLength);
+  const decodedPtr = wasm.tapcam_verify_alloc(decodedLength);
+  try {
+    new Uint8Array(wasm.memory.buffer, encodedPtr, encoded.byteLength).set(encoded);
+    new Uint8Array(wasm.memory.buffer, decodedPtr, decodedLength).fill(0);
+    if (wasm.tapcam_decode_lzfse(encodedPtr, encoded.byteLength, decodedPtr, decodedLength) !== 1) {
+      throw new Error("LZFSE depth frame is malformed or does not decode to ULEN.");
+    }
+    return new Uint8Array(wasm.memory.buffer, decodedPtr, decodedLength).slice();
+  } finally {
+    wasm.tapcam_verify_dealloc(encodedPtr, encoded.byteLength);
+    wasm.tapcam_verify_dealloc(decodedPtr, decodedLength);
+  }
 }
 
 export async function verifyCapturePackageLocally(
   fileBytes: Uint8Array,
+  actualDepthPresent: boolean,
   pairedVideoBytes?: Uint8Array
 ): Promise<LocalVerificationReport> {
   const wasm = await loadVerifierWasm();
@@ -77,9 +104,10 @@ export async function verifyCapturePackageLocally(
           inputPtr,
           fileBytes.length,
           videoPtr,
-          pairedVideoBytes.length
+          pairedVideoBytes.length,
+          actualDepthPresent ? 1 : 0
         )
-      : wasm.tapcam_verify_file(inputPtr, fileBytes.length);
+      : wasm.tapcam_verify_file(inputPtr, fileBytes.length, actualDepthPresent ? 1 : 0);
 
     const resultLen = wasm.tapcam_verify_result_len();
     const resultBytes = new Uint8Array(wasm.memory.buffer, resultPtr, resultLen);

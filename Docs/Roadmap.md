@@ -14,9 +14,10 @@
   `signingBindingSHA256`; compare it with the browser/WASM-recomputed hash of the
   exact submitted `signingBinding` to catch integration drift without redefining
   local content verification.
-- Keep original/depth visualization separate from base verification.
-  Visualization can fail or be unavailable without changing local
-  content-binding semantics.
+- Decode auxiliary depth/disparity once. Its actual present/unavailable result
+  is a required local-verification input for the signed availability fields;
+  preview rendering and pixel projection remain downstream visualization and
+  may fail without redefining a binding that already passed readback.
 
 ## Current Geometry Direction: Signed Depth Pixel Back-Projection
 
@@ -64,8 +65,39 @@ Current point-cloud inspection constraints:
 
 ## Verification And QA Notes
 
-- Keep visualization failures non-fatal for `LocalVerificationReport.status` and
-  final `valid` / `invalid` semantics.
+- Keep failures after successful auxiliary-presence readback—preview rendering,
+  RGB decode, and geometry projection—non-fatal for
+  `LocalVerificationReport.status` and final `valid` / `invalid` semantics.
+
+## Shared Contract Adoption Status
+
+This verifier implements but does not redefine the shared
+[binding/proof](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/bindings/capture-binding-and-proof-v1.md),
+[TAP Video manifest](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/manifests/tap-video-v1.md),
+[container](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/containers/tap-video-container-v1.md),
+and [`.tapnap` transport](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/transport/tapnap-v1.md)
+contracts. The current consumer implementation now:
+
+- reconstructs both available and unavailable Still/Live `depthResource`
+  descriptors from one actual browser auxiliary-depth readback;
+- hashes exact embedded TAP Video `payload` value bytes and validates the full
+  manifest, finalized MP4 track, `mebx` key-table, KLV ordinal/timing,
+  calibration, compression-policy, and zero-depth relationships;
+- decodes bounded raw, LZFSE, and zstd1 frames and rejects a decoded byte count
+  that differs from `ULEN` or the signed format;
+- validates the complete current `.tapnap` sidecar and exact package resource
+  set before routing byte-preserved resources; and
+- withholds the server request until the applicable local relationship and
+  semantic gates pass.
+
+Two accepted input behaviors are compatibility choices, not producer
+permission: the Rust decoder accepts padded base64url, and it ignores rather
+than assigns meaning to non-zero producer-reserved proof-header bytes. Shared
+v1 still requires unpadded base64url and zero producer-reserved bytes; a future
+decision may tighten these readers without changing the wire contract.
+
+Package/MP4 safety budgets and native-media codec support remain browser-local
+policy. Producer H.264/AAC choices are not verifier guarantees.
 
 ## Deferred TODO
 

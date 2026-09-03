@@ -38,9 +38,18 @@ export type LandingCopyKey =
   | "action.docs.title"
   | "action.docs.body";
 
-const zhHeroPhrases = ["我们的", "真实的", "不可篡改的", "可验的"].flatMap((descriptor) =>
-  ["生活", "影像", "新闻", "回忆", "瞬间"].map((subject) => `${descriptor}${subject}`)
-);
+const zhHeroPhrases = [
+  "我们的生活",
+  "我们的影像",
+  "我们的回忆",
+  "我们的瞬间",
+  "有凭证的影像",
+  "有凭证的记录",
+  "可验证的照片",
+  "可验证的视频",
+  "被绑定的资源",
+  "可检查的字节"
+];
 
 const heroCopy: Record<LandingLocale, LandingHeroCopy> = {
   zh: {
@@ -53,11 +62,15 @@ const heroCopy: Record<LandingLocale, LandingHeroCopy> = {
     leadParts: ["In the age of AI,", "record"],
     phrases: [
       "our life",
-      "real life",
-      "unaltered images",
-      "verifiable news",
-      "real memories",
-      "verifiable moments"
+      "our images",
+      "our memories",
+      "our moments",
+      "credentialed images",
+      "credentialed records",
+      "verifiable photos",
+      "verifiable videos",
+      "bound resources",
+      "inspectable bytes"
     ]
   }
 };
@@ -70,26 +83,26 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "nav.download": "下载",
     "hero.title": "在 AI 时代，记录<br />我们的生活",
     "hero.body":
-      "AI 时代下，摄影还有价值吗？<br />在充斥着 AI 内容的当下，我们如何让真实的内容被看见？<br />正如摄影不会替代绘画，而 AI 生图也无法取代摄影。<br />TAPCam 就是这样一款帮助你记录的摄影软件，让你的感受、表达在 AI 时代也能被看见。",
+      "AI 时代下，摄影仍然承载感受与表达。<br />TAPCam 将相机采集的媒体与设备凭证绑定，让接收者可以检查签名以及明确资源字节与签名绑定是否一致。<br />验证结果不证明真实场景、作者身份或非 AI 来源。",
     "capture.title": "捕捉色彩，<br />记录纵深。",
     "capture.body":
-      "TAPCam 不仅仅是一台相机，更是一台空间相机。我们利用此技术来记录被拍摄的照片的环境。从而确保我们所拍摄的内容是取自一个真实场景。",
+      "TAPCam 同时记录影像与设备提供的深度数据，并把明确的资源集合纳入内容绑定。深度用于可视化，不证明物理场景或深度本身正确。",
     "callout.rgb": "RGB 图像",
     "callout.depth": "深度数据",
     "callout.camera": "空间相机",
     "callout.subject": "被摄对象",
-    "sign.title": "安全，<br />保证创作的真实性。",
+    "sign.title": "凭证绑定，<br />可被独立检查。",
     "sign.body":
-      "我们使用苹果的 App Attest 技术；我们把影像数据、深度数据、可验证凭证绑定在一起，从而确保每个人的拍摄都可以被验证。",
-    "privacy.title": "证明及验证，<br />是基本权利。",
+      "TAPCam 使用 Apple App Attest 生成签名凭证，把媒体、深度可用性与明确资源集合纳入同一内容绑定；验证器检查收到的字节是否与该绑定一致。",
+    "privacy.title": "验证边界，<br />应当清晰可查。",
     "privacy.body":
-      "软件完全开源（在正式版上架后），因为我们认为，在 AI 时代下，证明自己是作者本人是一项基本权利。同时，我们欢迎更多人加入来进行维护。未来会引入 ZKP 技术，以提供更好的匿名性。",
-    "privacy.tagsLabel": "验证原则与后续能力",
+      "原始媒体留在浏览器本地，服务器只接收签名验证材料。公开的实现与协议让验证范围可以被检查；尚未实现的隐私能力不会作为当前保证。",
+    "privacy.tagsLabel": "验证原则与当前边界",
     "action.title": "从现在开始，记录当下。",
     "action.download.title": "下载 TAPCam",
     "action.download.body": "现在参与 TestFlight 进行测试",
     "action.verify.title": "打开验证器",
-    "action.verify.body": "验证照片与视频是否使用了 TAPCam 进行创作",
+    "action.verify.body": "检查 TAPCam 媒体的签名凭证与内容绑定",
     "action.docs.title": "阅读技术文档",
     "action.docs.body": "了解协议、数据边界与验证流程"
   },
@@ -100,26 +113,26 @@ const copy: Record<LandingLocale, Record<LandingCopyKey, string>> = {
     "nav.download": "DOWNLOAD",
     "hero.title": "In the age of AI, record<br />our life",
     "hero.body":
-      "Does photography still matter in the age of AI?<br />In a world saturated with AI-generated content, how can authentic work still be seen?<br />Photography did not replace painting, and AI-generated images cannot replace photography.<br />TAPCam is a photography app built to help you record, so your feelings and expression can still be seen in the age of AI.",
+      "Photography still carries feeling and expression in the age of AI.<br />TAPCam binds camera-captured media to a device credential so recipients can check the signature and whether the declared resource bytes match the signed binding.<br />Verification does not prove a real scene, authorship, or non-AI origin.",
     "capture.title": "Capture color. <br />Record depth.",
     "capture.body":
-      "TAPCam is more than a camera—it is a spatial camera. We use this technology to record the environment around a captured photo, helping ensure that the content comes from a real scene.",
+      "TAPCam records images alongside device-provided depth data and includes the declared resource set in its content binding. Depth supports visualization; it does not prove the physical scene or depth correctness.",
     "callout.rgb": "RGB IMAGE",
     "callout.depth": "DEPTH DATA",
     "callout.camera": "SPATIAL CAMERA",
     "callout.subject": "SUBJECT",
-    "sign.title": "Security ensures <br />creative authenticity.",
+    "sign.title": "Credential binding, <br />independently inspectable.",
     "sign.body":
-      "We use Apple's App Attest technology to bind image data, depth data, and verifiable credentials together so every capture can be verified.",
-    "privacy.title": "Proof and verification <br />are fundamental rights.",
+      "TAPCam uses Apple App Attest to create a signing credential that covers media, depth availability, and the declared resource set in one content binding; the verifier checks received bytes against that binding.",
+    "privacy.title": "Verification boundaries <br />should be inspectable.",
     "privacy.body":
-      "The software will be fully open source after the official release because we believe that, in the AI era, proving that you are the original author is a fundamental right. We welcome more people to help maintain it, and plan to introduce ZKP technology to provide stronger anonymity.",
-    "privacy.tagsLabel": "Verification principles and upcoming capability",
+      "Original media stays in the browser; the server receives only signature-verification material. Published implementation and protocols make the scope inspectable, while unimplemented privacy features are not presented as current guarantees.",
+    "privacy.tagsLabel": "Verification principles and current boundaries",
     "action.title": "Start now. Capture the moment.",
     "action.download.title": "Download TAPCam",
     "action.download.body": "Join the TestFlight beta now",
     "action.verify.title": "Open the verifier",
-    "action.verify.body": "Verify whether photos and videos were created with TAPCam",
+    "action.verify.body": "Check TAPCam media credentials and content binding",
     "action.docs.title": "Read the technology docs",
     "action.docs.body": "Understand the protocol, data boundaries, and verification flow"
   }

@@ -152,7 +152,7 @@ PRIVACY 场景应把当前能力和未来方向分开：当前是浏览器本地
 - “让媒体带着拍摄凭证离开相机。”
 - “媒体、深度与采集凭证绑定在同一次捕获中。”
 - “浏览器执行本地内容绑定检查，并把证明材料交给明确的服务器验证边界。”
-- “去中心化验证与零知识隐私证明是研发方向。”
+- “验证只覆盖注册凭证和明确资源字节之间的绑定关系。”
 
 避免表述：
 
@@ -160,7 +160,7 @@ PRIVACY 场景应把当前能力和未来方向分开：当前是浏览器本地
 - 不说 TAPCam 可以证明照片一定不是 AI、Deepfake 或翻拍。
 - 不把深度数据描述为“现实真实性”的充分条件。
 - 不说当前验证完全去中心化。
-- 不说 ZK 已经上线。
+- 不把尚未实现的隐私能力作为当前或已承诺能力。
 - 不说后端接收或重新哈希原始照片；当前描述应保留本地内容绑定检查与服务器凭证验证的边界。
 
 ## 9. Negative Prompt / 明确避免
@@ -186,13 +186,11 @@ fake product mockup, approximate logo, ungrounded claims about truth or AI detec
   - 放弃约 `(19.2%, 26.7%)` 的额外问题说明章节。
   - 采用约 `(63.4%, 92.1%)` 的横向入口展示。
 
-对应实现与对照证据见：
+对应实现见：
 
-- `src/landing.css`
-- `src/landing.ts`
-- `src/landingScene.ts`
-- `design-qa.md`
-- `Docs/Assets/LandingQA/reference-comparison.png`
+- [`src/landing.css`](../src/landing.css)
+- [`src/landing.ts`](../src/landing.ts)
+- [`src/landingScene.ts`](../src/landingScene.ts)
 
 ## 11. 为什么这套方向成立
 
