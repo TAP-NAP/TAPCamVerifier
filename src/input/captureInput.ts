@@ -6,7 +6,7 @@ export const TAPNAP_CAPTURE_PACKAGE_MIME_TYPE =
 const VERIFICATION_SIDECAR_SCHEMA_ID =
   "urn:tapnap:tapcam:verification-export:v1";
 const VERIFICATION_SIDECAR_VERSION = 1;
-const MAX_CAPTURE_PACKAGE_BYTES = 512 * 1024 * 1024;
+export const MAX_CAPTURE_INPUT_BYTES = 512 * 1024 * 1024;
 const MAX_CAPTURE_PACKAGE_ENTRIES = 16;
 const MAX_CAPTURE_RESOURCE_BYTES = 384 * 1024 * 1024;
 const MAX_CAPTURE_EXTRACTED_BYTES = 512 * 1024 * 1024;
@@ -42,7 +42,19 @@ export interface VideoCaptureInput extends CaptureInputBase {
 
 export type CaptureInput = PhotoCaptureInput | VideoCaptureInput;
 
+export async function readCaptureInput(file: File): Promise<CaptureInput> {
+  assertCaptureInputSize(file.size);
+  return resolveCaptureInput(file, new Uint8Array(await file.arrayBuffer()));
+}
+
+function assertCaptureInputSize(byteLength: number): void {
+  if (byteLength > MAX_CAPTURE_INPUT_BYTES) {
+    throw new Error("Capture exceeds the 512 MiB browser input limit.");
+  }
+}
+
 export function resolveCaptureInput(file: File, fileBytes: Uint8Array): CaptureInput {
+  assertCaptureInputSize(fileBytes.byteLength);
   if (isMP4Video(file, fileBytes)) {
     return {
       kind: "tap-video",
@@ -116,10 +128,6 @@ function ascii(bytes: Uint8Array, offset: number, length: number): string {
 }
 
 function unzipCapturePackage(fileBytes: Uint8Array): Unzipped {
-  if (fileBytes.byteLength > MAX_CAPTURE_PACKAGE_BYTES) {
-    throw new Error("Capture package is too large.");
-  }
-
   validateZipContainer(fileBytes);
   let entryCount = 0;
   let extractedBytes = 0;

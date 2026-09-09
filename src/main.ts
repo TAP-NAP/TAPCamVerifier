@@ -8,7 +8,7 @@ import { mountGeometryViewer, type GeometryViewerCleanup } from "./geometry/geom
 import { decodeRgbForPixelProjection, projectSignedDepthPixels } from "./geometry/pixelProjection";
 import type { DecodedRgbImage, PixelProjectionState } from "./geometry/types";
 import {
-  resolveCaptureInput,
+  readCaptureInput,
   TAPNAP_CAPTURE_PACKAGE_MIME_TYPE,
   type CaptureInput,
   type PhotoCaptureInput
@@ -428,8 +428,7 @@ async function verifyFile(file: File): Promise<void> {
   let captureInput: CaptureInput;
 
   try {
-    const fileBytes = new Uint8Array(await file.arrayBuffer());
-    captureInput = resolveCaptureInput(file, fileBytes);
+    captureInput = await readCaptureInput(file);
   } catch (error) {
     if (runId === activeRunId) {
       isVerifying = false;

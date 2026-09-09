@@ -1,48 +1,24 @@
-# TAPCamVerifier Agent Rules
+# TAPCamVerifier Rules
 
-This repository owns the browser/server verifier implementation, its local
-verification flow, user-facing verifier copy, tests, deployment, and downstream
-artifact-contract adoption gaps. It does not own camera product behavior or shared
-wire formats.
+This repository owns the browser verifier, visualization, copy, tests, and
+build/deployment code. Start with its README and the affected source/tests.
+Read the pinned shared artifact contract only for the boundary being changed;
+public authenticity claims also follow the
+[product contract](../TAPArtifactContracts/ProductContract.md#7-claim-boundaries).
 
-## Required reading
-
-Before changing files:
-
-1. Read this file.
-2. Search the sibling [TAPCamKanban Project Board](../TAPCamKanban/ProjectBoard.md)
-   and read the complete matching Task and dependencies.
-3. Read [README.md](README.md).
-4. Read the pinned TAPArtifactContracts revision for wire behavior.
-5. For public authenticity claims, read TAPCamDemo
-   `Docs/ProductContract.md` claim boundaries.
-6. Inspect the current implementation and tests; historical design or QA prose
-   is not current authority.
-
-## Boundaries
-
-- Keep shared wire/schema/signing/container rules in TAPArtifactContracts. Keep
-  Verifier-local coverage, compatibility choices, and any implementation gaps
-  in [README.md](README.md).
-- Fail closed at input and verification boundaries; do not infer authenticity,
-  scene truth, author identity, time, location, or non-AI origin from depth or a
-  valid cryptographic binding.
-- Preserve the verifier and landing particle-cat easter-egg system, its assets,
-  touch behavior, reduced-motion behavior, and regression tests unless the product
-  owner explicitly reverses that decision.
-- Do not add compatibility layers, parallel parsers, new dependencies, or UI
-  infrastructure without a demonstrated current requirement.
-- Do not commit or push unless the product owner explicitly requests it.
-
-## Validation
-
-Run focused tests first, then the relevant complete gates:
-
-```sh
-npm test
-npm run typecheck
-npm run build
-```
-
-Report skipped real-media fixtures, browser/deployment/device boundaries, and any
-validation that depends on ignored local files.
+- An explicit bounded user request is sufficient for a routine fix. Do not
+  require a Task, Board Steward, full backlog scan, or other repo agent guides.
+  Consult a named work item only when its scope is relevant to this request.
+- Shared formats and product requirements live in TAPArtifactContracts. Keep
+  local implementation coverage, limits, and run/test commands in this README.
+- Fail closed at input and verification boundaries. Depth and a valid binding
+  do not prove scene truth, author identity, time, location, or non-AI origin.
+- Preserve the approved verifier/landing particle-cat assets, mounts, touch and
+  reduced-motion behavior, and regression tests.
+- Reuse existing seams. Do not add compatibility layers, dependencies, parallel
+  parsers, or UI infrastructure without a current requirement.
+- Run focused tests, then relevant complete gates: `npm test`,
+  `npm run typecheck`, `npm run build`. Report skipped fixtures and ignored-file,
+  browser, deployment, and backend validation limits.
+- Do not create per-task Markdown or duplicate specifications. Do not commit or
+  push unless requested.

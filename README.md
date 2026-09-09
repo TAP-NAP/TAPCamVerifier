@@ -13,6 +13,8 @@ container, KLV, and `.tapnap` wire conventions. This implementation was reviewed
 against shared revision
 [`ca3b223e0717242ce1016b34dc34f04ef2417936`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/ca3b223e0717242ce1016b34dc34f04ef2417936).
 
+Public claims follow the [product contract](../TAPArtifactContracts/ProductContract.md#7-claim-boundaries).
+
 ## Verification Flow
 
 ```text
@@ -62,7 +64,10 @@ orchestration.
 - The Rust reader accepts padded base64url and ignores non-zero
   producer-reserved proof-header bytes without assigning them meaning. Shared v1
   still requires producers to emit unpadded base64url and zero reserved bytes.
-- Package/MP4 safety budgets and native-media codec support are browser-local
+- Every file is limited to 512 MiB using `File.size` before reading its bytes;
+  the parser checks the actual byte length too. Archive expansion and individual
+  resource limits apply separately.
+- Input safety budgets and native-media codec support are browser-local
   policy, not producer permissions or verification guarantees.
 
 ## Visualization

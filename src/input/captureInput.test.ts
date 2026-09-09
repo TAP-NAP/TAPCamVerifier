@@ -1,6 +1,8 @@
 import { zipSync } from "fflate";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  MAX_CAPTURE_INPUT_BYTES,
+  readCaptureInput,
   resolveCaptureInput,
   TAPNAP_CAPTURE_PACKAGE_MIME_TYPE
 } from "./captureInput";
@@ -26,7 +28,62 @@ function verificationSidecar(
   );
 }
 
+describe("readCaptureInput", () => {
+  const photoBytes = new Uint8Array([1, 2, 3]);
+  const videoBytes = textEncoder.encode("\u0000\u0000\u0000\u000cftypmp42");
+  const packageBytes = zipSync({
+    "primary-photo.jpg": photoBytes,
+    "tapcam-export.json": verificationSidecar("stillPhoto", [
+      { role: "primaryPhoto", filename: "primary-photo.jpg", mediaType: "public.jpeg" }
+    ])
+  });
+  const inputs = [
+    { name: "capture.JPG", type: "", bytes: photoBytes, kind: "single-photo" },
+    { name: "shared-file", type: "image/heic", bytes: photoBytes, kind: "single-photo" },
+    { name: "capture.MP4", type: "", bytes: videoBytes, kind: "tap-video" },
+    { name: "shared-file", type: "video/mp4", bytes: videoBytes, kind: "tap-video" },
+    { name: "capture.TAPNAP", type: "", bytes: packageBytes, kind: "capture-package" },
+    { name: "shared-file", type: TAPNAP_CAPTURE_PACKAGE_MIME_TYPE, bytes: packageBytes, kind: "capture-package" }
+  ];
+
+  it.each(inputs)("rejects oversized $name / $type before reading bytes", async ({ name, type, bytes }) => {
+    const file = new File([bytes], name, { type });
+    Object.defineProperty(file, "size", { value: MAX_CAPTURE_INPUT_BYTES + 1 });
+    const read = vi.spyOn(file, "arrayBuffer");
+
+    await expect(readCaptureInput(file)).rejects.toThrow("512 MiB browser input limit");
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each(inputs)("reads and resolves $name / $type at the size boundary", async ({ name, type, bytes, kind }) => {
+    const file = new File([bytes], name, { type });
+    Object.defineProperty(file, "size", { value: MAX_CAPTURE_INPUT_BYTES });
+    const read = vi.spyOn(file, "arrayBuffer");
+
+    const input = await readCaptureInput(file);
+
+    expect(read).toHaveBeenCalledOnce();
+    expect(input.kind).toBe(kind);
+  });
+
+  it("still rejects malformed packages after a permitted read", async () => {
+    const file = new File([photoBytes], "capture.tapnap");
+    const read = vi.spyOn(file, "arrayBuffer");
+
+    await expect(readCaptureInput(file)).rejects.toThrow();
+    expect(read).toHaveBeenCalledOnce();
+  });
+});
+
 describe("resolveCaptureInput", () => {
+  it("bounds received bytes independently of the File size", () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    Object.defineProperty(bytes, "byteLength", { value: MAX_CAPTURE_INPUT_BYTES + 1 });
+    const file = new File([], "capture.jpg");
+
+    expect(() => resolveCaptureInput(file, bytes)).toThrow("512 MiB browser input limit");
+  });
+
   it("recognizes a raw MP4 as TAP Video input without routing it through ZIP parsing", () => {
     const bytes = new Uint8Array([
       0, 0, 0, 20,

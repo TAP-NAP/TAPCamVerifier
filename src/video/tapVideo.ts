@@ -1,4 +1,5 @@
 import { ZSTDDecoder } from "three/examples/jsm/libs/zstddec.module.js";
+import { MAX_CAPTURE_INPUT_BYTES } from "../input/captureInput";
 import type { LocalVerificationReport, VerificationCheck } from "../verifier/types";
 import { decodeLzfseFrame } from "../wasm/tapcamVerifier";
 
@@ -7,7 +8,6 @@ const PROOF_UUID = "TAPCAMPROOFSLOT1";
 const PROOF_MAGIC = "TAPCAM-PROOF-SLOT-V1";
 const PROOF_PAYLOAD_BYTES = 60 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
-const MAX_VIDEO_BYTES = 512 * 1024 * 1024;
 const MAX_BOX_COUNT = 4096;
 const MAX_DEPTH_SAMPLES = 180 * 60;
 const MAX_DEPTH_FRAME_BYTES = 32 * 1024 * 1024;
@@ -159,7 +159,7 @@ interface ParsedDepthFrame extends TapVideoDepthFrame {
 export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVerificationReport> {
   const checks: VerificationCheck[] = [];
   try {
-    if (bytes.byteLength > MAX_VIDEO_BYTES) {
+    if (bytes.byteLength > MAX_CAPTURE_INPUT_BYTES) {
       throw new Error("TAP Video exceeds the 512 MiB browser verification limit.");
     }
     const topLevel = parseBoxes(bytes, 0, bytes.byteLength);
