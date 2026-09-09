@@ -13,7 +13,7 @@ container, KLV, and `.tapnap` wire conventions. This implementation was reviewed
 against shared revision
 [`ca3b223e0717242ce1016b34dc34f04ef2417936`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/ca3b223e0717242ce1016b34dc34f04ef2417936).
 
-Public claims follow the [product contract](../TAPArtifactContracts/ProductContract.md#7-claim-boundaries).
+Public claims follow the [product contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/main/ProductContract.md#7-claim-boundaries).
 
 ## Verification Flow
 
