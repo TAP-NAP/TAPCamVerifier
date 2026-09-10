@@ -139,6 +139,16 @@ the WASM module and Vite site, and deploys `dist/` on pushes to `main` or a
 manual workflow dispatch. Configure the repository's Pages source as
 `GitHub Actions`.
 
+After tests and the build pass, the workflow also uploads the contents of `dist/`
+as `tapnap-web-${{ github.sha }}-${{ github.run_attempt }}`, retained for 30 days.
+The ECS deployment tool pulls this artifact from a completed successful workflow
+run and verifies its GitHub archive digest before publishing it. See the
+[server deployment instructions](https://github.com/TAP-NAP/server/tree/main/deploy)
+for manual deployment and rollback. JavaScript, CSS, and the verifier WASM are
+published with content-hashed asset filenames. A compatibility copy at
+`/wasm/tapcam_verifier_wasm.wasm` remains for previously loaded Pages tabs;
+new pages reference only the hashed WASM asset.
+
 - Production page: <https://verifier.tapnap.net/>
 - Default project page: <https://tap-nap.github.io/TAPCamVerifier/>
 - Server endpoint:

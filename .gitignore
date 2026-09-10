@@ -3,6 +3,7 @@ node_modules/
 dist/
 target/
 public/wasm/*.wasm
+src/wasm/tapcam_verifier_wasm.wasm
 
 # Local landing-page visual QA captures and reference comparisons.
 Docs/Assets/LandingQA/

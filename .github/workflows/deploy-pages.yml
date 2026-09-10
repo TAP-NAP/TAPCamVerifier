@@ -48,6 +48,14 @@ jobs:
       - name: Build static site
         run: npm run build
 
+      - name: Upload site for manual server deployment
+        uses: actions/upload-artifact@v4
+        with:
+          name: tapnap-web-${{ github.sha }}-${{ github.run_attempt }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

@@ -9,7 +9,7 @@ const wasmSource = resolve(
   root,
   "crates/tapcam-verifier-wasm/target/wasm32-unknown-unknown/release/tapcam_verifier_wasm.wasm"
 );
-const wasmTarget = resolve(root, "public/wasm/tapcam_verifier_wasm.wasm");
+const wasmTarget = resolve(root, "src/wasm/tapcam_verifier_wasm.wasm");
 
 await run("cargo", [
   "build",
@@ -22,6 +22,8 @@ await run("cargo", [
 
 await mkdir(dirname(wasmTarget), { recursive: true });
 await copyFile(wasmSource, wasmTarget);
+await mkdir(resolve(root, "public/wasm"), { recursive: true });
+await copyFile(wasmSource, resolve(root, "public/wasm/tapcam_verifier_wasm.wasm"));
 
 function run(command, args) {
   return new Promise((resolveRun, rejectRun) => {
