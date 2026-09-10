@@ -469,6 +469,80 @@ describe("TAP Video v1 local verification", () => {
     }
   });
 
+  it.each([0, 1])("accepts leading empty edits and maps all tracks onto movie time (v%s)", async (version) => {
+    const artifact = await makeArtifact({
+      withAudio: true, depthFrames: [{ ptsValue: 30n }, { ptsValue: 300n }],
+      actualDepthTimeScale: 60000, actualDepthDuration: 60000,
+      trackEdits: {
+        rgb: trackEditList([[30, -1], [570, 30]], version),
+        audio: trackEditList([[15, -1], [570, 2400]], version),
+        depth: trackEditList([[30, -1], [540, 3000]], version)
+      },
+      mutateManifest: (manifest) => {
+        // Track durations include the leading empty interval, as AVAssetTrack reports them.
+        manifest.payload.audioTrack.durationSeconds = 585 / 600;
+        manifest.payload.depthCoverage.trackTimeScale = 60000;
+        manifest.payload.depthCoverage.trackDurationSeconds = 570 / 600;
+      }
+    });
+    const report = await verifyTapVideoLocally(artifact.bytes);
+    expect(report.status).toBe("valid");
+    expect(report.serverRequest).not.toBeNull();
+    expect(inspectTapVideoDepth(artifact.bytes).depthFrames.map((frame) => frame.presentationTimeSeconds)).toEqual([0.05, 0.5]);
+  });
+
+  it.each([[0n, 300n], [60n, 300n]])("rejects depth PTS that omit the leading empty offset (%s, %s)", async (firstPTS, secondPTS) => {
+    const report = await verifyTapVideoLocally((await makeArtifact({
+      depthFrames: [{ ptsValue: firstPTS }, { ptsValue: secondPTS }],
+      trackEdits: { depth: trackEditList([[60, -1], [540, 0]]) }
+    })).bytes);
+    expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
+    expect(report.checks.at(-1)).toMatchObject({ id: "video-semantics", status: "fail" });
+    expect(report.checks.at(-1)?.detail).toContain("KLV PTS does not agree");
+    expect(report.serverRequest).toBeNull();
+  });
+
+  it.each(["rgb", "audio", "depth"] as const)("rejects signed %s duration that omits the leading empty interval", async (track) => {
+    const edit = trackEditList([[60, -1], [540, 0]]);
+    const report = await verifyTapVideoLocally((await makeArtifact({
+      withAudio: true, depthFrames: [{ ptsValue: 60n }, { ptsValue: 360n }],
+      trackEdits: { rgb: edit, audio: edit, depth: edit },
+      mutateManifest: (manifest) => {
+        if (track === "depth") manifest.payload.depthCoverage.trackDurationSeconds = 0.9;
+        else manifest.payload[`${track}Track`].durationSeconds = 0.9;
+      }
+    })).bytes);
+    expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
+    expect(report.checks.at(-1)).toMatchObject({ id: "video-semantics", status: "fail" });
+    expect(report.checks.at(-1)?.detail).toContain("track facts do not match");
+    expect(report.serverRequest).toBeNull();
+  });
+
+  it.each([0, 1])("rejects unsupported leading-empty structures, rates, and media ranges (v%s)", async (version) => {
+    const cases: Array<[string, Array<[number, number, number?]>]> = [
+      ["only empty", [[600, -1]]],
+      ["trailing empty", [[540, 0], [60, -1]]],
+      ["two empty segments", [[60, -1], [540, -1]]],
+      ["repeated leading empty", [[30, -1], [30, -1], [540, 0]]],
+      ["multiple media segments", [[60, 0], [540, 60]]],
+      ["zero empty duration", [[0, -1], [600, 0]]],
+      ["zero media duration", [[60, -1], [0, 0]]],
+      ["non-unit empty rate", [[60, -1, 0], [540, 0]]],
+      ["non-unit media rate", [[60, -1], [540, 0, 0]]],
+      ["negative media start", [[60, -1], [540, -2]]],
+      ["media start at end", [[60, -1], [540, 600]]],
+      ["media range overrun", [[60, -1], [541, 60]]]
+    ];
+    for (const [label, entries] of cases) {
+      const report = await verifyTapVideoLocally((await makeArtifact({
+        depthFrames: [{ ptsValue: 60n }], trackEdits: { depth: trackEditList(entries, version) }
+      })).bytes);
+      expect(report.checks, label).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
+      expect(report.checks.at(-1), label).toMatchObject({ id: "video-semantics", status: "fail" });
+      expect(report.serverRequest, label).toBeNull();
+    }
+  });
+
   it("uses the encoded KLV tick after edit mapping and rejects larger disagreement", async () => {
     for (const [pts, expected] of [[270n, "valid"], [271n, "valid"], [272n, "invalid"]] as const) {
       const report = await verifyTapVideoLocally((await makeArtifact({
@@ -881,8 +955,13 @@ function makeTrack(options: TrackOptions): Uint8Array {
 }
 
 function trackEdit(duration: number, mediaStart: number, version = 0, rate = 0x00010000): Uint8Array {
-  return box("elst", concat(new Uint8Array([version, 0, 0, 0]), u32(1),
-    version === 1 ? concat(i64(BigInt(duration)), i64(BigInt(mediaStart))) : concat(u32(duration), i32(mediaStart)), u32(rate)));
+  return trackEditList([[duration, mediaStart, rate]], version);
+}
+
+function trackEditList(entries: Array<[duration: number, mediaStart: number, rate?: number]>, version = 0): Uint8Array {
+  return box("elst", concat(new Uint8Array([version, 0, 0, 0]), u32(entries.length),
+    ...entries.map(([duration, mediaStart, rate = 0x00010000]) => concat(
+      version === 1 ? concat(i64(BigInt(duration)), i64(BigInt(mediaStart))) : concat(u32(duration), i32(mediaStart)), u32(rate)))));
 }
 
 function makeMovieHeader(timeScale: number, duration: number): Uint8Array {

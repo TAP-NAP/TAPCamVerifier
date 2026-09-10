@@ -183,7 +183,7 @@ interface TrackInfo {
   handler: string;
   timeScale: number;
   duration: bigint;
-  presentation: { duration: bigint; timeScale: number; mediaStart: bigint };
+  presentation: { duration: bigint; timeScale: number; mediaStart: bigint; leadingEmptyDuration: bigint };
   codecs: string[];
   sampleCount: number;
   width: number | null;
@@ -1396,17 +1396,28 @@ function readTrackPresentation(
   movieTimeScale: number
 ): TrackInfo["presentation"] {
   const edits = children(bytes, track).filter((box) => box.type === "edts");
-  if (edits.length === 0) return { ...media, mediaStart: 0n };
+  if (edits.length === 0) return { ...media, mediaStart: 0n, leadingEmptyDuration: 0n };
   if (edits.length !== 1) throw new Error("Ambiguous MP4 track edit list.");
   const elst = requireUniqueChild(bytes, edits[0], "elst");
   if (elst.payloadStart + 8 > elst.payloadEnd) throw new Error("Truncated MP4 track edit list.");
   const version = bytes[elst.payloadStart];
   const entrySize = version === 1 ? 20 : 12;
+  const entryCount = readU32(bytes, elst.payloadStart + 4);
   if ((version !== 0 && version !== 1) || (readU32(bytes, elst.payloadStart) & 0xffffff) !== 0 ||
-      readU32(bytes, elst.payloadStart + 4) !== 1 || elst.payloadStart + 8 + entrySize !== elst.payloadEnd) {
-    throw new Error("Unsupported MP4 track edit list; one rate-one media segment is required.");
+      (entryCount !== 1 && entryCount !== 2) || elst.payloadStart + 8 + entryCount * entrySize !== elst.payloadEnd) {
+    throw new Error("Unsupported MP4 track edit list; one rate-one media segment with an optional leading empty edit is required.");
   }
-  const start = elst.payloadStart + 8;
+  let start = elst.payloadStart + 8;
+  let leadingEmptyDuration = 0n;
+  if (entryCount === 2) {
+    leadingEmptyDuration = version === 1 ? readU64(bytes, start) : BigInt(readU32(bytes, start));
+    const emptyMediaStart = version === 1 ? readI64(bytes, start + 8) : BigInt(readI32(bytes, start + 4));
+    if (leadingEmptyDuration <= 0n || emptyMediaStart !== -1n ||
+        readU32(bytes, start + (version === 1 ? 16 : 8)) !== 0x00010000) {
+      throw new Error("Invalid MP4 leading empty edit.");
+    }
+    start += entrySize;
+  }
   const duration = version === 1 ? readU64(bytes, start) : BigInt(readU32(bytes, start));
   const mediaStart = version === 1 ? readI64(bytes, start + 8) : BigInt(readI32(bytes, start + 4));
   const rateOffset = start + (version === 1 ? 16 : 8);
@@ -1419,7 +1430,9 @@ function readTrackPresentation(
   if (duration > (availableMovieTicks + mediaScale - 1n) / mediaScale) {
     throw new Error("MP4 track edit extends beyond its media duration.");
   }
-  return { duration, timeScale: movieTimeScale, mediaStart };
+  // Native track facts include the initial empty interval in presentation
+  // duration, while only the media segment consumes the available media ticks.
+  return { duration: leadingEmptyDuration + duration, timeScale: movieTimeScale, mediaStart, leadingEmptyDuration };
 }
 
 function depthSamplePresentation(sample: TrackSample, track: TrackInfo): { start: bigint; timeScale: bigint } {
@@ -1429,11 +1442,11 @@ function depthSamplePresentation(sample: TrackSample, track: TrackInfo): { start
   const mediaScale = BigInt(track.timeScale);
   const rawStart = (sample.timestamp - track.presentation.mediaStart) * movieScale;
   const rawEnd = (sample.timestamp + BigInt(sample.duration) - track.presentation.mediaStart) * movieScale;
-  const trackEnd = track.presentation.duration * mediaScale;
+  const trackEnd = (track.presentation.duration - track.presentation.leadingEmptyDuration) * mediaScale;
   const start = rawStart < 0n ? 0n : rawStart;
   const end = rawEnd > trackEnd ? trackEnd : rawEnd;
   if (start >= end) throw new Error("TAP depth sample is outside the presented track edit.");
-  return { start, timeScale: mediaScale * movieScale };
+  return { start: track.presentation.leadingEmptyDuration * mediaScale + start, timeScale: mediaScale * movieScale };
 }
 
 function readTrackTiming(bytes: Uint8Array, stbl: Box, sampleCount: number): { timestamps: bigint[]; durations: number[] } {

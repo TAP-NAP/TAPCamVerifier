@@ -81,13 +81,18 @@ orchestration.
   spellings only after the `esds` configuration confirms AAC-LC, and obtains
   sample rate and channel count from that configuration. Other audio object
   types and ambiguous descriptors are rejected.
-- Track durations and depth presentation timestamps account for a single
-  rate-one MP4 edit (`elst` v0/v1); raw sample durations still match `mdhd`.
+- Track durations and depth presentation timestamps account for a rate-one
+  MP4 media segment, optionally preceded by one empty edit (`elst` v0/v1).
+  The empty edit records a track starting after the movie origin; its duration
+  is included in the signed presentation duration and depth timestamp mapping,
+  but not in the media bytes available to the following segment. Raw sample
+  durations still match `mdhd`.
   Native KLV timestamps use a coarser serialized time base than MP4 media ticks.
   The reader compares edited timestamps within one encoded KLV tick, matching
   native export quantization. This compatibility allowance differs from the
-  pinned container text's finer-tick rule. Multiple edits, empty edits and
-  non-unit playback rates are rejected.
+  pinned container text's finer-tick rule. Empty-only tracks, trailing or
+  repeated empty edits, multiple media segments and non-unit playback rates
+  are rejected.
 - The Rust reader accepts padded base64url and ignores non-zero
   producer-reserved proof-header bytes without assigning them meaning. Shared v1
   still requires producers to emit unpadded base64url and zero reserved bytes.
