@@ -5,8 +5,11 @@ import {
   decodeTapDepthFrame,
   inspectTapVideoDepth,
   orientTapDepthPixels,
+  registerTapDepthPixels,
+  renderTapDepthFrame,
   tapVideoDisplayOrientation,
-  verifyTapVideoLocally
+  verifyTapVideoLocally,
+  type TapVideoRegistrationDescriptor
 } from "./tapVideo";
 
 const encoder = new TextEncoder();
@@ -383,6 +386,90 @@ describe("TAP Video v1 local verification", () => {
     expect([rightMirrored.width, rightMirrored.height, ...redChannels(rightMirrored.rgba)]).toEqual([2, 3, 6, 3, 5, 2, 4, 1]);
   });
 });
+
+describe("registered depth presentation", () => {
+  const rgba = new Uint8ClampedArray([1, 2, 3, 4, 5, 6].flatMap((value) => [value, 0, 0, 255]));
+  const cases = [
+    [0, false, [1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]],
+    [0, true, [3, 2, 1, 6, 5, 4], [3, 2, 1, 6, 5, 4]],
+    [90, false, [4, 1, 5, 2, 6, 3], [4, 1, 5, 2, 6, 3]],
+    [90, true, [1, 4, 2, 5, 3, 6], [6, 3, 5, 2, 4, 1]],
+    [180, false, [6, 5, 4, 3, 2, 1], [6, 5, 4, 3, 2, 1]],
+    [180, true, [4, 5, 6, 1, 2, 3], [4, 5, 6, 1, 2, 3]],
+    [270, false, [3, 6, 2, 5, 1, 4], [3, 6, 2, 5, 1, 4]],
+    [270, true, [6, 3, 5, 2, 4, 1], [1, 4, 2, 5, 3, 6]]
+  ] as const;
+
+  it.each(cases)("maps asymmetric pixels at rotation %i, mirrored %s without changing legacy display", (rotation, mirrored, registeredPixels, legacyPixels) => {
+    const descriptor = registrationDescriptor(rotation, mirrored);
+    const registered = registerTapDepthPixels(rgba, 3, 2, descriptor);
+    const legacy = orientTapDepthPixels(rgba, 3, 2, `rotation:${rotation}${mirrored ? ";mirrored" : ""}`);
+    expect(redChannels(registered.rgba)).toEqual(registeredPixels);
+    expect(redChannels(legacy.rgba)).toEqual(legacyPixels);
+    expect([registered.width, registered.height]).toEqual(rotation % 180 === 0 ? [3, 2] : [2, 3]);
+  });
+
+  it("applies pixel-center affine scaling before rotation, encoded mirroring, and aperture cropping", () => {
+    const descriptor = registrationDescriptor(90, true);
+    descriptor.alignedRGBCodedDimensions = { width: 6, height: 4 };
+    descriptor.encodedRGBCodedDimensions = { width: 4, height: 6 };
+    descriptor.depthToAlignedRGBPixelCenterAffine = [2, 0, 0.5, 0, 2, 0.5];
+    descriptor.rgbCleanAperture = { x: 2, y: 2, width: 2, height: 4 };
+    const projected = registerTapDepthPixels(rgba, 3, 2, descriptor);
+    expect([projected.width, projected.height, ...redChannels(projected.rgba)]).toEqual([1, 2, 5, 6]);
+  });
+
+  it("uses the full affine and leaves unmapped aperture pixels transparent", () => {
+    const descriptor = registrationDescriptor(0, false);
+    descriptor.depthToAlignedRGBPixelCenterAffine = [1, 1, 0, 0, 1, 0];
+    const projected = registerTapDepthPixels(rgba, 3, 2, descriptor);
+    expect(redChannels(projected.rgba)).toEqual([1, 2, 3, 0, 4, 5]);
+    expect(projected.rgba[3 * 4 + 3]).toBe(0);
+  });
+
+  it("rejects inconsistent or non-invertible registered geometry instead of falling back to legacy", () => {
+    const descriptor = registrationDescriptor(90, true);
+    expect(() => registerTapDepthPixels(rgba, 3, 2, { ...descriptor, isEncodedHorizontallyMirrored: false })).toThrow("Invalid");
+    expect(() => registerTapDepthPixels(rgba, 3, 2, { ...descriptor, depthToAlignedRGBPixelCenterAffine: [1, 1, 0, 1, 1, 0] })).toThrow("invertible");
+    expect(() => registerTapDepthPixels(rgba, 3, 2, { ...descriptor, rgbCleanAperture: { x: 0, y: 0, width: 3, height: 3 } })).toThrow("Invalid");
+  });
+
+  it("renders registered playback from the descriptor while keeping historical display-only pixels", () => {
+    vi.stubGlobal("ImageData", class {
+      data: Uint8ClampedArray;
+      constructor(public width: number, public height: number) { this.data = new Uint8ClampedArray(width * height * 4); }
+    });
+    try {
+      const putImageData = vi.fn();
+      const canvas = { width: 0, height: 0, getContext: () => ({ putImageData }) } as unknown as HTMLCanvasElement;
+      const bytes = new Uint8Array(new Float32Array([1, 2, 3, 4, 5, 6]).buffer);
+      const format = { width: 3, height: 2, kind: "depth", pixelFormat: "fdep", packedRowStride: 12, bytesPerSample: 4, byteOrder: "little-endian", uncompressedFrameByteCount: 24 };
+      renderTapDepthFrame(bytes, format, canvas);
+      const original = (putImageData.mock.calls[0][0] as ImageData).data;
+      renderTapDepthFrame(bytes, format, canvas, "rotation:90;mirrored", { status: "registered", descriptor: registrationDescriptor(90, true) });
+      const registered = (putImageData.mock.calls[1][0] as ImageData).data;
+      expect(Array.from(registered)).toEqual([0, 3, 1, 4, 2, 5].flatMap((index) => Array.from(original.slice(index * 4, index * 4 + 4))));
+      renderTapDepthFrame(bytes, format, canvas, "rotation:90;mirrored", { status: "unavailable" });
+      const legacy = (putImageData.mock.calls[2][0] as ImageData).data;
+      expect(Array.from(legacy)).toEqual([5, 2, 4, 1, 3, 0].flatMap((index) => Array.from(original.slice(index * 4, index * 4 + 4))));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+function registrationDescriptor(rotation: number, mirrored: boolean): TapVideoRegistrationDescriptor {
+  const encoded = rotation % 180 === 0 ? { width: 3, height: 2 } : { width: 2, height: 3 };
+  return {
+    alignedRGBCodedDimensions: { width: 3, height: 2 },
+    encodedRGBCodedDimensions: encoded,
+    depthDimensions: { width: 3, height: 2 },
+    depthToAlignedRGBPixelCenterAffine: [1, 0, 0, 0, 1, 0],
+    connectionTransform: `rotation:${rotation};${mirrored ? "mirrored" : "not-mirrored"}`,
+    isEncodedHorizontallyMirrored: mirrored,
+    rgbCleanAperture: { x: 0, y: 0, ...encoded }
+  };
+}
 
 type AnyRecord = Record<string, any>;
 

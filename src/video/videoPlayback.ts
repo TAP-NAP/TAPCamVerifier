@@ -37,6 +37,7 @@ export function mountTapVideoDepthPlayback(
 
   const format = inspection.manifest.payload.depthCoverage.format;
   const displayTransform = inspection.manifest.payload.rgbTrack?.transform;
+  const registration = inspection.manifest.payload.spatialRegistration;
   const frames = inspection.depthFrames;
   if (!format || frames.length === 0) {
     status.textContent = t("videoPlayer.noDepth");
@@ -56,7 +57,7 @@ export function mountTapVideoDepthPlayback(
     const generation = ++renderGeneration;
     void decodedFrame(frame).then((decoded) => {
       if (disposed || generation !== renderGeneration) return;
-      renderTapDepthFrame(decoded, format, canvas, displayTransform);
+      renderTapDepthFrame(decoded, format, canvas, displayTransform, registration);
       renderedFrameIndex = frame.frameIndex;
       status.textContent = t("videoPlayer.depthAtTime", { time: formatTime(frame.presentationTimeSeconds) });
       status.classList.remove("is-error");

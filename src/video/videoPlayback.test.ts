@@ -39,12 +39,14 @@ describe("video depth status", () => {
   });
 
   it("keeps useful playback time and size without exposing codec or transform tokens", async () => {
-    vi.mocked(inspectTapVideoDepth).mockReturnValue({ manifest: { payload: { depthCoverage: { format: { width: 2, height: 1, pixelFormat: "hdep" } }, rgbTrack: { transform: "rotation:90;mirrored" } } }, depthFrames: [{ frameIndex: 0, presentationTimeSeconds: 0 }] } as unknown as ReturnType<typeof inspectTapVideoDepth>);
+    const registration = { status: "registered", descriptor: { connectionTransform: "rotation:90;mirrored" } };
+    vi.mocked(inspectTapVideoDepth).mockReturnValue({ manifest: { payload: { depthCoverage: { format: { width: 2, height: 1, pixelFormat: "hdep" } }, rgbTrack: { transform: "rotation:90;mirrored" }, spatialRegistration: registration } }, depthFrames: [{ frameIndex: 0, presentationTimeSeconds: 0 }] } as unknown as ReturnType<typeof inspectTapVideoDepth>);
     vi.mocked(decodeTapDepthFrame).mockResolvedValue(new Uint8Array());
     vi.mocked(renderTapDepthFrame).mockReturnValue({ min: 1, max: 2 });
     const view = mount();
     await vi.waitFor(() => expect(view.status.textContent).toBe("Depth view · 0:00.000"));
     expect(view.metadata.textContent).toBe("2 × 1");
+    expect(renderTapDepthFrame).toHaveBeenCalledWith(expect.any(Uint8Array), expect.any(Object), expect.any(Object), "rotation:90;mirrored", registration);
     expect(view.status.textContent + view.metadata.textContent).not.toMatch(/hdep|rotation|mirrored/);
     view.cleanup();
   });

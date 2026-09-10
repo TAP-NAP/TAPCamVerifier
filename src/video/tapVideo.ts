@@ -81,11 +81,24 @@ export type TapVideoDisplayOrientation =
   | "rightMirrored"
   | "left";
 
-export interface OrientedTapDepthPixels {
+export interface TapDepthPixels {
   width: number;
   height: number;
   rgba: Uint8ClampedArray;
+}
+
+export interface OrientedTapDepthPixels extends TapDepthPixels {
   orientation: TapVideoDisplayOrientation;
+}
+
+export interface TapVideoRegistrationDescriptor {
+  alignedRGBCodedDimensions: { width: number; height: number };
+  encodedRGBCodedDimensions: { width: number; height: number };
+  depthDimensions: { width: number; height: number };
+  depthToAlignedRGBPixelCenterAffine: number[];
+  connectionTransform: string;
+  isEncodedHorizontallyMirrored: boolean;
+  rgbCleanAperture: { x: number; y: number; width: number; height: number };
 }
 
 interface Box {
@@ -371,7 +384,8 @@ export function renderTapDepthFrame(
   bytes: Uint8Array,
   format: TapVideoDepthFormat,
   canvas: HTMLCanvasElement,
-  transform?: string | null
+  transform?: string | null,
+  registration?: TapVideoManifest["payload"]["spatialRegistration"]
 ): { min: number; max: number } {
   const { width, height, bytesPerSample, packedRowStride, pixelFormat } = format;
   if (width <= 0 || height <= 0 || width * height > 16_777_216) {
@@ -415,7 +429,9 @@ export function renderTapDepthFrame(
     rgba[offset + 2] = b;
     rgba[offset + 3] = 255;
   }
-  const oriented = orientTapDepthPixels(rgba, width, height, transform);
+  const oriented = registration?.status === "registered"
+    ? registerTapDepthPixels(rgba, width, height, registration.descriptor as TapVideoRegistrationDescriptor)
+    : orientTapDepthPixels(rgba, width, height, transform);
   canvas.width = oriented.width;
   canvas.height = oriented.height;
   const context = canvas.getContext("2d");
@@ -426,6 +442,65 @@ export function renderTapDepthFrame(
   image.data.set(oriented.rgba);
   context.putImageData(image, 0, 0);
   return { min, max };
+}
+
+/** Maps registered depth into the encoded RGB aperture. Unlike the legacy
+ * display transform, its horizontal mirror follows the connection rotation. */
+export function registerTapDepthPixels(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  descriptor: TapVideoRegistrationDescriptor
+): TapDepthPixels {
+  const aligned = descriptor.alignedRGBCodedDimensions;
+  const encoded = descriptor.encodedRGBCodedDimensions;
+  const crop = descriptor.rgbCleanAperture;
+  const affine = descriptor.depthToAlignedRGBPixelCenterAffine;
+  const match = /^rotation:(0|90|180|270);(mirrored|not-mirrored)$/.exec(descriptor.connectionTransform);
+  if (!match || descriptor.isEncodedHorizontallyMirrored !== (match[2] === "mirrored") ||
+      descriptor.depthDimensions.width !== width || descriptor.depthDimensions.height !== height ||
+      ![width, height, aligned.width, aligned.height, encoded.width, encoded.height].every((value) => Number.isSafeInteger(value) && value > 0) ||
+      rgba.length !== width * height * 4 || affine.length !== 6 || !affine.every(Number.isFinite) ||
+      ![crop.x, crop.y, crop.width, crop.height].every(Number.isFinite) ||
+      crop.x < 0 || crop.y < 0 || crop.width <= 0 || crop.height <= 0 ||
+      crop.x + crop.width > encoded.width || crop.y + crop.height > encoded.height) {
+    throw new Error("Invalid TAP Video depth registration geometry.");
+  }
+  const rotation = Number(match[1]);
+  const swapsAxes = rotation === 90 || rotation === 270;
+  if (encoded.width !== (swapsAxes ? aligned.height : aligned.width) ||
+      encoded.height !== (swapsAxes ? aligned.width : aligned.height)) {
+    throw new Error("TAP Video registration rotation does not match encoded RGB dimensions.");
+  }
+  const [a, b, tx, c, d, ty] = affine;
+  const determinant = a * d - b * c;
+  if (!Number.isFinite(determinant) || Math.abs(determinant) < Number.EPSILON) {
+    throw new Error("TAP Video depth registration affine is not invertible.");
+  }
+
+  // Keep the original depth pixel density instead of upsampling to RGB size.
+  const scale = Math.min(1, width / aligned.width, height / aligned.height);
+  const outputWidth = Math.max(1, Math.round(crop.width * scale));
+  const outputHeight = Math.max(1, Math.round(crop.height * scale));
+  if (outputWidth * outputHeight > 16_777_216) {
+    throw new Error("TAP Video registered depth preview exceeds the pixel limit.");
+  }
+  const output = new Uint8ClampedArray(outputWidth * outputHeight * 4);
+  const inverseRotation = tapVideoDisplayOrientation(`rotation:${(360 - rotation) % 360}`);
+  for (let y = 0; y < outputHeight; y += 1) {
+    for (let x = 0; x < outputWidth; x += 1) {
+      let encodedX = crop.x + (x + 0.5) * crop.width / outputWidth - 0.5;
+      const encodedY = crop.y + (y + 0.5) * crop.height / outputHeight - 0.5;
+      if (descriptor.isEncodedHorizontallyMirrored) encodedX = encoded.width - 1 - encodedX;
+      const [alignedX, alignedY] = orientedCoordinate(encodedX, encodedY, encoded.width, encoded.height, inverseRotation);
+      const sourceX = Math.round((d * (alignedX - tx) - b * (alignedY - ty)) / determinant);
+      const sourceY = Math.round((a * (alignedY - ty) - c * (alignedX - tx)) / determinant);
+      if (sourceX < 0 || sourceX >= width || sourceY < 0 || sourceY >= height) continue;
+      const sourceOffset = (sourceY * width + sourceX) * 4;
+      output.set(rgba.subarray(sourceOffset, sourceOffset + 4), (y * outputWidth + x) * 4);
+    }
+  }
+  return { width: outputWidth, height: outputHeight, rgba: output };
 }
 
 /** Applies the signed RGB-track transform to the raw depth grid. */
