@@ -141,8 +141,10 @@ manual workflow dispatch. Configure the repository's Pages source as
 
 After tests and the build pass, the workflow also uploads the contents of `dist/`
 as `tapnap-web-${{ github.sha }}-${{ github.run_attempt }}`, retained for 30 days.
-The ECS deployment tool pulls this artifact from a completed successful workflow
-run and verifies its GitHub archive digest before publishing it. See the
+The ECS deployment tool requires the `build` job (tests, build, and artifact upload)
+to succeed in the artifact's workflow run and attempt, then verifies its GitHub
+archive digest before publishing it. A pending or failed Pages deployment does
+not block ECS deployment. See the
 [server deployment instructions](https://github.com/TAP-NAP/server/tree/main/deploy)
 for manual deployment and rollback. JavaScript, CSS, and the verifier WASM are
 published with content-hashed asset filenames. A compatibility copy at
