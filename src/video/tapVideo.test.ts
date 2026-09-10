@@ -279,6 +279,69 @@ describe("TAP Video v1 local verification", () => {
     }
   });
 
+  it("checks presented track durations and maps depth samples through v0/v1 edits", async () => {
+    for (const version of [0, 1]) {
+      const artifact = await makeArtifact({
+        withAudio: true, depthFrames: [{ ptsValue: 0n }, { ptsValue: 270n }],
+        actualDepthTimeScale: 60000, actualDepthDuration: 60000,
+        trackEdits: { rgb: trackEdit(600, 0, version), audio: trackEdit(570, 2400, version), depth: trackEdit(540, 3000, version) },
+        mutateManifest: (manifest) => {
+          manifest.payload.audioTrack.durationSeconds = 0.95;
+          manifest.payload.depthCoverage.trackTimeScale = 60000;
+          manifest.payload.depthCoverage.trackDurationSeconds = 0.9;
+        }
+      });
+      const report = await verifyTapVideoLocally(artifact.bytes);
+      expect(report.status).toBe("valid");
+      expect(report.serverRequest).not.toBeNull();
+      expect(inspectTapVideoDepth(artifact.bytes).depthFrames.map((frame) => frame.presentationTimeSeconds)).toEqual([0, 0.45]);
+    }
+  });
+
+  it("uses the encoded KLV tick after edit mapping and rejects larger disagreement", async () => {
+    for (const [pts, expected] of [[270n, "valid"], [271n, "valid"], [272n, "invalid"]] as const) {
+      const report = await verifyTapVideoLocally((await makeArtifact({
+        depthFrames: [{ ptsValue: 0n }, { ptsValue: pts }], actualDepthTimeScale: 60000, actualDepthDuration: 60000,
+        trackEdits: { depth: trackEdit(540, 3000) },
+        mutateManifest: (manifest) => {
+          manifest.payload.depthCoverage.trackTimeScale = 60000;
+          manifest.payload.depthCoverage.trackDurationSeconds = 0.9;
+        }
+      })).bytes);
+      expect(report.status).toBe(expected);
+      expect(report.serverRequest !== null).toBe(expected === "valid");
+    }
+  });
+
+  it("rejects a KLV timestamp past the signed edit end even when within one alignment tick", async () => {
+    const report = await verifyTapVideoLocally((await makeArtifact({
+      depthFrames: [{ ptsValue: 0n }, { ptsValue: 271n }],
+      actualMovieTimeScale: 1200, actualMovieDuration: 1200,
+      actualDepthTimeScale: 60000, actualDepthDuration: 60000,
+      trackEdits: { depth: trackEdit(541, 3000) },
+      mutateManifest: (manifest) => {
+        manifest.payload.container.timeScale = 1200;
+        manifest.payload.depthCoverage.trackTimeScale = 60000;
+        manifest.payload.depthCoverage.trackDurationSeconds = 541 / 1200;
+      }
+    })).bytes);
+    expect(report.status).toBe("invalid");
+    expect(report.checks.at(-1)?.detail).toContain("outside the signed presentation duration");
+    expect(report.serverRequest).toBeNull();
+  });
+
+  it("rejects unsupported or out-of-range edits while preserving signed timing checks", async () => {
+    const cases = [trackEdit(600, -1), trackEdit(600, 600), trackEdit(601, 0), trackEdit(600, 0, 0, 0),
+      trackEdit(600, 0, 2), trackEdit(600, 0).subarray(0, -1), concat(trackEdit(600, 0), trackEdit(600, 0)),
+      trackEdit(599, 0)]; // Last edit is valid but contradicts the signed 1-second duration.
+    for (const edit of cases) {
+      const report = await verifyTapVideoLocally((await makeArtifact({ depthFrames: [{}], trackEdits: { depth: edit } })).bytes);
+      expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
+      expect(report.checks.at(-1)).toMatchObject({ id: "video-semantics", status: "fail" });
+      expect(report.serverRequest).toBeNull();
+    }
+  });
+
   it("rejects COMP policy, ULEN/format, CALI/table, coverage, and padding violations", async () => {
     const cases: ArtifactOptions[] = [
       { depthFrames: [{ compression: "zstd1", payload: ZSTD_PAYLOAD, ulen: 40 }] },
@@ -350,6 +413,8 @@ interface ArtifactOptions {
   actualMovieTimeScale?: number;
   actualMovieDuration?: number;
   actualDepthDuration?: number;
+  actualDepthTimeScale?: number;
+  trackEdits?: Partial<Record<"rgb" | "audio" | "depth", Uint8Array>>;
   withAudio?: boolean;
   actualAudioCodec?: string;
   audioDescriptor?: Uint8Array;
@@ -396,17 +461,17 @@ async function makeArtifact(options: ArtifactOptions = {}): Promise<{ bytes: Uin
   const depthOffset = audioOffset + (options.withAudio ? audioSample.length : 0);
   const tracks = [makeTrack({
     id: options.actualRGBTrackID ?? 1, handler: "vide", codec: options.actualRGBCodec ?? "avc1",
-    timeScale: 600, duration: 600, sampleSizes: [rgbSample.length], chunkOffset: rgbOffset, width: 4, height: 4
+    timeScale: 600, duration: 600, sampleSizes: [rgbSample.length], chunkOffset: rgbOffset, width: 4, height: 4, edit: options.trackEdits?.rgb
   })];
   if (options.withAudio) {
     tracks.push(makeTrack({
       id: 3, handler: "soun", codec: options.actualAudioCodec ?? "mp4a", timeScale: 48_000,
-      duration: 48_000, sampleSizes: [audioSample.length], chunkOffset: audioOffset, audioDescriptor: options.audioDescriptor
+      duration: 48_000, sampleSizes: [audioSample.length], chunkOffset: audioOffset, audioDescriptor: options.audioDescriptor, edit: options.trackEdits?.audio
     }));
   }
   if (metadataTrackPresent) {
     tracks.push(makeTrack({
-      id: 2, handler: "meta", codec: options.actualDepthCodec ?? "mebx", timeScale: 600,
+      id: 2, handler: "meta", codec: options.actualDepthCodec ?? "mebx", timeScale: options.actualDepthTimeScale ?? 600, edit: options.trackEdits?.depth,
       duration: options.actualDepthDuration ?? 600, sampleSizes: depthSamples.length > 0 ? depthSamples.map((sample) => sample.length) : [8],
       chunkOffset: depthOffset, sampleDelta: Math.floor((options.actualDepthDuration ?? 600) / Math.max(1, depthSamples.length)),
       metadataKey: options.metadataKey ?? "com.tapnap.depth.klv", metadataLocalKeyID: options.metadataLocalKeyID ?? 3
@@ -519,7 +584,7 @@ function makeDepthSample(frame: FrameOptions, index: number, defaultDelta: numbe
 interface TrackOptions {
   id: number; handler: "vide" | "soun" | "meta"; codec: string; timeScale: number; duration: number;
   sampleSizes: number[]; chunkOffset: number; sampleDelta?: number; width?: number; height?: number;
-  metadataKey?: string; metadataLocalKeyID?: number; audioDescriptor?: Uint8Array;
+  metadataKey?: string; metadataLocalKeyID?: number; audioDescriptor?: Uint8Array; edit?: Uint8Array;
 }
 
 function makeTrack(options: TrackOptions): Uint8Array {
@@ -535,7 +600,12 @@ function makeTrack(options: TrackOptions): Uint8Array {
   const stsz = fullBox("stsz", concat(u32(0), u32(options.sampleSizes.length), ...options.sampleSizes.map(u32)));
   const stsc = fullBox("stsc", concat(u32(1), u32(1), u32(options.sampleSizes.length), u32(1)));
   const stco = fullBox("stco", concat(u32(1), u32(options.chunkOffset)));
-  return box("trak", concat(tkhd, box("mdia", concat(mdhd, hdlr, box("minf", box("stbl", concat(stsd, stts, stsz, stsc, stco)))))));
+  return box("trak", concat(tkhd, ...(options.edit ? [box("edts", options.edit)] : []), box("mdia", concat(mdhd, hdlr, box("minf", box("stbl", concat(stsd, stts, stsz, stsc, stco)))))));
+}
+
+function trackEdit(duration: number, mediaStart: number, version = 0, rate = 0x00010000): Uint8Array {
+  return box("elst", concat(new Uint8Array([version, 0, 0, 0]), u32(1),
+    version === 1 ? concat(i64(BigInt(duration)), i64(BigInt(mediaStart))) : concat(u32(duration), i32(mediaStart)), u32(rate)));
 }
 
 function makeMovieHeader(timeScale: number, duration: number): Uint8Array {

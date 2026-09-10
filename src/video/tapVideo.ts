@@ -142,6 +142,7 @@ interface TrackInfo {
   handler: string;
   timeScale: number;
   duration: bigint;
+  presentation: { duration: bigint; timeScale: number; mediaStart: bigint };
   codecs: string[];
   sampleCount: number;
   width: number | null;
@@ -966,7 +967,7 @@ async function validateVideoSemantics(bytes: Uint8Array, topLevel: Box[], manife
   const movieHeader = requireUniqueChild(bytes, moov, "mvhd");
   const movieTiming = readHeaderTiming(bytes, movieHeader, "movie");
   const trackBoxes = children(bytes, moov).filter((box) => box.type === "trak");
-  const tracks = trackBoxes.map((track) => readTrackInfo(bytes, track));
+  const tracks = trackBoxes.map((track) => readTrackInfo(bytes, track, movieTiming.timeScale));
   const payload = manifest.payload as unknown as Record<string, unknown>;
   const container = payload.container as Record<string, unknown>;
   const rgb = payload.rgbTrack as Record<string, unknown>;
@@ -989,7 +990,7 @@ async function validateVideoSemantics(bytes: Uint8Array, topLevel: Box[], manife
   const rgbTrack = rgbTracks[0];
   requireSingleCodec(rgbTrack, rgb.codec as string, "RGB");
   if (rgb.trackID !== rgbTrack.id || rgb.timeScale !== rgbTrack.timeScale ||
-      !durationMatches(rgb.durationSeconds as number, rgbTrack.duration, rgbTrack.timeScale) ||
+      !durationMatches(rgb.durationSeconds as number, rgbTrack.presentation.duration, rgbTrack.presentation.timeScale) ||
       rgb.width !== rgbTrack.width || rgb.height !== rgbTrack.height ||
       (rgb.frameCount !== undefined && rgb.frameCount !== null && rgb.frameCount !== rgbTrack.sampleCount)) {
     throw new Error("RGB track facts do not match the finalized MP4.");
@@ -1001,7 +1002,7 @@ async function validateVideoSemantics(bytes: Uint8Array, topLevel: Box[], manife
     const audioCodec = audio.codec === "mp4a" && audioTrack.codecs[0] === "aac " ? "aac " : audio.codec as string;
     requireSingleCodec(audioTrack, audioCodec, "audio");
     if (audio.trackID !== audioTrack.id || audio.timeScale !== audioTrack.timeScale ||
-        !durationMatches(audio.durationSeconds as number, audioTrack.duration, audioTrack.timeScale) ||
+        !durationMatches(audio.durationSeconds as number, audioTrack.presentation.duration, audioTrack.presentation.timeScale) ||
         (audio.sampleRate !== null && audio.sampleRate !== audioTrack.sampleRate) ||
         (audio.channelCount !== null && audio.channelCount !== audioTrack.channelCount)) {
       throw new Error("Audio track facts do not match the finalized MP4.");
@@ -1020,14 +1021,14 @@ async function validateVideoSemantics(bytes: Uint8Array, topLevel: Box[], manife
   const depthTrack = metadataTracks[0];
   requireSingleCodec(depthTrack, "mebx", "depth metadata");
   if (coverage.trackID !== depthTrack.id || coverage.trackTimeScale !== depthTrack.timeScale ||
-      !durationMatches(coverage.trackDurationSeconds as number, depthTrack.duration, depthTrack.timeScale) ||
+      !durationMatches(coverage.trackDurationSeconds as number, depthTrack.presentation.duration, depthTrack.presentation.timeScale) ||
       depthTrack.sampleCount !== coverage.sampleCount ||
       depthTrack.id === rgbTrack.id || (audioTracks[0] && depthTrack.id === audioTracks[0].id)) {
     throw new Error("Depth metadata track facts do not match the finalized MP4.");
   }
   const samples = readTrackSamples(bytes, depthTrack.box);
   if (samples.reduce((sum, sample) => sum + BigInt(sample.duration), 0n) !== depthTrack.duration) {
-    throw new Error("Timed-depth sample durations do not match the signed track duration.");
+    throw new Error("Timed-depth sample durations do not match the MP4 media duration.");
   }
   const keyMappings = readMebxKeyMappings(bytes, depthTrack.box);
   const format = coverage.format as Record<string, unknown>;
@@ -1055,13 +1056,19 @@ async function validateVideoSemantics(bytes: Uint8Array, topLevel: Box[], manife
     if (previousSampleTimestamp !== null && sample.timestamp <= previousSampleTimestamp) {
       throw new Error("MP4 timed-depth sample timestamps must be strictly increasing.");
     }
-    if (sample.duration <= 0 || sample.timestamp < 0n || sample.timestamp + BigInt(sample.duration) > depthTrack.duration ||
-        compareMediaTimes(frame.ptsValue, frame.ptsTimescale, 0n, 1) < 0 ||
-        compareMediaTimes(frame.ptsValue, frame.ptsTimescale, depthTrack.duration, depthTrack.timeScale) > 0) {
-      throw new Error("TAP depth sample timestamp or duration is outside the signed track duration.");
+    if (sample.duration <= 0 || sample.timestamp < 0n || sample.timestamp + BigInt(sample.duration) > depthTrack.duration) {
+      throw new Error("TAP depth sample timestamp or duration is outside the MP4 media duration.");
     }
-    if (!withinOneFinerTick(frame.ptsValue, frame.ptsTimescale, sample.timestamp, depthTrack.timeScale)) {
-      throw new Error("KLV PTS does not agree with its MP4 sample timestamp within one tick.");
+    const presentation = depthSamplePresentation(sample, depthTrack);
+    // The producer rounds capture-relative KLV timestamps to 600 Hz. The edit
+    // origin is independently quantized, so compare in the encoded KLV timebase
+    // with one KLV tick, rather than one tick of the nanosecond media timebase.
+    if (frame.ptsValue < 0n || compareMediaTimes(frame.ptsValue, frame.ptsTimescale,
+        depthTrack.presentation.duration, depthTrack.presentation.timeScale) > 0) {
+      throw new Error("TAP depth timestamp is outside the signed presentation duration.");
+    }
+    if (absBigInt(frame.ptsValue * presentation.timeScale - presentation.start * BigInt(frame.ptsTimescale)) > presentation.timeScale) {
+      throw new Error("KLV PTS does not agree with its edited MP4 sample timestamp within one encoded KLV tick.");
     }
     await decodeTapDepthFrame(frame);
     previousPTS = { value: frame.ptsValue, timescale: frame.ptsTimescale };
@@ -1074,11 +1081,12 @@ async function validateVideoSemantics(bytes: Uint8Array, topLevel: Box[], manife
   }
 }
 
-function readTrackInfo(bytes: Uint8Array, track: Box): TrackInfo {
+function readTrackInfo(bytes: Uint8Array, track: Box, movieTimeScale: number): TrackInfo {
   const id = readTrackID(bytes, track);
   const mdia = requireUniqueChild(bytes, track, "mdia");
   const mdhd = requireUniqueChild(bytes, mdia, "mdhd");
   const timing = readHeaderTiming(bytes, mdhd, "track");
+  const presentation = readTrackPresentation(bytes, track, timing, movieTimeScale);
   const hdlr = requireUniqueChild(bytes, mdia, "hdlr");
   if (hdlr.payloadStart + 12 > hdlr.payloadEnd) throw new Error("Truncated MP4 media handler.");
   const handler = asciiFourCC(bytes, hdlr.payloadStart + 8);
@@ -1110,7 +1118,7 @@ function readTrackInfo(bytes: Uint8Array, track: Box): TrackInfo {
       channelCount = audio.channelCount;
     }
   }
-  return { box: track, id, handler, timeScale: timing.timeScale, duration: timing.duration, codecs, sampleCount, width, height, sampleRate, channelCount };
+  return { box: track, id, handler, timeScale: timing.timeScale, duration: timing.duration, presentation, codecs, sampleCount, width, height, sampleRate, channelCount };
 }
 
 function readAACConfiguration(bytes: Uint8Array, entry: Box): { sampleRate: number; channelCount: number } {
@@ -1191,6 +1199,53 @@ function readHeaderTiming(bytes: Uint8Array, box: Box, label: string): { timeSca
   const duration = version === 1 ? readU64(bytes, durationOffset) : BigInt(readU32(bytes, durationOffset));
   if (timeScale === 0) throw new Error(`Invalid MP4 ${label} timescale.`);
   return { timeScale, duration };
+}
+
+function readTrackPresentation(
+  bytes: Uint8Array,
+  track: Box,
+  media: { duration: bigint; timeScale: number },
+  movieTimeScale: number
+): TrackInfo["presentation"] {
+  const edits = children(bytes, track).filter((box) => box.type === "edts");
+  if (edits.length === 0) return { ...media, mediaStart: 0n };
+  if (edits.length !== 1) throw new Error("Ambiguous MP4 track edit list.");
+  const elst = requireUniqueChild(bytes, edits[0], "elst");
+  if (elst.payloadStart + 8 > elst.payloadEnd) throw new Error("Truncated MP4 track edit list.");
+  const version = bytes[elst.payloadStart];
+  const entrySize = version === 1 ? 20 : 12;
+  if ((version !== 0 && version !== 1) || (readU32(bytes, elst.payloadStart) & 0xffffff) !== 0 ||
+      readU32(bytes, elst.payloadStart + 4) !== 1 || elst.payloadStart + 8 + entrySize !== elst.payloadEnd) {
+    throw new Error("Unsupported MP4 track edit list; one rate-one media segment is required.");
+  }
+  const start = elst.payloadStart + 8;
+  const duration = version === 1 ? readU64(bytes, start) : BigInt(readU32(bytes, start));
+  const mediaStart = version === 1 ? readI64(bytes, start + 8) : BigInt(readI32(bytes, start + 4));
+  const rateOffset = start + (version === 1 ? 16 : 8);
+  if (readU32(bytes, rateOffset) !== 0x00010000 || mediaStart < 0n || mediaStart >= media.duration || duration <= 0n) {
+    throw new Error("Unsupported MP4 track edit rate or media range.");
+  }
+  // elst duration is quantized in movie ticks, while mdhd is in media ticks.
+  const mediaScale = BigInt(media.timeScale);
+  const availableMovieTicks = (media.duration - mediaStart) * BigInt(movieTimeScale);
+  if (duration > (availableMovieTicks + mediaScale - 1n) / mediaScale) {
+    throw new Error("MP4 track edit extends beyond its media duration.");
+  }
+  return { duration, timeScale: movieTimeScale, mediaStart };
+}
+
+function depthSamplePresentation(sample: TrackSample, track: TrackInfo): { start: bigint; timeScale: bigint } {
+  // Keep an exact common timebase so both ends can be clipped without rounding.
+  // Media stts/ctts timestamps and totals remain independently checked above.
+  const movieScale = BigInt(track.presentation.timeScale);
+  const mediaScale = BigInt(track.timeScale);
+  const rawStart = (sample.timestamp - track.presentation.mediaStart) * movieScale;
+  const rawEnd = (sample.timestamp + BigInt(sample.duration) - track.presentation.mediaStart) * movieScale;
+  const trackEnd = track.presentation.duration * mediaScale;
+  const start = rawStart < 0n ? 0n : rawStart;
+  const end = rawEnd > trackEnd ? trackEnd : rawEnd;
+  if (start >= end) throw new Error("TAP depth sample is outside the presented track edit.");
+  return { start, timeScale: mediaScale * movieScale };
 }
 
 function readTrackTiming(bytes: Uint8Array, stbl: Box, sampleCount: number): { timestamps: bigint[]; durations: number[] } {
@@ -1284,11 +1339,6 @@ function compareMediaTimes(leftValue: bigint, leftScale: number, rightValue: big
   const left = leftValue * BigInt(rightScale);
   const right = rightValue * BigInt(leftScale);
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function withinOneFinerTick(leftValue: bigint, leftScale: number, rightValue: bigint, rightScale: number): boolean {
-  const difference = absBigInt(leftValue * BigInt(rightScale) - rightValue * BigInt(leftScale));
-  return difference * BigInt(Math.max(leftScale, rightScale)) <= BigInt(leftScale) * BigInt(rightScale);
 }
 
 function durationMatches(declared: number, ticks: bigint, timeScale: number): boolean {
