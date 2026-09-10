@@ -5,6 +5,7 @@ import type { OriginalPreviewAvailable } from "../original/types";
 import type { CombinedVerificationResult } from "../verifier/types";
 import {
   renderDepthPanel,
+  verificationResultPhase,
   renderOriginalPreviewLoading,
   renderOriginalPreviewResult,
   renderPixelProjectionPanel,
@@ -395,5 +396,35 @@ describe("renderPixelProjectionPanel", () => {
     expect(html).toContain("3.0%");
     expect(html).toContain("Isolated depth samples");
     expect(html).toContain("82 pts");
+  });
+});
+
+
+describe("verification progress", () => {
+  it("stops at a local failure before signature and server verification", () => {
+    const failed: CombinedVerificationResult = {
+      ...result, finalStatus: "invalid", server: null,
+      local: { ...result.local, status: "invalid", checks: [{ id: "parse", label: "Read video", status: "fail", detail: "Missing video manifest" }] }
+    };
+    expect(verificationResultPhase(failed)).toBe(1);
+    // A failed check also stops the flow if a report's aggregate status is inconsistent.
+    expect(verificationResultPhase({ ...failed, local: { ...failed.local, status: "valid" } })).toBe(1);
+  });
+
+  it("does not complete skipped or failed server verification", () => {
+    const failed: CombinedVerificationResult = { ...result, finalStatus: "invalid", server: null };
+    expect(verificationResultPhase(failed)).toBe(2);
+    const withRequest = {
+      ...failed,
+      local: { ...failed.local, serverRequest: {
+        keyId: "key", assertionObject: "assertion", signingBinding: {
+          bodySHA256: "body", captureID: "capture", operation: "tapcam.capture.sign" as const,
+          schemaID: "urn:tapnap:tapcam:app-attest-capture-signing:v1" as const
+        }
+      } }
+    };
+    expect(verificationResultPhase({ ...withRequest, serverError: "offline" })).toBe(3);
+    expect(verificationResultPhase({ ...withRequest, server: { status: "invalid" } })).toBe(3);
+    expect(verificationResultPhase({ ...withRequest, finalStatus: "valid", server: { status: "valid" } })).toBe(4);
   });
 });

@@ -76,6 +76,12 @@ function getModalIcon(type: ResultModalType): string {
   }
 }
 
+export function verificationResultPhase(result: CombinedVerificationResult): number {
+  if (result.finalStatus === "valid") return 4;
+  if (result.local.status !== "valid" || result.local.checks.some((check) => check.status === "fail")) return 1;
+  return result.local.serverRequest ? 3 : 2;
+}
+
 export function classifyResult(result: CombinedVerificationResult): ResultModalType {
   if (result.finalStatus === "valid") {
     return "success";

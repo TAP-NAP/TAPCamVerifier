@@ -19,6 +19,7 @@ import {
   drawDepthCanvas,
   drawOriginalCanvas,
   classifyResult,
+  verificationResultPhase,
   escapeHtml,
   formatBytes,
   renderDepthPanel,
@@ -317,8 +318,11 @@ function progressDetailForStep(index: number): string {
   if (currentProgressStatus === "invalid" && index === currentProgressPhase) {
     return t("progress.failed");
   }
+  if (currentProgressStatus === "invalid" && index > currentProgressPhase) {
+    return t("progress.notRun");
+  }
   if (index === 0) {
-    return t("progress.fileRead");
+    return t(currentProgressPhase === 0 ? "progress.fileReading" : "progress.fileRead");
   }
   if (index === 1) {
     if (currentProgressPhase < 1) return t("progress.waiting");
@@ -468,7 +472,8 @@ async function verifyFile(file: File): Promise<void> {
 
     currentResult = result;
     isVerifying = false;
-    setVerificationProgress(4, result.finalStatus === "valid" ? "valid" : "invalid");
+    setVerificationProgress(verificationResultPhase(result), result.finalStatus);
+    updatePaneHeaders();
 
     resultEl.innerHTML = renderVerificationResult(result);
     const modal = resultModalFor(result);
@@ -481,6 +486,7 @@ async function verifyFile(file: File): Promise<void> {
     if (runId === activeRunId) {
       isVerifying = false;
       setVerificationProgress(Math.max(1, currentProgressPhase), "invalid");
+      updatePaneHeaders();
       const message = error instanceof Error ? error.message : String(error);
       await showResultModal("parseError", {
         title: t("modal.parseErrorTitle"),
@@ -955,6 +961,13 @@ function updatePaneHeaders(): void {
   const videoDepthPane = visualizationEl.querySelector<HTMLElement>("[data-pane-video-depth] h2");
   if (videoPane) videoPane.textContent = t("panel.video");
   if (videoDepthPane) videoDepthPane.textContent = t("panel.videoDepth");
+  const videoWait = visualizationEl.querySelector<HTMLElement>("[data-video-auth-wait]");
+  if (videoWait) {
+    const message = t(isVerifying ? "videoPlayer.waitingForVerification" : "videoPlayer.unavailable");
+    videoWait.textContent = message;
+    const depthStatus = visualizationEl.querySelector<HTMLElement>("[data-video-depth-status]");
+    if (depthStatus) depthStatus.textContent = message;
+  }
   const originalPane = visualizationEl.querySelector<HTMLElement>("[data-pane-original] h2");
   const depthPane = visualizationEl.querySelector<HTMLElement>("[data-pane-depth] h2");
   const depthPaneSubtitle = visualizationEl.querySelector<HTMLElement>("[data-pane-depth] header span");
