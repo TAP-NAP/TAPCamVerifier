@@ -8,26 +8,22 @@ export async function decodeHeifPrimaryRgba(fileBytes: Uint8Array): Promise<Deco
 
   const libheif = await loadLibheif();
   const decoder = new libheif.HeifDecoder();
-  const images = decoder.decode(fileBytes);
-  if (images.length === 0) {
-    return null;
-  }
-
-  const image = choosePrimaryImage(images);
-  const width = image.get_width();
-  const height = image.get_height();
-  if (width <= 0 || height <= 0) {
-    image.free?.();
-    throw new Error("HEIF primary image returned invalid dimensions.");
-  }
-
-  const imageData: LibHeifImageData = {
-    data: new Uint8ClampedArray(width * height * 4),
-    width,
-    height
-  };
-
+  let images: LibHeifImage[] = [];
   try {
+    images = decoder.decode(fileBytes);
+    if (images.length === 0) return null;
+
+    const image = choosePrimaryImage(images);
+    const width = image.get_width();
+    const height = image.get_height();
+    if (width <= 0 || height <= 0) {
+      throw new Error("HEIF primary image returned invalid dimensions.");
+    }
+    const imageData: LibHeifImageData = {
+      data: new Uint8ClampedArray(width * height * 4),
+      width,
+      height
+    };
     await new Promise<void>((resolve, reject) => {
       image.display(imageData, (displayData) => {
         if (!displayData) {
@@ -37,15 +33,15 @@ export async function decodeHeifPrimaryRgba(fileBytes: Uint8Array): Promise<Deco
         resolve();
       });
     });
+    return { width, height, rgba: imageData.data };
   } finally {
-    image.free?.();
+    try {
+      images.forEach((image) => image.free?.());
+    } finally {
+      if (decoder.decoder) libheif.heif_context_free(decoder.decoder);
+      decoder.decoder = null;
+    }
   }
-
-  return {
-    width,
-    height,
-    rgba: imageData.data
-  };
 }
 
 function choosePrimaryImage(images: LibHeifImage[]): LibHeifImage {

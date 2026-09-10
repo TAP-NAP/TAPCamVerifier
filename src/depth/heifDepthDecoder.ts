@@ -18,7 +18,8 @@ export type LibHeifModule = Record<string, any> & {
   HEAPU8: Uint8Array;
   HEAPU32: Uint32Array;
   HEAP32: Int32Array;
-  HeifDecoder: new () => { decoder?: EmbindPointer; decode(bytes: Uint8Array): LibHeifImage[] };
+  HeifDecoder: new () => { decoder?: EmbindPointer | null; decode(bytes: Uint8Array): LibHeifImage[] };
+  heif_context_free(context: EmbindPointer): void;
   _malloc(bytes: number): number;
   _free(ptr: number): void;
 };
@@ -76,14 +77,22 @@ export async function decodeHeifAuxiliaryDepthPlane(fileBytes: Uint8Array): Prom
 
   const libheif = await loadLibheif();
   const decoder = new libheif.HeifDecoder();
-  decoder.decode(fileBytes);
-
-  const contextPtr = decoder.decoder?.$$?.ptr;
-  if (!contextPtr) {
-    throw new Error("libheif did not expose a HEIF context pointer.");
+  let images: LibHeifImage[] = [];
+  try {
+    images = decoder.decode(fileBytes);
+    const contextPtr = decoder.decoder?.$$?.ptr;
+    if (!contextPtr) {
+      throw new Error("libheif did not expose a HEIF context pointer.");
+    }
+    return decodeImageItemAsLuma(libheif, contextPtr, auxiliaryItemId);
+  } finally {
+    try {
+      images.forEach((image) => image.free?.());
+    } finally {
+      if (decoder.decoder) libheif.heif_context_free(decoder.decoder);
+      decoder.decoder = null;
+    }
   }
-
-  return decodeImageItemAsLuma(libheif, contextPtr, auxiliaryItemId);
 }
 
 export function findHeifAuxiliaryDepthItemId(fileBytes: Uint8Array): number | null {
@@ -164,15 +173,17 @@ function decodeImageItemAsLuma(
   contextPtr: number,
   itemId: number
 ): DecodedDepthPlane {
-  const handleResultPtr = libheif._malloc(16);
-  const handleOutPtr = libheif._malloc(8);
-  libheif.HEAPU32[handleOutPtr / 4] = 0;
-
+  let handleResultPtr = 0;
+  let handleOutPtr = 0;
   let handlePtr = 0;
   try {
+    handleResultPtr = libheif._malloc(16);
+    handleOutPtr = libheif._malloc(8);
+    if (!handleResultPtr || !handleOutPtr) throw new Error("Could not allocate HEIF handle buffers.");
+    libheif.HEAPU32[handleOutPtr / 4] = 0;
     libheif._heif_context_get_image_handle(handleResultPtr, contextPtr, itemId, handleOutPtr);
-    assertHeifOk(libheif, handleResultPtr, `Could not get HEIF auxiliary item ${itemId}.`);
     handlePtr = libheif.HEAPU32[handleOutPtr / 4];
+    assertHeifOk(libheif, handleResultPtr, `Could not get HEIF auxiliary item ${itemId}.`);
     if (!handlePtr) {
       throw new Error(`HEIF auxiliary item ${itemId} did not return an image handle.`);
     }
@@ -182,18 +193,20 @@ function decodeImageItemAsLuma(
     if (handlePtr) {
       libheif._heif_image_handle_release(handlePtr);
     }
-    libheif._free(handleResultPtr);
-    libheif._free(handleOutPtr);
+    if (handleResultPtr) libheif._free(handleResultPtr);
+    if (handleOutPtr) libheif._free(handleOutPtr);
   }
 }
 
 function decodeHandleAsLuma(libheif: LibHeifModule, handlePtr: number, itemId: number): DecodedDepthPlane {
-  const decodeResultPtr = libheif._malloc(16);
-  const imageOutPtr = libheif._malloc(8);
-  libheif.HEAPU32[imageOutPtr / 4] = 0;
-
+  let decodeResultPtr = 0;
+  let imageOutPtr = 0;
   let imagePtr = 0;
   try {
+    decodeResultPtr = libheif._malloc(16);
+    imageOutPtr = libheif._malloc(8);
+    if (!decodeResultPtr || !imageOutPtr) throw new Error("Could not allocate HEIF image buffers.");
+    libheif.HEAPU32[imageOutPtr / 4] = 0;
     libheif._heif_decode_image(
       decodeResultPtr,
       handlePtr,
@@ -202,8 +215,8 @@ function decodeHandleAsLuma(libheif: LibHeifModule, handlePtr: number, itemId: n
       enumValue(libheif.heif_chroma_monochrome),
       0
     );
-    assertHeifOk(libheif, decodeResultPtr, `Could not decode HEIF auxiliary item ${itemId}.`);
     imagePtr = libheif.HEAPU32[imageOutPtr / 4];
+    assertHeifOk(libheif, decodeResultPtr, `Could not decode HEIF auxiliary item ${itemId}.`);
     if (!imagePtr) {
       throw new Error(`HEIF auxiliary item ${itemId} did not return decoded image data.`);
     }
@@ -212,6 +225,7 @@ function decodeHandleAsLuma(libheif: LibHeifModule, handlePtr: number, itemId: n
     const width = libheif._heif_image_get_width(imagePtr, channel);
     const height = libheif._heif_image_get_height(imagePtr, channel);
     const stridePtr = libheif._malloc(4);
+    if (!stridePtr) throw new Error("Could not allocate HEIF stride buffer.");
     try {
       const planePtr = libheif._heif_image_get_plane_readonly(imagePtr, channel, stridePtr);
       const stride = libheif.HEAP32[stridePtr / 4];
@@ -233,8 +247,8 @@ function decodeHandleAsLuma(libheif: LibHeifModule, handlePtr: number, itemId: n
     if (imagePtr) {
       libheif._heif_image_release(imagePtr);
     }
-    libheif._free(decodeResultPtr);
-    libheif._free(imageOutPtr);
+    if (decodeResultPtr) libheif._free(decodeResultPtr);
+    if (imageOutPtr) libheif._free(imageOutPtr);
   }
 }
 
