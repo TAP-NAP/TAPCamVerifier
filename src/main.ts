@@ -234,29 +234,6 @@ fileSummaryEl.addEventListener("drop", (event) => {
   handleDroppedFile(event);
 });
 
-function showToast(message: string): void {
-  const existing = document.querySelector('.toast');
-  if (existing) existing.remove();
-
-  const toast = document.createElement('div');
-  toast.className = 'toast';
-  toast.setAttribute('role', 'status');
-  toast.setAttribute('aria-live', 'polite');
-  toast.innerHTML = `
-    <span>${escapeHtml(message)}</span>
-    <button class="toast-close" type="button" aria-label="${t('toast.close')}">×</button>
-  `;
-  document.body.appendChild(toast);
-
-  let timerId: number;
-  const close = () => {
-    toast.remove();
-    window.clearTimeout(timerId);
-  };
-  toast.querySelector('.toast-close')?.addEventListener('click', close);
-  timerId = window.setTimeout(close, 3000);
-}
-
 function restoreDynamicPanels(): void {
   if (dropzone!.parentElement !== onboardingEl) {
     onboardingEl!.append(dropzone!);
@@ -391,7 +368,6 @@ function resetToHome(event?: Event): void {
   resultEl.innerHTML = "";
   fileSummaryEl!.hidden = true;
   onboardingEl!.hidden = false;
-  dropzone!.classList.remove("dropzone--compact");
   dropzoneParticles!.hidden = false;
   emptyParticleField.setActive(true);
   const dropzoneSelect = dropzone!.querySelector<HTMLElement>("[data-dropzone-select]");
@@ -1223,31 +1199,11 @@ function refreshUI(): void {
   navLangBtn!.dataset.locale = getLang();
   navLangBtn!.setAttribute("aria-label", getLang() === "zh" ? "Switch to English" : "切换到中文");
 
-  const onboardingTitle = document.querySelector<HTMLElement>("[data-onboarding-title]");
-  const onboardingDesc = document.querySelector<HTMLElement>("[data-onboarding-desc]");
-  const onboardingSignatureTitle = document.querySelector<HTMLElement>("[data-onboarding-signature-title]");
-  const onboardingSignature = document.querySelector<HTMLElement>("[data-onboarding-signature]");
-  const onboardingDepthTitle = document.querySelector<HTMLElement>("[data-onboarding-depth-title]");
-  const onboardingDepth = document.querySelector<HTMLElement>("[data-onboarding-depth]");
-  const onboardingPrivacyTitle = document.querySelector<HTMLElement>("[data-onboarding-privacy-title]");
-  const onboardingPrivacy = document.querySelector<HTMLElement>("[data-onboarding-privacy]");
-
-  if (onboardingTitle) onboardingTitle.textContent = t("onboarding.title");
-  if (onboardingDesc) onboardingDesc.textContent = t("onboarding.description");
-  if (onboardingSignatureTitle) onboardingSignatureTitle.textContent = t("onboarding.signatureTitle");
-  if (onboardingSignature) onboardingSignature.textContent = t("onboarding.signature");
-  if (onboardingDepthTitle) onboardingDepthTitle.textContent = t("onboarding.depthTitle");
-  if (onboardingDepth) onboardingDepth.textContent = t("onboarding.depth");
-  if (onboardingPrivacyTitle) onboardingPrivacyTitle.textContent = t("onboarding.privacyTitle");
-  if (onboardingPrivacy) onboardingPrivacy.textContent = t("onboarding.privacy");
-
   const dropzoneSelect = dropzone!.querySelector<HTMLElement>("[data-dropzone-select]");
   const dropzoneInstruction = dropzone!.querySelector<HTMLElement>("[data-dropzone-instruction]");
   const dropzoneFormats = dropzone!.querySelector<HTMLElement>("[data-dropzone-formats]");
   const dropzonePrivacy = dropzone!.querySelector<HTMLElement>("[data-dropzone-privacy]");
-  if (dropzoneSelect) dropzoneSelect.textContent = dropzone!.classList.contains("dropzone--compact")
-    ? t("dropzone.replace")
-    : t("dropzone.select");
+  if (dropzoneSelect) dropzoneSelect.textContent = t("dropzone.select");
   if (dropzoneInstruction) dropzoneInstruction.textContent = t("dropzone.instruction");
   if (dropzoneFormats) dropzoneFormats.textContent = t("dropzone.formats");
   if (dropzonePrivacy) dropzonePrivacy.textContent = t("dropzone.privacy");

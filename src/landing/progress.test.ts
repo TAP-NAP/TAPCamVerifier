@@ -6,14 +6,12 @@ import {
   MOBILE_CAPTURE_PANEL_ENTRANCE,
   captureStageOpacity,
   chapterNaturalTop,
-  chapterPanelBoundary,
   chapterPanelEntryOpacity,
   chapterPanelOpacity,
   directionalSnapTarget,
   landingStageForProgress,
   mobileCapturePanelContentOpacity,
   mobileCapturePanelLiftProgress,
-  pageProgressForStoryProgress,
   presentationTopForCopy,
   privacyStageOpacity,
   progressForActiveStep,
@@ -21,7 +19,6 @@ import {
   rangeProgress,
   smoothstep,
   signStageOpacity,
-  stableFixedControlTop,
   storyEntranceProgressFromGeometry,
   storyPresentationProgress,
   storyProgressFromGeometry,
@@ -101,13 +98,6 @@ describe("landing scroll progress", () => {
     expect(mobileCapturePanelContentOpacity(1)).toBe(1);
   });
 
-  it("aligns story chapters to the five-step page rail", () => {
-    expect(pageProgressForStoryProgress(0)).toBeCloseTo(0.25);
-    expect(pageProgressForStoryProgress(0.34)).toBeCloseTo(0.5);
-    expect(pageProgressForStoryProgress(0.68)).toBeCloseTo(0.75);
-    expect(pageProgressForStoryProgress(1)).toBeCloseTo(0.94);
-  });
-
   it("fills the rail exactly to the center of the active node", () => {
     expect(progressForActiveStep(0, 5)).toBe(0);
     expect(progressForActiveStep(1, 5)).toBe(0.25);
@@ -123,19 +113,8 @@ describe("landing scroll progress", () => {
     expect(progressNavigationDuration(5000, 900)).toBe(1800);
   });
 
-  it("keeps fixed progress geometry independent of visual viewport translation", () => {
-    expect(stableFixedControlTop(852, 65, 0)).toBe(787);
-    expect(stableFixedControlTop(852, 65, 12)).toBe(775);
-  });
-
   it("recovers a panel's natural top independently of sticky positioning", () => {
     expect(chapterNaturalTop(1400, 40, 320, 88, 220)).toBe(732);
-  });
-
-  it("keeps navigation geometry stable while following Safari's visible bottom", () => {
-    expect(chapterPanelBoundary(775, 790, 0, 744, false)).toBe(775);
-    expect(chapterPanelBoundary(775, 790, 0, 744, true)).toBe(744);
-    expect(chapterPanelBoundary(775, 720, 0, 744, true)).toBe(720);
   });
 
   it("keeps the latest fully visible action on top of a navigation stack", () => {

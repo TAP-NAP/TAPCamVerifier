@@ -182,20 +182,6 @@ export function landingStageForProgress(progress: number): LandingStage {
   return "privacy";
 }
 
-export function pageProgressForStoryProgress(progress: number): number {
-  const normalized = clamp01(progress);
-
-  if (normalized < 0.34) {
-    return 0.25 + rangeProgress(normalized, 0, 0.34) * 0.25;
-  }
-
-  if (normalized < 0.68) {
-    return 0.5 + rangeProgress(normalized, 0.34, 0.68) * 0.25;
-  }
-
-  return 0.75 + rangeProgress(normalized, 0.68, 1) * 0.19;
-}
-
 export function progressForActiveStep(activeIndex: number, stepCount: number): number {
   if (stepCount <= 1) {
     return 0;
@@ -209,19 +195,6 @@ export function progressNavigationDuration(
 ): number {
   const distanceInViewports = Math.abs(distance) / Math.max(1, viewportHeight);
   return Math.round(Math.min(1800, Math.max(620, 520 + distanceInViewports * 520)));
-}
-
-export function stableFixedControlTop(
-  viewportHeight: number,
-  controlHeight: number,
-  bottomOffset: number
-): number {
-  return Math.max(
-    0,
-    Math.max(0, viewportHeight) -
-      Math.max(0, controlHeight) -
-      Math.max(0, bottomOffset)
-  );
 }
 
 export function chapterNaturalTop(
@@ -238,22 +211,6 @@ export function chapterNaturalTop(
     Math.max(0, panelMarginBottom) -
     Math.max(0, panelHeight)
   );
-}
-
-export function chapterPanelBoundary(
-  stableProgressTop: number,
-  renderedProgressTop: number,
-  visualViewportTop: number,
-  visualViewportHeight: number,
-  mobile: boolean
-): number {
-  if (!mobile) {
-    return Math.max(0, stableProgressTop);
-  }
-
-  const visibleBottom =
-    Math.max(0, visualViewportTop) + Math.max(0, visualViewportHeight);
-  return Math.min(Math.max(0, renderedProgressTop), visibleBottom);
 }
 
 export function updateFullyVisibleStack(
