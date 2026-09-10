@@ -273,7 +273,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
 
   const unsubscribeLangChange = onLangChange(() => {
     syncControls();
-    applyFilter();
+    if (activeFilter) activeFilter.textContent = formatFilterSummary(filterOptions);
     const labelEl = rotateHint.querySelector<HTMLElement>(".geometry-rotate-hint__label");
     if (labelEl) labelEl.textContent = t("geom.dragToRotate");
     rotateHint.setAttribute("aria-label", t("geom.dragToRotate"));

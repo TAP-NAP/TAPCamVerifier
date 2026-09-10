@@ -263,96 +263,115 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
     <div class="geometry-viewer-shell">
       <div id="geometryViewer" class="geometry-viewer" aria-label="${t("geom.ariaLabel")}"></div>
       ${renderGeometryFilterControls()}
-      <button class="geometry-reset" type="button" data-geometry-reset>${t("geom.resetView")}</button>
+      <button class="geometry-reset" type="button" data-geometry-reset data-geometry-copy="geom.resetView">${t("geom.resetView")}</button>
     </div>
     <dl class="depth-meta geometry-meta">
       <div>
-        <dt>${t("geom.geometry")}</dt>
+        <dt data-geometry-copy="geom.geometry">${t("geom.geometry")}</dt>
         <dd>${escapeHtml(state.geometryKind)}</dd>
       </div>
       <div>
-        <dt>${t("geom.view")}</dt>
-        <dd>${escapeHtml(formatProjectionViewMode(state.viewMode))}</dd>
+        <dt data-geometry-copy="geom.view">${t("geom.view")}</dt>
+        <dd data-geometry-view-mode="${escapeHtml(state.viewMode)}">${escapeHtml(formatProjectionViewMode(state.viewMode))}</dd>
       </div>
       <div>
-        <dt>${t("geom.cameraModel")}</dt>
+        <dt data-geometry-copy="geom.cameraModel">${t("geom.cameraModel")}</dt>
         <dd>${escapeHtml(state.cameraModel)}</dd>
       </div>
       <div>
-        <dt>${t("geom.points")}</dt>
+        <dt data-geometry-copy="geom.points">${t("geom.points")}</dt>
         <dd>${state.pointCount}</dd>
       </div>
       <div>
-        <dt>${t("geom.visiblePoints")}</dt>
+        <dt data-geometry-copy="geom.visiblePoints">${t("geom.visiblePoints")}</dt>
         <dd><span data-geometry-visible-points>${defaultFiltered.visiblePointCount}</span> / ${defaultFiltered.totalPointCount}</dd>
       </div>
       <div>
-        <dt>${t("geom.filter")}</dt>
+        <dt data-geometry-copy="geom.filter">${t("geom.filter")}</dt>
         <dd data-geometry-active-filter>${initialFilterText}</dd>
       </div>
       <div>
-        <dt>${t("geom.globalRisk")}</dt>
+        <dt data-geometry-copy="geom.globalRisk">${t("geom.globalRisk")}</dt>
         <dd>${escapeHtml(state.quality.globalRisk)}</dd>
       </div>
       <div>
-        <dt>${t("geom.sample")}</dt>
-        <dd>${formatSampleStep(state.sampleStep)}</dd>
+        <dt data-geometry-copy="geom.sample">${t("geom.sample")}</dt>
+        <dd data-geometry-sample="${state.sampleStep}">${formatSampleStep(state.sampleStep)}</dd>
       </div>
       <div>
-        <dt>${t("geom.projectedDepth")}</dt>
+        <dt data-geometry-copy="geom.projectedDepth">${t("geom.projectedDepth")}</dt>
         <dd>${state.width} × ${state.height}</dd>
       </div>
       <div>
-        <dt>${t("geom.sourceDepth")}</dt>
+        <dt data-geometry-copy="geom.sourceDepth">${t("geom.sourceDepth")}</dt>
         <dd>${state.inputDepthWidth} × ${state.inputDepthHeight}</dd>
       </div>
       <div>
-        <dt>${t("geom.rgb")}</dt>
+        <dt data-geometry-copy="geom.rgb">${t("geom.rgb")}</dt>
         <dd>${state.rgbWidth} × ${state.rgbHeight}</dd>
       </div>
       <div>
-        <dt>${t("geom.focal")}</dt>
+        <dt data-geometry-copy="geom.focal">${t("geom.focal")}</dt>
         <dd>${formatNumber(state.fx)} × ${formatNumber(state.fy)}</dd>
       </div>
       <div>
-        <dt>${t("geom.principal")}</dt>
+        <dt data-geometry-copy="geom.principal">${t("geom.principal")}</dt>
         <dd>${formatNumber(state.cx)} × ${formatNumber(state.cy)}</dd>
       </div>
       <div>
-        <dt>${t("depth.range")}</dt>
+        <dt data-geometry-copy="depth.range">${t("depth.range")}</dt>
         <dd>${formatNumber(state.depthRange.min)} – ${formatNumber(state.depthRange.max)} ${escapeHtml(state.valueUnit)}</dd>
       </div>
       <div>
-        <dt>${t("depth.rotation")}</dt>
+        <dt data-geometry-copy="depth.rotation">${t("depth.rotation")}</dt>
         <dd>${escapeHtml(state.rotation)}</dd>
       </div>
       <div>
-        <dt>${t("geom.depthOrient")}</dt>
+        <dt data-geometry-copy="geom.depthOrient">${t("geom.depthOrient")}</dt>
         <dd>${escapeHtml(state.orientation)}</dd>
       </div>
       <div>
-        <dt>${t("geom.photoOrient")}</dt>
+        <dt data-geometry-copy="geom.photoOrient">${t("geom.photoOrient")}</dt>
         <dd>${escapeHtml(state.photoOrientation)}</dd>
       </div>
       <div>
-        <dt>${t("geom.scale")}</dt>
-        <dd>${state.relativeGeometry ? t("geom.relative") : t("geom.metric")}</dd>
+        <dt data-geometry-copy="geom.scale">${t("geom.scale")}</dt>
+        <dd data-geometry-copy="${state.relativeGeometry ? "geom.relative" : "geom.metric"}">${state.relativeGeometry ? t("geom.relative") : t("geom.metric")}</dd>
       </div>
       <div>
-        <dt>${t("geom.clipped")}</dt>
+        <dt data-geometry-copy="geom.clipped">${t("geom.clipped")}</dt>
         <dd>${formatRatio(state.quality.metrics.clippedLowRatio + state.quality.metrics.clippedHighRatio)}</dd>
       </div>
       <div>
-        <dt>${t("geom.outliers")}</dt>
+        <dt data-geometry-copy="geom.outliers">${t("geom.outliers")}</dt>
         <dd>${formatRatio(state.quality.metrics.outlierRatio)}</dd>
       </div>
       <div>
-        <dt>${t("geom.discontinuities")}</dt>
+        <dt data-geometry-copy="geom.discontinuities">${t("geom.discontinuities")}</dt>
         <dd>${formatRatio(state.quality.metrics.discontinuityRatio)}</dd>
       </div>
     </dl>
     ${renderProjectionWarnings(state)}
   `;
+}
+
+/** Refresh text without replacing the viewer, filter controls, or live counters. */
+export function refreshPixelProjectionLabels(root: HTMLElement): void {
+  root.querySelector<HTMLElement>("#geometryViewer")?.setAttribute("aria-label", t("geom.ariaLabel"));
+  for (const element of root.querySelectorAll<HTMLElement>("[data-geometry-copy]")) {
+    element.textContent = t(element.dataset.geometryCopy!);
+  }
+  for (const element of root.querySelectorAll<HTMLElement>("[data-geometry-description]")) {
+    const description = t(element.dataset.geometryDescription!);
+    element.setAttribute("aria-label", description);
+    element.dataset.tooltip = description;
+  }
+  for (const element of root.querySelectorAll<HTMLElement>("[data-geometry-view-mode]")) {
+    element.textContent = formatProjectionViewMode(element.dataset.geometryViewMode!);
+  }
+  for (const element of root.querySelectorAll<HTMLElement>("[data-geometry-sample]")) {
+    element.textContent = formatSampleStep(Number(element.dataset.geometrySample));
+  }
 }
 
 export function renderOriginalPreviewLoading(fileName: string): string {
@@ -468,40 +487,40 @@ function renderGeometryFilterControls(): string {
       <button class="geometry-filter-collapse" data-geometry-filter-toggle type="button" aria-expanded="true" aria-label="${t("filter.collapse")}">${t("filter.title")}</button>
       <div class="geometry-filter-body" data-geometry-filter-body>
         <label class="geometry-sensitivity-control">
-          <span>${t("filter.sensitivity")}</span>
+          <span data-geometry-copy="filter.sensitivity">${t("filter.sensitivity")}</span>
           <input data-geometry-filter-sensitivity type="range" min="0" max="2" step="1" value="1" />
           <b data-geometry-filter-sensitivity-label>${t("filter.medium")}</b>
         </label>
         <div class="geometry-filter-group geometry-risk-types">
-          <div class="geometry-risk-title">${t("filter.riskMarkers")}</div>
+          <div class="geometry-risk-title" data-geometry-copy="filter.riskMarkers">${t("filter.riskMarkers")}</div>
           ${renderRiskTypeControl(
             "clipped",
-            t("filter.clippedDepth"),
-            t("filter.clippedDesc"),
+            "filter.clippedDepth",
+            "filter.clippedDesc",
             true,
             false
           )}
           ${renderRiskTypeControl(
             "outliers",
-            t("filter.isolatedOutliers"),
-            t("filter.outliersDesc"),
+            "filter.isolatedOutliers",
+            "filter.outliersDesc",
             true,
             false
           )}
           ${renderRiskTypeControl(
             "edges",
-            t("filter.depthEdges"),
-            t("filter.edgesDesc"),
+            "filter.depthEdges",
+            "filter.edgesDesc",
             true,
             false
           )}
           ${renderRiskTypeControl(
             "color",
-            t("filter.colorRisk"),
-            t("filter.colorDesc"),
+            "filter.colorRisk",
+            "filter.colorDesc",
             true,
             false,
-            t("filter.unstable")
+            "filter.unstable"
           )}
         </div>
       </div>
@@ -521,8 +540,8 @@ function renderRiskTypeControl(
   return `
     <div class="geometry-risk-row geometry-risk-row--${id}">
       <span class="geometry-risk-name">
-        <span>${escapeHtml(label)}</span>
-        ${badge ? `<span class="geometry-risk-badge">${escapeHtml(badge)}</span>` : ""}
+        <span data-geometry-copy="${label}">${escapeHtml(t(label))}</span>
+        ${badge ? `<span class="geometry-risk-badge" data-geometry-copy="${badge}">${escapeHtml(t(badge))}</span>` : ""}
         <span class="geometry-risk-swatch geometry-risk-swatch--${id}" aria-hidden="true"></span>
       </span>
       <button class="geometry-risk-toggle geometry-risk-toggle--show" data-geometry-risk-show="${id}" type="button" aria-pressed="${showChecked ? "true" : "false"}">
@@ -531,7 +550,7 @@ function renderRiskTypeControl(
       <button class="geometry-risk-toggle geometry-risk-toggle--highlight" data-geometry-risk-highlight="${id}" type="button" aria-pressed="${highlightChecked ? "true" : "false"}"${highlightDisabled ? " disabled" : ""}>
         ${highlightChecked ? t("filter.highlight") : t("filter.unhighlight")}
       </button>
-      <span class="geometry-info" tabindex="0" aria-label="${escapeHtml(description)}" data-tooltip="${escapeHtml(description)}">i</span>
+      <span class="geometry-info" tabindex="0" data-geometry-description="${description}" aria-label="${escapeHtml(t(description))}" data-tooltip="${escapeHtml(t(description))}">i</span>
     </div>
   `;
 }

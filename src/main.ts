@@ -26,6 +26,7 @@ import {
   renderOriginalPreviewLoading,
   renderOriginalPreviewResult,
   renderPixelProjectionPanel,
+  refreshPixelProjectionLabels,
   renderResultModal,
   renderVerificationBusy,
   renderVerificationError,
@@ -1225,7 +1226,11 @@ function refreshUI(): void {
     updateDepthPanel(currentDepthState);
   }
   if (currentGeometryState) {
-    updateGeometryPanel(currentGeometryState);
+    if (activeGeometryViewerCleanup) {
+      refreshPixelProjectionLabels(visualizationEl);
+    } else {
+      updateGeometryPanel(currentGeometryState);
+    }
   }
 }
 
