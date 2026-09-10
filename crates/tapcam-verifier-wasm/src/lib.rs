@@ -1516,11 +1516,14 @@ fn mark_isolated_outliers(
     for y in 0..height {
         for x in 0..width {
             let index = y as usize * width as usize + x as usize;
-            let neighbors = neighbor_values(values, width, height, x, y, true);
+            let (mut neighbor_storage, neighbor_count) =
+                neighbor_values(values, width, height, x, y, true);
+            let neighbors = &mut neighbor_storage[..neighbor_count];
             if neighbors.len() < 5 {
                 continue;
             }
-            let median = median_u8(neighbors.clone()) as f64;
+            neighbors.sort_unstable();
+            let median = neighbors[neighbors.len() / 2] as f64;
             let score = ((values[index] as f64 - median).abs() / denominator).clamp(0.0, 2.55);
             scores[index] = (score * 100.0).round().clamp(0.0, 255.0) as u8;
             let consistent_neighbors = neighbors
@@ -1550,9 +1553,10 @@ fn mark_discontinuities(
         for x in 0..width {
             let index = y as usize * width as usize + x as usize;
             let center = values[index] as f64;
-            let max_delta = neighbor_values(values, width, height, x, y, false)
-                .into_iter()
-                .map(|value| (center - value as f64).abs())
+            let (neighbors, neighbor_count) = neighbor_values(values, width, height, x, y, false);
+            let max_delta = neighbors[..neighbor_count]
+                .iter()
+                .map(|&value| (center - value as f64).abs())
                 .fold(0.0, f64::max);
             let score = (max_delta / denominator).clamp(0.0, 2.55);
             scores[index] = (score * 100.0).round().clamp(0.0, 255.0) as u8;
@@ -1572,8 +1576,9 @@ fn neighbor_values(
     x: u32,
     y: u32,
     diagonal: bool,
-) -> Vec<u8> {
-    let mut neighbors = Vec::with_capacity(if diagonal { 8 } else { 4 });
+) -> ([u8; 8], usize) {
+    let mut neighbors = [0; 8];
+    let mut count = 0;
     for dy in -1i32..=1 {
         for dx in -1i32..=1 {
             if dx == 0 && dy == 0 {
@@ -1587,27 +1592,36 @@ fn neighbor_values(
             if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
                 continue;
             }
-            neighbors.push(values[ny as usize * width as usize + nx as usize]);
+            neighbors[count] = values[ny as usize * width as usize + nx as usize];
+            count += 1;
         }
     }
-    neighbors
-}
-
-fn median_u8(mut values: Vec<u8>) -> u8 {
-    values.sort_unstable();
-    values[values.len() / 2]
+    (neighbors, count)
 }
 
 fn depth_percentiles(values: &[u8]) -> (u8, u8) {
     if values.is_empty() {
         return (0, 0);
     }
-    let mut sorted = values.to_vec();
-    sorted.sort_unstable();
-    let last = sorted.len() - 1;
-    let p01 = sorted[((last as f64) * 0.01).floor() as usize];
-    let p99 = sorted[((last as f64) * 0.99).ceil().min(last as f64) as usize];
-    (p01, p99)
+    let mut histogram = [0usize; 256];
+    for &value in values {
+        histogram[value as usize] += 1;
+    }
+    let last = values.len() - 1;
+    let p01_rank = ((last as f64) * 0.01).floor() as usize;
+    let p99_rank = ((last as f64) * 0.99).ceil().min(last as f64) as usize;
+    let mut cumulative = 0;
+    let mut p01 = 0;
+    for (value, frequency) in histogram.into_iter().enumerate() {
+        if cumulative <= p01_rank && cumulative + frequency > p01_rank {
+            p01 = value as u8;
+        }
+        cumulative += frequency;
+        if cumulative > p99_rank {
+            return (p01, value as u8);
+        }
+    }
+    unreachable!("a nonempty histogram contains both percentile ranks")
 }
 
 fn has_distortion_lookup_metadata(depth_metadata: &Value) -> bool {
@@ -3981,6 +3995,202 @@ mod tests {
         assert!(flags[3] & RISK_CLIPPED_HIGH != 0);
         assert!(quality_has_warning(&report, "clipped-low-depth"));
         assert!(quality_has_warning(&report, "clipped-high-depth"));
+    }
+
+    #[test]
+    fn fixed_neighborhoods_match_previous_flags_scores_and_counts() {
+        type Marker = fn(&[u8], u32, u32, f64, &mut [u16], &mut [u8]) -> usize;
+        for (width, height) in [(0, 0), (1, 1), (1, 9), (9, 1), (2, 2), (3, 3), (7, 5)] {
+            for seed in 0..32u32 {
+                let mut state = seed;
+                let values: Vec<u8> = (0..width * height)
+                    .map(|index| match seed {
+                        0 => 20,
+                        1 => {
+                            if index == width * height / 2 {
+                                220
+                            } else {
+                                20
+                            }
+                        }
+                        2 => {
+                            if index % 2 == 0 {
+                                0
+                            } else {
+                                255
+                            }
+                        }
+                        _ => {
+                            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                            (state >> 24) as u8
+                        }
+                    })
+                    .collect();
+                for denominator in [1.0, 10.0, 67.0, 255.0] {
+                    for (optimized, previous) in [
+                        (
+                            mark_isolated_outliers as Marker,
+                            legacy_mark_isolated_outliers as Marker,
+                        ),
+                        (
+                            mark_discontinuities as Marker,
+                            legacy_mark_discontinuities as Marker,
+                        ),
+                    ] {
+                        let mut actual_flags = vec![RISK_CLIPPED_LOW; values.len()];
+                        let mut expected_flags = actual_flags.clone();
+                        let mut actual_scores = vec![17; values.len()];
+                        let mut expected_scores = actual_scores.clone();
+                        let actual_count = optimized(
+                            &values,
+                            width,
+                            height,
+                            denominator,
+                            &mut actual_flags,
+                            &mut actual_scores,
+                        );
+                        let expected_count = previous(
+                            &values,
+                            width,
+                            height,
+                            denominator,
+                            &mut expected_flags,
+                            &mut expected_scores,
+                        );
+                        assert_eq!(actual_count, expected_count);
+                        assert_eq!(actual_flags, expected_flags);
+                        assert_eq!(actual_scores, expected_scores);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn histogram_percentiles_match_sorted_samples() {
+        for length in [0, 1, 2, 3, 99, 100, 101, 255, 256, 1001, 10000] {
+            for seed in 0..32u32 {
+                let mut state = seed;
+                let mut values: Vec<u8> = (0..length)
+                    .map(|index| match seed {
+                        0 => 0,
+                        1 => 255,
+                        2 => index as u8,
+                        _ => {
+                            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                            (state >> 24) as u8
+                        }
+                    })
+                    .collect();
+                let actual = depth_percentiles(&values);
+                values.sort_unstable();
+                let expected = if values.is_empty() {
+                    (0, 0)
+                } else {
+                    let last = values.len() - 1;
+                    (
+                        values[((last as f64) * 0.01).floor() as usize],
+                        values[((last as f64) * 0.99).ceil().min(last as f64) as usize],
+                    )
+                };
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+
+    // Allocation-based reference retained only to verify byte-for-byte scoring equivalence.
+    fn legacy_mark_isolated_outliers(
+        values: &[u8],
+        width: u32,
+        height: u32,
+        denominator: f64,
+        flags: &mut [u16],
+        scores: &mut [u8],
+    ) -> usize {
+        let mut count = 0usize;
+        for y in 0..height {
+            for x in 0..width {
+                let index = y as usize * width as usize + x as usize;
+                let neighbors = legacy_neighbor_values(values, width, height, x, y, true);
+                if neighbors.len() < 5 {
+                    continue;
+                }
+                let median = legacy_median_u8(neighbors.clone()) as f64;
+                let score = ((values[index] as f64 - median).abs() / denominator).clamp(0.0, 2.55);
+                scores[index] = (score * 100.0).round().clamp(0.0, 255.0) as u8;
+                let consistent_neighbors = neighbors
+                    .iter()
+                    .filter(|value| ((**value as f64) - median).abs() <= denominator * 0.10)
+                    .count();
+                let required_neighbors = ((neighbors.len() * 2) + 2) / 3;
+                if score >= OUTLIER_MEDIUM_THRESHOLD && consistent_neighbors >= required_neighbors {
+                    flags[index] |= RISK_ISOLATED_OUTLIER;
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    fn legacy_mark_discontinuities(
+        values: &[u8],
+        width: u32,
+        height: u32,
+        denominator: f64,
+        flags: &mut [u16],
+        scores: &mut [u8],
+    ) -> usize {
+        let mut count = 0usize;
+        for y in 0..height {
+            for x in 0..width {
+                let index = y as usize * width as usize + x as usize;
+                let center = values[index] as f64;
+                let max_delta = legacy_neighbor_values(values, width, height, x, y, false)
+                    .into_iter()
+                    .map(|value| (center - value as f64).abs())
+                    .fold(0.0, f64::max);
+                let score = (max_delta / denominator).clamp(0.0, 2.55);
+                scores[index] = (score * 100.0).round().clamp(0.0, 255.0) as u8;
+                if score >= DISCONTINUITY_MEDIUM_THRESHOLD {
+                    flags[index] |= RISK_DISCONTINUITY_EDGE;
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    fn legacy_neighbor_values(
+        values: &[u8],
+        width: u32,
+        height: u32,
+        x: u32,
+        y: u32,
+        diagonal: bool,
+    ) -> Vec<u8> {
+        let mut neighbors = Vec::with_capacity(if diagonal { 8 } else { 4 });
+        for dy in -1i32..=1 {
+            for dx in -1i32..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                if !diagonal && dx.abs() + dy.abs() != 1 {
+                    continue;
+                }
+                let nx = x as i32 + dx;
+                let ny = y as i32 + dy;
+                if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                    continue;
+                }
+                neighbors.push(values[ny as usize * width as usize + nx as usize]);
+            }
+        }
+        neighbors
+    }
+
+    fn legacy_median_u8(mut values: Vec<u8>) -> u8 {
+        values.sort_unstable();
+        values[values.len() / 2]
     }
 
     #[test]
