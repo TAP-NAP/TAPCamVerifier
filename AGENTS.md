@@ -1,8 +1,10 @@
 # TAPCamVerifier Rules
 
-Start with README and the affected source/tests. Read the pinned artifact
-contract for format changes and the [product claim boundaries](https://github.com/TAP-NAP/TAPArtifactContracts/blob/main/ProductContract.md#7-claim-boundaries) for
-changes to authenticity claims.
+Start with README and the affected source/tests. Use
+[TAPArtifactContracts](https://github.com/TAP-NAP/TAPArtifactContracts) as the
+normative source for artifact formats, verification rules, backend API behavior,
+and product claims. For artifact changes, read the reviewed revision linked in
+README and preserve its documented local compatibility allowances.
 
 - Work from the requested scope, current source, and relevant tests. Clarify
   unresolved behavior without reopening established decisions.
