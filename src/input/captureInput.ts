@@ -13,6 +13,8 @@ const MAX_CAPTURE_EXTRACTED_BYTES = 512 * 1024 * 1024;
 const MAX_VERIFICATION_SIDECAR_BYTES = 256 * 1024;
 const VERIFICATION_SIDECAR_TRUST_BOUNDARY =
   "This sidecar is not signed. Verify primary photo and paired video bytes against the TAP signature embedded in the photo.";
+const VIDEO_SIDECAR_TRUST_BOUNDARY =
+  "This sidecar is not signed. Verify original video bytes against the TAP signature embedded in the video.";
 const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const ZIP_CENTRAL_DIRECTORY_HEADER_SIGNATURE = 0x02014b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
@@ -55,7 +57,7 @@ function assertCaptureInputSize(byteLength: number): void {
 
 export function resolveCaptureInput(file: File, fileBytes: Uint8Array): CaptureInput {
   assertCaptureInputSize(fileBytes.byteLength);
-  if (isMP4Video(file, fileBytes)) {
+  if (!isCapturePackage(file) && isMP4Video(file, fileBytes)) {
     return {
       kind: "tap-video",
       fileName: file.name,
@@ -80,6 +82,18 @@ export function resolveCaptureInput(file: File, fileBytes: Uint8Array): CaptureI
 
   const entries = unzipCapturePackage(fileBytes);
   const sidecar = parseVerificationSidecar(entries["tapcam-export.json"]);
+  if (sidecar.packageKind === "tapVideo") {
+    const videoName = resolveSidecarResource(entries, sidecar, "primaryVideo", isMP4Name);
+    if (!videoName) throw invalidSidecarError();
+    const videoBytes = entries[videoName];
+    return {
+      kind: "tap-video",
+      fileName: file.name,
+      fileSize: file.size,
+      videoFile: new File([videoBytes], videoName, { type: "video/mp4" }),
+      videoBytes
+    };
+  }
   const primaryPhotoName = resolveSidecarResource(
     entries,
     sidecar,
@@ -144,7 +158,7 @@ function unzipCapturePackage(fileBytes: Uint8Array): Unzipped {
       entryNames.add(entry.name);
 
       const isSidecar = entry.name === "tapcam-export.json";
-      const isMediaResource = isSupportedPhotoName(entry.name) || isQuickTimeMovieName(entry.name);
+      const isMediaResource = isSupportedPhotoName(entry.name) || isQuickTimeMovieName(entry.name) || isMP4Name(entry.name);
       if (!isSidecar && !isMediaResource) {
         return false;
       }
@@ -177,8 +191,9 @@ function isCapturePackage(file: File): boolean {
 }
 
 interface VerificationExportSidecar {
+  packageKind: "stillPhoto" | "livePhotoPackage" | "tapVideo";
   resources: Array<{
-    role: "primaryPhoto" | "pairedLivePhotoVideo";
+    role: "primaryPhoto" | "pairedLivePhotoVideo" | "primaryVideo";
     filename: string;
     mediaType: string;
   }>;
@@ -210,16 +225,18 @@ function parseVerificationSidecar(bytes: Uint8Array | undefined): VerificationEx
     value.schemaID !== VERIFICATION_SIDECAR_SCHEMA_ID ||
     !Number.isInteger(value.version) ||
     value.version !== VERIFICATION_SIDECAR_VERSION ||
-    (value.packageKind !== "stillPhoto" && value.packageKind !== "livePhotoPackage") ||
+    (value.packageKind !== "stillPhoto" && value.packageKind !== "livePhotoPackage" && value.packageKind !== "tapVideo") ||
     !Array.isArray(value.resources) ||
     !isStringArray(value.warningLabels) ||
     !isStringArray(value.warnings) ||
-    value.trustBoundary !== VERIFICATION_SIDECAR_TRUST_BOUNDARY ||
+    value.trustBoundary !== (value.packageKind === "tapVideo"
+      ? VIDEO_SIDECAR_TRUST_BOUNDARY
+      : VERIFICATION_SIDECAR_TRUST_BOUNDARY) ||
     value.resources.some(
       (resource) =>
         !isRecord(resource) ||
         !hasExactKeys(resource, ["role", "filename", "mediaType"]) ||
-        (resource.role !== "primaryPhoto" && resource.role !== "pairedLivePhotoVideo") ||
+        (resource.role !== "primaryPhoto" && resource.role !== "pairedLivePhotoVideo" && resource.role !== "primaryVideo") ||
         !isRootEntryName(resource.filename) ||
         typeof resource.mediaType !== "string" ||
         resource.mediaType.length === 0
@@ -229,13 +246,15 @@ function parseVerificationSidecar(bytes: Uint8Array | undefined): VerificationEx
   }
 
   const resources: VerificationExportSidecar["resources"] = value.resources.map((resource) => ({
-    role: resource.role as "primaryPhoto" | "pairedLivePhotoVideo",
+    role: resource.role as VerificationExportSidecar["resources"][number]["role"],
     filename: resource.filename as string,
     mediaType: resource.mediaType as string
   }));
-  const expectedRoles = value.packageKind === "stillPhoto"
-    ? ["primaryPhoto"]
-    : ["primaryPhoto", "pairedLivePhotoVideo"];
+  const expectedRoles = value.packageKind === "tapVideo"
+    ? ["primaryVideo"]
+    : value.packageKind === "stillPhoto"
+      ? ["primaryPhoto"]
+      : ["primaryPhoto", "pairedLivePhotoVideo"];
   if (
     resources.length !== expectedRoles.length ||
     resources.some((resource, index) => resource.role !== expectedRoles[index]) ||
@@ -243,7 +262,7 @@ function parseVerificationSidecar(bytes: Uint8Array | undefined): VerificationEx
   ) {
     throw invalidSidecarError();
   }
-  return { resources };
+  return { packageKind: value.packageKind, resources };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -262,6 +281,9 @@ function isStringArray(value: unknown): value is string[] {
 function hasExpectedResourceMediaType(
   resource: VerificationExportSidecar["resources"][number]
 ): boolean {
+  if (resource.role === "primaryVideo") {
+    return isMP4Name(resource.filename) && resource.mediaType === "public.mpeg-4";
+  }
   if (resource.role === "pairedLivePhotoVideo") {
     return isQuickTimeMovieName(resource.filename) &&
       resource.mediaType === "com.apple.quicktime-movie";
@@ -325,6 +347,10 @@ function isSupportedPhotoFile(file: File): boolean {
     lowerType === "image/heif" ||
     lowerType === "image/jpeg"
   );
+}
+
+function isMP4Name(name: string): boolean {
+  return name.toLowerCase().endsWith(".mp4");
 }
 
 function isQuickTimeMovieName(name: string): boolean {

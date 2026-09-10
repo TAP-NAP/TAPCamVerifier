@@ -1,3 +1,5 @@
+import { zipSync } from "fflate";
+import { resolveCaptureInput } from "../input/captureInput";
 import { describe, expect, it, vi } from "vitest";
 import extensionVectors from "./fixtures/tap-video-extensions-v1.json";
 import { classifyResult } from "../ui/rendering";
@@ -33,6 +35,31 @@ vi.mock("../wasm/tapcamVerifier", () => ({
 }));
 
 describe("TAP Video v1 local verification", () => {
+  it.each([false, true])("verifies the unchanged MP4 after TAPNAP resolution (depth=%s)", async (withDepth) => {
+    const artifact = await makeArtifact({ depthFrames: withDepth ? [{}] : [] });
+    const bytes = packageVideo(artifact.bytes);
+    const input = resolveCaptureInput(new File([new Uint8Array(bytes)], "TAPNAP-Capture.tapnap"), bytes);
+    if (input.kind !== "tap-video") throw new Error("expected TAP Video input");
+    expect(input.videoBytes).toEqual(artifact.bytes);
+    const report = await verifyTapVideoLocally(input.videoBytes);
+    expect(report.status).toBe("valid");
+    expect(report.serverRequest).not.toBeNull();
+  });
+
+  it("rejects altered packaged MP4 bytes before preparing a server request", async () => {
+    const artifact = await makeArtifact();
+    const altered = artifact.bytes.slice();
+    // The first media sample follows ftyp and the mdat header in this fixture.
+    altered[20] ^= 1;
+    const bytes = packageVideo(altered);
+    const input = resolveCaptureInput(new File([new Uint8Array(bytes)], "TAPNAP-Capture.tapnap"), bytes);
+    if (input.kind !== "tap-video") throw new Error("expected TAP Video input");
+    const report = await verifyTapVideoLocally(input.videoBytes);
+    expect(report.status).toBe("invalid");
+    expect(report.serverRequest).toBeNull();
+  });
+
+
   it.each(extensionVectors.cases)("matches the adopted extension bytes: $id", async (vector) => {
     const bytes = fromBase64(vector.utf8Base64);
     expect(bytes.length).toBe(vector.utf8ByteCount);
@@ -926,3 +953,18 @@ async function sha256Base64Url(bytes: Uint8Array): Promise<string> {
 }
 function toBase64Url(bytes: Uint8Array): string { return Buffer.from(bytes).toString("base64url"); }
 function fromBase64(value: string): Uint8Array { return new Uint8Array(Buffer.from(value, "base64")); }
+
+function packageVideo(video: Uint8Array): Uint8Array {
+  return zipSync({
+    "original-video.mp4": video,
+    "tapcam-export.json": encoder.encode(JSON.stringify({
+      schemaID: "urn:tapnap:tapcam:verification-export:v1",
+      version: 1,
+      packageKind: "tapVideo",
+      resources: [{ role: "primaryVideo", filename: "original-video.mp4", mediaType: "public.mpeg-4" }],
+      warningLabels: [],
+      warnings: [],
+      trustBoundary: "This sidecar is not signed. Verify original video bytes against the TAP signature embedded in the video."
+    }))
+  }, { level: 0 });
+}

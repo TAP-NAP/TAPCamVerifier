@@ -11,7 +11,7 @@ The documentation-only
 repository owns the shared Still/Live/Video manifest, content-binding, proof,
 container, KLV, and `.tapnap` wire conventions. This implementation was reviewed
 against shared revision
-[`970f5102ac2176c76c0e133c7b99e6ce287a55c0`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/970f5102ac2176c76c0e133c7b99e6ce287a55c0).
+[`77f774005332085fa0ddd324ac9261e67caae2c5`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/77f774005332085fa0ddd324ac9261e67caae2c5).
 
 The adopted optional `TAPCAMTELEMETRY1` UUID records filtering observations and
 bounded device motion under the existing asset hash. After binding succeeds,
@@ -57,7 +57,7 @@ cannot upgrade a failed result. For a valid signature, the result modal is shown
 before the visualization panes are revealed.
 
 The required verification relationships live in the shared
-[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/970f5102ac2176c76c0e133c7b99e6ce287a55c0/bindings/capture-binding-and-proof-v1.md).
+[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/77f774005332085fa0ddd324ac9261e67caae2c5/bindings/capture-binding-and-proof-v1.md).
 Rust/WASM owns HEIC/JPEG proof-slot/XMP parsing and Still/Live reconstruction.
 TypeScript owns `.tapnap` resolution, TAP Video verification, and server
 orchestration.
@@ -65,13 +65,17 @@ orchestration.
 ### Local Consumer Policy
 
 - `.tapnap` layout, sidecar roles, and rejection rules live in the shared
-  [transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/970f5102ac2176c76c0e133c7b99e6ce287a55c0/transport/tapnap-v1.md).
+  [transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/77f774005332085fa0ddd324ac9261e67caae2c5/transport/tapnap-v1.md).
   The sidecar is untrusted routing metadata and cannot determine the signed
   family or verdict.
 - Raw TAP Video MP4 consumes the shared
-  [manifest](https://github.com/TAP-NAP/TAPArtifactContracts/blob/970f5102ac2176c76c0e133c7b99e6ce287a55c0/manifests/tap-video-v1.md)
-  and [container/KLV](https://github.com/TAP-NAP/TAPArtifactContracts/blob/970f5102ac2176c76c0e133c7b99e6ce287a55c0/containers/tap-video-container-v1.md)
-  contracts; TAP Video is not routed through `.tapnap`.
+  [manifest](https://github.com/TAP-NAP/TAPArtifactContracts/blob/77f774005332085fa0ddd324ac9261e67caae2c5/manifests/tap-video-v1.md)
+  and [container/KLV](https://github.com/TAP-NAP/TAPArtifactContracts/blob/77f774005332085fa0ddd324ac9261e67caae2c5/containers/tap-video-container-v1.md)
+  contracts. A current `tapVideo` package resolves exactly one `primaryVideo`
+  MP4 and then uses this same local verifier and server boundary. Its sidecar
+  does not provide proof, hash, depth, or verification results. The pre-release
+  transport definition retains its v1 identifier; older photo-only revisions
+  did not accept this video package.
 - Native AAC exports name the codec using CoreMedia (`aac `), while the v1
   manifest table names the MP4 sample entry (`mp4a`). The reader accepts both
   spellings only after the `esds` configuration confirms AAC-LC, and obtains
@@ -89,7 +93,8 @@ orchestration.
   still requires producers to emit unpadded base64url and zero reserved bytes.
 - Every file is limited to 512 MiB using `File.size` before reading its bytes;
   the parser checks the actual byte length too. Archive expansion and individual
-  resource limits apply separately.
+  resource limits apply separately: package media entries, including MP4, are
+  limited to 384 MiB; raw MP4 keeps the 512 MiB input limit.
 - Input safety budgets and native-media codec support are browser-local
   policy, not producer permissions or verification guarantees.
 
@@ -173,13 +178,13 @@ physical-device HEIC/JPEG decoding; their tests skip when the files are absent.
 A skip is not current schema, device, backend, or acceptance evidence.
 
 `src/video/tapVideo.test.ts` keeps literal hermetic mirrors of the shared
-[exact vectors](https://github.com/TAP-NAP/TAPArtifactContracts/tree/970f5102ac2176c76c0e133c7b99e6ce287a55c0/examples/vectors).
+[exact vectors](https://github.com/TAP-NAP/TAPArtifactContracts/tree/77f774005332085fa0ddd324ac9261e67caae2c5/examples/vectors).
 When the reviewed contract revision changes, compare those literals with the
 shared vectors; the local copies are executable mirrors, not a second authority.
 
 The exact extension vectors are mirrored in
 `src/video/fixtures/tap-video-extensions-v1.json`; `tapVideo.test.ts` exercises
 them through the artifact verifier. Compare this mirror byte-for-byte with
-[`examples/vectors/tap-video-extensions-v1.json`](https://github.com/TAP-NAP/TAPArtifactContracts/blob/970f5102ac2176c76c0e133c7b99e6ce287a55c0/examples/vectors/tap-video-extensions-v1.json)
+[`examples/vectors/tap-video-extensions-v1.json`](https://github.com/TAP-NAP/TAPArtifactContracts/blob/77f774005332085fa0ddd324ac9261e67caae2c5/examples/vectors/tap-video-extensions-v1.json)
 when updating the contract pin. Expected bytes come from the contract, not the
 implementation under test.

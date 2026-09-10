@@ -12,7 +12,7 @@ const trustBoundary =
   "This sidecar is not signed. Verify primary photo and paired video bytes against the TAP signature embedded in the photo.";
 
 function verificationSidecar(
-  packageKind: "stillPhoto" | "livePhotoPackage",
+  packageKind: "stillPhoto" | "livePhotoPackage" | "tapVideo",
   resources: Array<{ role: string; filename: string; mediaType: string }>
 ): Uint8Array {
   return textEncoder.encode(
@@ -23,7 +23,9 @@ function verificationSidecar(
       resources,
       warningLabels: [],
       warnings: [],
-      trustBoundary
+      trustBoundary: packageKind === "tapVideo"
+        ? "This sidecar is not signed. Verify original video bytes against the TAP signature embedded in the video."
+        : trustBoundary
     })
   );
 }
@@ -76,6 +78,89 @@ describe("readCaptureInput", () => {
 });
 
 describe("resolveCaptureInput", () => {
+  it("resolves an exact video package into the existing TAP Video input path", async () => {
+    const original = textEncoder.encode("opaque signed MP4 bytes");
+    const bytes = zipSync({
+      "original-video.mp4": original,
+      "tapcam-export.json": verificationSidecar("tapVideo", [
+        { role: "primaryVideo", filename: "original-video.mp4", mediaType: "public.mpeg-4" }
+      ])
+    }, { level: 0 });
+    for (const [name, type] of [["TAPNAP-Capture.tapnap", ""], ["shared-file", TAPNAP_CAPTURE_PACKAGE_MIME_TYPE]]) {
+      const input = resolveCaptureInput(new File([bytes], name, { type }), bytes);
+      expect(input.kind).toBe("tap-video");
+      if (input.kind !== "tap-video") throw new Error("expected TAP Video input");
+      expect(input.fileName).toBe(name);
+      expect(input.fileSize).toBe(bytes.length);
+      expect(input.videoFile.name).toBe("original-video.mp4");
+      expect(input.videoFile.type).toBe("video/mp4");
+      expect(new Uint8Array(await input.videoFile.arrayBuffer())).toEqual(original);
+      expect(input.videoBytes).toEqual(original);
+    }
+  });
+
+  it("rejects video sidecars with mismatched fields, roles, and resource identities", () => {
+    const descriptor = { role: "primaryVideo", filename: "original-video.mp4", mediaType: "public.mpeg-4" };
+    const valid = JSON.parse(new TextDecoder().decode(verificationSidecar("tapVideo", [descriptor])));
+    for (const sidecar of [
+      { ...valid, schemaID: "urn:tapnap:tapcam:verification-export:v2" },
+      { ...valid, version: 2 },
+      { ...valid, packageKind: "stillPhoto" },
+      { ...valid, trustBoundary },
+      { ...valid, proof: {} },
+      { ...valid, resources: [] },
+      { ...valid, resources: [descriptor, descriptor] },
+      { ...valid, resources: [descriptor, { role: "primaryPhoto", filename: "photo.jpg", mediaType: "public.jpeg" }] },
+      { ...valid, resources: [{ ...descriptor, role: "pairedLivePhotoVideo" }] },
+      { ...valid, resources: [{ ...descriptor, filename: "missing.mp4" }] },
+      { ...valid, resources: [{ ...descriptor, filename: "../original-video.mp4" }] },
+      { ...valid, resources: [{ ...descriptor, filename: "video.mov" }] },
+      { ...valid, resources: [{ ...descriptor, mediaType: "video/mp4" }] }
+    ]) {
+      const bytes = zipSync({
+        "original-video.mp4": new Uint8Array([1, 2, 3]),
+        "video.mov": new Uint8Array([1, 2, 3]),
+        "photo.jpg": new Uint8Array([1, 2, 3]),
+        "tapcam-export.json": textEncoder.encode(JSON.stringify(sidecar))
+      });
+      expect(() => resolveTapnap(bytes)).toThrow();
+    }
+  });
+
+  it("bounds a declared video resource before expanding its compressed bytes", () => {
+    const bytes = zipSync({
+      "original-video.mp4": new Uint8Array([1]),
+      "tapcam-export.json": verificationSidecar("tapVideo", [
+        { role: "primaryVideo", filename: "original-video.mp4", mediaType: "public.mpeg-4" }
+      ])
+    });
+    const declaredSize = 384 * 1024 * 1024 + 1;
+    writeUint32(bytes, 22, declaredSize);
+    writeUint32(bytes, findSignature(bytes, 0x02014b50) + 24, declaredSize);
+    expect(() => resolveTapnap(bytes)).toThrow("media resource is too large");
+  });
+
+  it("rejects empty and duplicate declared MP4 archive entries", () => {
+    const sidecar = verificationSidecar("tapVideo", [
+      { role: "primaryVideo", filename: "original-video.mp4", mediaType: "public.mpeg-4" }
+    ]);
+    const empty = zipSync({ "original-video.mp4": new Uint8Array(), "tapcam-export.json": sidecar });
+    expect(() => resolveTapnap(empty)).toThrow();
+    const duplicate = zipSync({
+      "original-video.mp4": new Uint8Array([1]),
+      "original-video.mpx": new Uint8Array([2]),
+      "tapcam-export.json": sidecar
+    });
+    replaceAscii(duplicate, "original-video.mpx", "original-video.mp4");
+    expect(() => resolveTapnap(duplicate)).toThrow();
+  });
+
+  it("does not let an MP4 MIME type bypass a TAPNAP filename's strict package route", () => {
+    const bytes = textEncoder.encode("\u0000\u0000\u0000\u000cftypmp42");
+    expect(() => resolveCaptureInput(new File([bytes], "capture.tapnap", { type: "video/mp4" }), bytes)).toThrow();
+  });
+
+
   it("bounds received bytes independently of the File size", () => {
     const bytes = new Uint8Array([1, 2, 3]);
     Object.defineProperty(bytes, "byteLength", { value: MAX_CAPTURE_INPUT_BYTES + 1 });
