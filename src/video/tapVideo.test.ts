@@ -99,6 +99,59 @@ describe("TAP Video v1 local verification", () => {
     const report = await verifyTapVideoLocally((await makeArtifact({ withAudio: true, depthFrames: [{}] })).bytes);
     expect(report.status).toBe("valid");
     expect(report.serverRequest).not.toBeNull();
+    const sampleEntryName = await verifyTapVideoLocally((await makeArtifact({ withAudio: true,
+      mutateManifest: (manifest) => { manifest.payload.audioTrack.codec = "mp4a"; }
+    })).bytes);
+    expect(sampleEntryName.status).toBe("valid");
+  });
+
+  it("reads Apple's mono AAC configuration instead of the stereo MP4 sample-entry placeholder", async () => {
+    // Real descriptor structure from AVAssetWriter: four-byte descriptor lengths,
+    // sample-entry channels=2, but AudioSpecificConfig 0x1208 is 44.1 kHz mono.
+    const descriptor = Uint8Array.from("0380808022000000048080801440140018000000fa000000fa0005808080021208068080800102".match(/../g)!.map((byte) => parseInt(byte, 16)));
+    const options: ArtifactOptions = {
+      withAudio: true, audioDescriptor: descriptor,
+      mutateManifest: (manifest) => { manifest.payload.audioTrack.sampleRate = 44100; manifest.payload.audioTrack.channelCount = 1; }
+    };
+    const valid = await verifyTapVideoLocally((await makeArtifact(options)).bytes);
+    expect(valid.status).toBe("valid");
+    expect(valid.serverRequest).not.toBeNull();
+
+    for (const mismatch of [{ channelCount: 2 }, { sampleRate: 48000 }, { codec: "alac" }]) {
+      const artifact = await makeArtifact({ ...options, mutateManifest: (manifest) => {
+        options.mutateManifest!(manifest);
+        Object.assign(manifest.payload.audioTrack, mismatch);
+      } });
+      const report = await verifyTapVideoLocally(artifact.bytes);
+      expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
+      expect(report.status).toBe("invalid");
+      expect(report.serverRequest).toBeNull();
+    }
+  });
+
+  it("rejects malformed descriptors and non-AAC-LC audio before server verification", async () => {
+    const config = new Uint8Array([0x11, 0x90]);
+    const valid = audioDescriptor(config);
+    const shortASC = valid.slice();
+    shortASC[21] = 1; // ASC no longer consumes its declared parent.
+    const decoder = valid.subarray(5, valid.length - 3);
+    const duplicateDecoder = concat(new Uint8Array([3, valid[1] + decoder.length]), valid.subarray(2, valid.length - 3), decoder, valid.subarray(-3));
+    const cases = [
+      new Uint8Array(), valid.subarray(0, -1),
+      new Uint8Array([3, 0x80, 0x80, 0x80, 0x80]),
+      new Uint8Array([3, 0x7f]), shortASC, concat(valid, valid), duplicateDecoder,
+      audioDescriptor(config, 0x6b),
+      audioDescriptor(new Uint8Array([0x29, 0x90])), // HE-AAC
+      audioDescriptor(new Uint8Array([0x16, 0x90])), // Reserved frequency index
+      audioDescriptor(new Uint8Array([0x11, 0x80])), // PCE channel configuration
+      audioDescriptor(new Uint8Array([0x11]))
+    ];
+    for (const descriptor of cases) {
+      const report = await verifyTapVideoLocally((await makeArtifact({ withAudio: true, audioDescriptor: descriptor })).bytes);
+      expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
+      expect(report.checks.at(-1)).toMatchObject({ id: "video-semantics", status: "fail" });
+      expect(report.serverRequest).toBeNull();
+    }
   });
 
   it("accepts and decodes the shared zstd1 golden payload", async () => {
@@ -299,6 +352,7 @@ interface ArtifactOptions {
   actualDepthDuration?: number;
   withAudio?: boolean;
   actualAudioCodec?: string;
+  audioDescriptor?: Uint8Array;
   exactNumberToken?: boolean;
   payloadTextTransform?: (payload: string) => string;
   mutateManifest?: (manifest: AnyRecord) => void;
@@ -347,7 +401,7 @@ async function makeArtifact(options: ArtifactOptions = {}): Promise<{ bytes: Uin
   if (options.withAudio) {
     tracks.push(makeTrack({
       id: 3, handler: "soun", codec: options.actualAudioCodec ?? "mp4a", timeScale: 48_000,
-      duration: 48_000, sampleSizes: [audioSample.length], chunkOffset: audioOffset
+      duration: 48_000, sampleSizes: [audioSample.length], chunkOffset: audioOffset, audioDescriptor: options.audioDescriptor
     }));
   }
   if (metadataTrackPresent) {
@@ -419,7 +473,7 @@ function baseManifest(hasDepth: boolean, frames: FrameOptions[], format: AnyReco
       container: { fileType: "mp4", mediaType: "video/mp4", durationSeconds: 1, timeScale: 600, trackCount: 1 + (hasDepth ? 1 : 0) + (withAudio ? 1 : 0) },
       rgbTrack: { trackID: 1, codec: "avc1", width: 4, height: 4, durationSeconds: 1, timeScale: 600, nominalFrameRate: 1, frameCount: 1, transform: "rotation:90;mirrored" },
       audioTrack: withAudio
-        ? { status: "captured", trackID: 3, codec: "mp4a", durationSeconds: 1, timeScale: 48_000, sampleRate: 48_000, channelCount: 2 }
+        ? { status: "captured", trackID: 3, codec: "aac ", durationSeconds: 1, timeScale: 48_000, sampleRate: 48_000, channelCount: 2 }
         : { status: "notCaptured", trackID: null, codec: null, durationSeconds: null, timeScale: null, sampleRate: null, channelCount: null },
       depthCoverage: {
         trackID: hasDepth ? 2 : null, trackCodec: hasDepth ? "mebx" : null, trackDurationSeconds: hasDepth ? 1 : null,
@@ -465,7 +519,7 @@ function makeDepthSample(frame: FrameOptions, index: number, defaultDelta: numbe
 interface TrackOptions {
   id: number; handler: "vide" | "soun" | "meta"; codec: string; timeScale: number; duration: number;
   sampleSizes: number[]; chunkOffset: number; sampleDelta?: number; width?: number; height?: number;
-  metadataKey?: string; metadataLocalKeyID?: number;
+  metadataKey?: string; metadataLocalKeyID?: number; audioDescriptor?: Uint8Array;
 }
 
 function makeTrack(options: TrackOptions): Uint8Array {
@@ -474,7 +528,7 @@ function makeTrack(options: TrackOptions): Uint8Array {
   const hdlr = fullBox("hdlr", concat(u32(0), encoder.encode(options.handler), new Uint8Array(12)));
   const sampleEntry = options.handler === "vide"
     ? videoSampleEntry(options.codec, options.width ?? 4, options.height ?? 4)
-    : options.handler === "soun" ? audioSampleEntry(options.codec)
+    : options.handler === "soun" ? audioSampleEntry(options.codec, options.audioDescriptor)
       : metadataSampleEntry(options.codec, options.metadataLocalKeyID ?? 3, options.metadataKey ?? "com.tapnap.depth.klv");
   const stsd = fullBox("stsd", concat(u32(1), sampleEntry));
   const stts = fullBox("stts", concat(u32(1), u32(options.sampleSizes.length), u32(options.sampleDelta ?? options.duration)));
@@ -495,11 +549,16 @@ function videoSampleEntry(codec: string, width: number, height: number): Uint8Ar
   return box(codec, payload);
 }
 
-function audioSampleEntry(codec: string): Uint8Array {
+function audioSampleEntry(codec: string, descriptor = audioDescriptor(new Uint8Array([0x11, 0x90]))): Uint8Array {
   const payload = new Uint8Array(28);
   const view = new DataView(payload.buffer);
   view.setUint16(6, 1, false); view.setUint16(16, 2, false); view.setUint16(18, 16, false); view.setUint32(24, 48_000 * 65_536, false);
-  return box(codec, payload);
+  return box(codec, concat(payload, ...(codec === "mp4a" ? [fullBox("esds", descriptor)] : [])));
+}
+
+function audioDescriptor(config: Uint8Array, objectType = 0x40): Uint8Array {
+  const descriptor = (tag: number, payload: Uint8Array) => concat(new Uint8Array([tag, payload.length]), payload);
+  return descriptor(3, concat(new Uint8Array(3), descriptor(4, concat(new Uint8Array([objectType, 0x14]), new Uint8Array(11), descriptor(5, config))), descriptor(6, new Uint8Array([2]))));
 }
 
 function metadataSampleEntry(codec: string, localKeyID: number, key: string): Uint8Array {

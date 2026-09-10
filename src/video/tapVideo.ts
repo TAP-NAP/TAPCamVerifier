@@ -997,7 +997,9 @@ async function validateVideoSemantics(bytes: Uint8Array, topLevel: Box[], manife
   if (audio.status === "captured") {
     if (audioTracks.length !== 1) throw new Error("Captured audio manifest state requires exactly one MP4 audio track.");
     const audioTrack = audioTracks[0];
-    requireSingleCodec(audioTrack, audio.codec as string, "audio");
+    // Retain the v1 sample-entry spelling and the native CoreMedia AAC spelling.
+    const audioCodec = audio.codec === "mp4a" && audioTrack.codecs[0] === "aac " ? "aac " : audio.codec as string;
+    requireSingleCodec(audioTrack, audioCodec, "audio");
     if (audio.trackID !== audioTrack.id || audio.timeScale !== audioTrack.timeScale ||
         !durationMatches(audio.durationSeconds as number, audioTrack.duration, audioTrack.timeScale) ||
         (audio.sampleRate !== null && audio.sampleRate !== audioTrack.sampleRate) ||
@@ -1086,6 +1088,7 @@ function readTrackInfo(bytes: Uint8Array, track: Box): TrackInfo {
   const stsz = requireUniqueChild(bytes, stbl, "stsz");
   const sampleCount = readU32(bytes, stsz.payloadStart + 8);
   const first = descriptions[0];
+  const codecs = descriptions.map((entry) => entry.type);
   let width: number | null = null;
   let height: number | null = null;
   let sampleRate: number | null = null;
@@ -1098,8 +1101,75 @@ function readTrackInfo(bytes: Uint8Array, track: Box): TrackInfo {
     if (!first || first.payloadStart + 28 > first.payloadEnd) throw new Error("Truncated MP4 audio sample entry.");
     channelCount = readU16(bytes, first.payloadStart + 16);
     sampleRate = readU32(bytes, first.payloadStart + 24) / 65536;
+    if (first.type === "mp4a") {
+      // CoreMedia reports the decoded audio format, not the MP4 sample-entry
+      // name or its placeholder channel count. Read the same AAC configuration.
+      const audio = readAACConfiguration(bytes, first);
+      codecs[0] = "aac ";
+      sampleRate = audio.sampleRate;
+      channelCount = audio.channelCount;
+    }
   }
-  return { box: track, id, handler, timeScale: timing.timeScale, duration: timing.duration, codecs: descriptions.map((entry) => entry.type), sampleCount, width, height, sampleRate, channelCount };
+  return { box: track, id, handler, timeScale: timing.timeScale, duration: timing.duration, codecs, sampleCount, width, height, sampleRate, channelCount };
+}
+
+function readAACConfiguration(bytes: Uint8Array, entry: Box): { sampleRate: number; channelCount: number } {
+  if (readU16(bytes, entry.payloadStart + 8) !== 0) throw new Error("Unsupported MP4 audio sample-entry version.");
+  const children = parseBoxes(bytes, entry.payloadStart + 28, entry.payloadEnd);
+  const descriptors = children.filter((box) => box.type === "esds");
+  if (descriptors.length !== 1) throw new Error("AAC sample entry requires one elementary stream descriptor.");
+  const esds = descriptors[0];
+  if (esds.payloadStart + 4 > esds.payloadEnd || readU32(bytes, esds.payloadStart) !== 0) throw new Error("Invalid elementary stream descriptor header.");
+  const es = readMPEG4Descriptor(bytes, esds.payloadStart + 4, esds.payloadEnd, 3);
+  if (es.end !== esds.payloadEnd || es.start + 3 > es.end) throw new Error("Truncated elementary stream descriptor.");
+  const flags = bytes[es.start + 2];
+  let offset = es.start + 3;
+  if (flags & 0x80) offset += 2;
+  if (flags & 0x40) {
+    if (offset >= es.end) throw new Error("Truncated elementary stream URL.");
+    offset += 1 + bytes[offset];
+  }
+  if (flags & 0x20) offset += 2;
+  const decoder = readMPEG4Descriptor(bytes, offset, es.end, 4);
+  if (decoder.start + 13 > decoder.end || bytes[decoder.start] !== 0x40 || (bytes[decoder.start + 1] >> 2) !== 5) {
+    throw new Error("MP4 audio descriptor does not declare MPEG-4 audio.");
+  }
+  const sync = readMPEG4Descriptor(bytes, decoder.end, es.end, 6);
+  if (sync.end !== es.end || sync.end - sync.start !== 1 || bytes[sync.start] !== 2) throw new Error("Unsupported MPEG-4 synchronization descriptor.");
+  const config = readMPEG4Descriptor(bytes, decoder.start + 13, decoder.end, 5);
+  if (config.end !== decoder.end) throw new Error("Ambiguous AAC decoder configuration.");
+  let bit = config.start * 8;
+  const readBits = (count: number): number => {
+    if (bit + count > config.end * 8) throw new Error("Truncated AAC audio configuration.");
+    let value = 0;
+    for (let index = 0; index < count; index++, bit++) value = value * 2 + ((bytes[Math.floor(bit / 8)] >> (7 - (bit & 7))) & 1);
+    return value;
+  };
+  if (readBits(5) !== 2) throw new Error("Unsupported AAC audio object type.");
+  const frequencyIndex = readBits(4);
+  const sampleRates = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+  const sampleRate = frequencyIndex === 15 ? readBits(24) : sampleRates[frequencyIndex];
+  const channels = [0, 1, 2, 3, 4, 5, 6, 8];
+  const channelCount = channels[readBits(4)];
+  if (!sampleRate || !channelCount || readBits(3) !== 0 || bit !== config.end * 8) {
+    throw new Error("Unsupported AAC-LC audio configuration.");
+  }
+  return { sampleRate, channelCount };
+}
+
+function readMPEG4Descriptor(bytes: Uint8Array, offset: number, end: number, tag: number): { start: number; end: number } {
+  if (offset >= end || bytes[offset++] !== tag) throw new Error("Invalid MPEG-4 descriptor tag.");
+  let length = 0;
+  for (let index = 0; index < 4; index++) {
+    if (offset >= end) throw new Error("Truncated MPEG-4 descriptor length.");
+    const value = bytes[offset++];
+    length = length * 128 + (value & 0x7f);
+    if ((value & 0x80) === 0) {
+      if (length > end - offset) throw new Error("MPEG-4 descriptor exceeds its parent.");
+      return { start: offset, end: offset + length };
+    }
+  }
+  throw new Error("Invalid MPEG-4 descriptor length.");
 }
 
 function readSampleDescriptions(bytes: Uint8Array, stbl: Box): Box[] {

@@ -61,6 +61,11 @@ orchestration.
   [manifest](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/manifests/tap-video-v1.md)
   and [container/KLV](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/containers/tap-video-container-v1.md)
   contracts; TAP Video is not routed through `.tapnap`.
+- Native AAC exports name the codec using CoreMedia (`aac `), while the v1
+  manifest table names the MP4 sample entry (`mp4a`). The reader accepts both
+  spellings only after the `esds` configuration confirms AAC-LC, and obtains
+  sample rate and channel count from that configuration. Other audio object
+  types and ambiguous descriptors are rejected.
 - The Rust reader accepts padded base64url and ignores non-zero
   producer-reserved proof-header bytes without assigning them meaning. Shared v1
   still requires producers to emit unpadded base64url and zero reserved bytes.
