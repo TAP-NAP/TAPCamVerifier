@@ -1,0 +1,145 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, "SF Pro Display", "Helvetica Neue", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  background: #050505;
+  color: #f2f0e8;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+a {
+  color: inherit;
+  text-underline-offset: 0.2em;
+  overflow-wrap: anywhere;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid #d9ff43;
+  outline-offset: 4px;
+}
+
+.policy-header,
+main {
+  width: min(100% - 3rem, 48rem);
+  margin-inline: auto;
+}
+
+.policy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block: 1.5rem;
+  border-bottom: 1px solid #292b30;
+}
+
+.policy-brand {
+  font-size: 1.25rem;
+  font-weight: 750;
+  letter-spacing: -0.04em;
+  text-decoration: none;
+}
+
+.policy-languages {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.policy-languages button {
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: #b0b2b7;
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.policy-languages button[aria-pressed="true"] {
+  border-color: #d9ff43;
+  color: #d9ff43;
+}
+
+main {
+  padding-block: clamp(2.5rem, 7vw, 5rem) 5rem;
+}
+
+.policy-kicker {
+  margin: 0 0 0.75rem;
+  color: #d9ff43;
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+}
+
+h1 {
+  margin: 0 0 1.5rem;
+  font-size: clamp(2rem, 6vw, 3.25rem);
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+}
+
+.policy-meta {
+  margin-bottom: 2rem;
+  color: #b0b2b7;
+  font-size: 0.875rem;
+}
+
+.policy-meta p {
+  margin: 0.25rem 0;
+}
+
+section {
+  margin-top: 2.5rem;
+}
+
+h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+  line-height: 1.5;
+}
+
+p,
+li {
+  line-height: 1.9;
+}
+
+p {
+  margin: 0.75rem 0;
+}
+
+ul {
+  padding-left: 1.5rem;
+}
+
+li + li {
+  margin-top: 0.5rem;
+}
+
+article:not([hidden]) + article {
+  margin-top: 5rem;
+}
+
+@media (max-width: 380px) {
+  .policy-header,
+  main {
+    width: calc(100% - 2rem);
+  }
+}

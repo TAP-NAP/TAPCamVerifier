@@ -12,7 +12,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         landing: `${projectRoot}index.html`,
-        verify: `${projectRoot}verify/index.html`
+        verify: `${projectRoot}verify/index.html`,
+        privacy: `${projectRoot}privacy/index.html`
       }
     }
   }

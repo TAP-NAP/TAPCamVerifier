@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="TAPCam 隐私政策 / Privacy Policy — App Attest 验签凭据、设备本地媒体、权限及数据保存说明。" />
+    <link rel="icon" type="image/png" href="../launch_logo.png" />
+    <title>隐私政策 · TAPCam</title>
+  </head>
+  <body>
+    <header class="policy-header">
+      <a class="policy-brand" href="../">TAPCam</a>
+      <nav class="policy-languages" aria-label="政策语言" data-policy-languages hidden>
+        <button type="button" lang="zh-CN" data-policy-language="zh">简体中文</button>
+        <button type="button" lang="en" data-policy-language="en">English</button>
+      </nav>
+    </header>
+    <main>
+      <article lang="zh-CN" data-policy="zh" aria-labelledby="policy-title-zh">
+        <p class="policy-kicker">TAPCam · iOS</p>
+        <h1 id="policy-title-zh">隐私政策</h1>
+        <div class="policy-meta">
+          <p>更新日期：<time datetime="2026-09-10">2026 年 9 月 10 日</time></p>
+          <p>运营者：Jinbo Li</p>
+          <p>联系邮箱：<a href="mailto:devharoldlee@gmail.com">devharoldlee@gmail.com</a></p>
+        </div>
+        <p>TAPCam 尊重并保护你的隐私。本政策适用于 TAPCam iOS 应用，说明我们如何处理应用验证信息，以及你的照片、视频和相关拍摄数据。</p>
+
+        <section aria-labelledby="information-zh">
+          <h2 id="information-zh">1. 我们处理的信息</h2>
+          <p>TAPCam 使用 Apple 的 App Attest 服务验证应用实例并建立签名凭据，为照片和视频提供可供后续验证的数字签名。</p>
+          <p>在凭据注册和状态检查过程中，我们的服务器会接收必要的技术信息，包括密钥标识符、Apple 生成的证明信息及验证请求标识，并保存对应的公钥和必要的验证记录。</p>
+          <p>这些信息用于建立、维护验签所需的凭据，并支持历史影像的签名验证，不用于识别你的真实身份或跟踪你的使用行为。</p>
+        </section>
+
+        <section aria-labelledby="media-zh">
+          <h2 id="media-zh">2. 照片、视频及拍摄数据</h2>
+          <p>你的照片、视频、录音、深度数据及相关拍摄元数据在设备上处理，保存在应用本地或系统照片图库中。TAPCam 不会将这些内容上传至我们的服务器。</p>
+          <p>拍摄内容的签名在设备上生成，并随拍摄文件保存。TAPCam 不会因你拍摄、浏览或分享自己的影像，而将每张照片或每段视频的内容上传给我们。</p>
+        </section>
+
+        <section aria-labelledby="permissions-zh">
+          <h2 id="permissions-zh">3. 应用权限</h2>
+          <p>TAPCam 根据功能需要请求以下权限：</p>
+          <ul>
+            <li><strong>相机权限：</strong>用于拍摄照片、视频，以及获取设备支持的深度数据。</li>
+            <li><strong>照片图库权限：</strong>用于保存和浏览拍摄内容。</li>
+            <li><strong>麦克风权限：</strong>在你授权并启用后，为视频或实况照片录制声音。</li>
+            <li><strong>位置权限：</strong>在你授权并启用后，将拍摄位置写入文件元数据。</li>
+          </ul>
+          <p>位置和麦克风权限均可选择不授予。你可以在 TAPCam 设置中关闭对应数据使用功能，或在 iOS 系统设置中调整权限。关闭某项权限可能影响对应功能。</p>
+          <p>关闭位置记录或录音功能，仅影响后续拍摄，不会自动移除已有文件中的位置或声音。</p>
+        </section>
+
+        <section aria-labelledby="purposes-zh">
+          <h2 id="purposes-zh">4. 数据用途</h2>
+          <p>我们仅将 App Attest 凭据及相关证明记录用于支持签名验证，包括验签所必需的应用认证及凭据建立与维护，不会将其用于广告投放、用户画像、行为跟踪、人工智能模型训练或其他无关用途。</p>
+          <p>TAPCam 不出售你的数据，不集成广告或第三方行为分析 SDK，也不会将你的拍摄内容提供给第三方用于商业分析或模型训练。</p>
+        </section>
+
+        <section aria-labelledby="retention-zh">
+          <h2 id="retention-zh">5. 数据保存</h2>
+          <p>你可以通过 TAPCam 或系统照片图库管理、删除自己的照片和视频。</p>
+          <p>为支持历史照片和视频的签名验证，我们持续保存必要的 App Attest 验签凭据，包括公钥、密钥标识符及相关证明记录，<strong>无限期保留，不设置到期或计划删除期限</strong>。</p>
+          <p>卸载 TAPCam、重置本地签名凭据或删除照片，不会删除服务器上已有的验签凭据。保留这些记录，是为了避免历史影像因缺少对应凭据而无法完成验签。</p>
+          <p>这些长期保存的记录仅用于签名验证，不会因保存时间延长而扩大其用途。</p>
+        </section>
+
+        <section aria-labelledby="sharing-zh">
+          <h2 id="sharing-zh">6. Apple 服务及主动分享</h2>
+          <p>App Attest 由 Apple 提供，凭据认证过程涉及与 Apple 服务通信。Apple 对其处理的数据适用其<a href="https://www.apple.com/legal/privacy/">隐私政策</a>。</p>
+          <p>如果你启用了 iCloud 照片或系统备份，相关同步和备份由 Apple 根据你的系统设置执行，不属于向 TAPCam 服务器上传媒体内容。</p>
+          <p>当你主动分享照片或视频时，接收方可能获得文件中包含的拍摄时间、位置、深度数据及签名信息，具体取决于文件内容和分享方式。分享至其他应用或服务后的数据处理，适用接收方的隐私政策。</p>
+        </section>
+
+        <section aria-labelledby="choices-zh">
+          <h2 id="choices-zh">7. 你的选择与控制</h2>
+          <p>你可以调整系统权限、关闭应用内的位置或麦克风数据使用功能，并管理或删除本地媒体。</p>
+          <p>停止使用并卸载 TAPCam 可以停止该应用后续发起的验证请求。已经建立的服务器验签凭据仍按本政策第 5 条持续保存，仅用于历史影像的签名验证。</p>
+          <p>如对数据处理有疑问，或希望提出与个人信息相关的请求，请通过本政策所列邮箱联系我们。</p>
+        </section>
+
+        <section aria-labelledby="changes-zh">
+          <h2 id="changes-zh">8. 政策更新</h2>
+          <p>如果 TAPCam 的数据处理范围、用途或方式发生变化，我们会更新本政策及更新日期。对于需要你重新作出选择的变化，我们会告知你，并在适用时征求你的同意。</p>
+          <p>我们不会仅通过修改本政策，将已保存的验签凭据用于与签名验证无关的目的。</p>
+        </section>
+
+        <section aria-labelledby="contact-zh">
+          <h2 id="contact-zh">9. 联系我们</h2>
+          <p>如有隐私问题、意见或相关请求，请联系：</p>
+          <p>运营者：Jinbo Li<br />电子邮箱：<a href="mailto:devharoldlee@gmail.com">devharoldlee@gmail.com</a></p>
+        </section>
+      </article>
+
+      <article lang="en" data-policy="en" aria-labelledby="policy-title-en">
+        <p class="policy-kicker">TAPCam · iOS</p>
+        <h1 id="policy-title-en">Privacy Policy</h1>
+        <div class="policy-meta">
+          <p>Last updated: <time datetime="2026-09-10">September 10, 2026</time></p>
+          <p>Operator: Jinbo Li</p>
+          <p>Contact: <a href="mailto:devharoldlee@gmail.com">devharoldlee@gmail.com</a></p>
+        </div>
+        <p>TAPCam respects your privacy. This policy applies to the TAPCam iOS app and explains how we handle app verification information, as well as your photos, videos, and related capture data.</p>
+
+        <section aria-labelledby="information-en">
+          <h2 id="information-en">1. Information We Process</h2>
+          <p>TAPCam uses Apple’s App Attest service to verify app instances and establish credentials that support the verification of digital signatures attached to photos and videos.</p>
+          <p>During credential registration and status checks, our servers receive necessary technical information, including key identifiers, attestation information generated by Apple, and verification request identifiers. We retain the corresponding public keys and necessary verification records.</p>
+          <p>We use this information to establish and maintain the credentials needed to verify signatures, including signatures on previously captured media. We do not use it to identify you personally or track your activity.</p>
+        </section>
+
+        <section aria-labelledby="media-en">
+          <h2 id="media-en">2. Photos, Videos, and Capture Data</h2>
+          <p>Your photos, videos, audio, depth data, and related capture metadata are processed on your device and stored locally in TAPCam or in your system photo library. TAPCam does not upload this content to our servers.</p>
+          <p>Media signatures are generated on your device and stored with the captured files. Taking, viewing, or sharing a photo or video in TAPCam does not cause its content to be uploaded to us.</p>
+        </section>
+
+        <section aria-labelledby="permissions-en">
+          <h2 id="permissions-en">3. App Permissions</h2>
+          <p>TAPCam requests the following permissions as needed for its features:</p>
+          <ul>
+            <li><strong>Camera:</strong> To capture photos and videos, and to obtain depth data supported by your device.</li>
+            <li><strong>Photo Library:</strong> To save and browse captured media.</li>
+            <li><strong>Microphone:</strong> To record sound for videos or Live Photos when you grant permission and enable this feature.</li>
+            <li><strong>Location:</strong> To include the capture location in file metadata when you grant permission and enable this feature.</li>
+          </ul>
+          <p>Microphone and location permissions are optional. You can disable the corresponding features in TAPCam settings or adjust permissions in iOS Settings. Disabling a permission may affect the associated feature.</p>
+          <p>Disabling location recording or audio recording affects future captures. It does not automatically remove location information or audio from existing files.</p>
+        </section>
+
+        <section aria-labelledby="purposes-en">
+          <h2 id="purposes-en">4. How We Use Information</h2>
+          <p>We use App Attest credentials and related attestation records only to support signature verification, including the app attestation and credential setup and maintenance needed for verification. We do not use them for advertising, profiling, behavioral tracking, artificial intelligence model training, or other unrelated purposes.</p>
+          <p>TAPCam does not sell your data, include advertising or third-party behavioral analytics SDKs, or provide your captured content to third parties for commercial analytics or model training.</p>
+        </section>
+
+        <section aria-labelledby="retention-en">
+          <h2 id="retention-en">5. Data Retention</h2>
+          <p>You can manage and delete your photos and videos through TAPCam or your system photo library.</p>
+          <p>To support verification of signatures on previously captured photos and videos, we retain the necessary App Attest verification credentials, including public keys, key identifiers, and related attestation records, <strong>indefinitely, with no scheduled expiration or deletion date</strong>.</p>
+          <p>Uninstalling TAPCam, resetting local signing credentials, or deleting photos does not delete existing verification credentials from our servers. We retain these records so that historical media can continue to be verified using the corresponding credentials.</p>
+          <p>These retained records are used only for signature verification. Their continued retention does not expand the purposes for which we use them.</p>
+        </section>
+
+        <section aria-labelledby="sharing-en">
+          <h2 id="sharing-en">6. Apple Services and Sharing</h2>
+          <p>App Attest is provided by Apple, and the attestation process involves communication with Apple’s services. Apple’s processing of data is governed by its <a href="https://www.apple.com/legal/privacy/">Privacy Policy</a>.</p>
+          <p>If you enable iCloud Photos or system backups, Apple handles the associated syncing and backups according to your system settings. This does not constitute an upload of your media to TAPCam’s servers.</p>
+          <p>When you choose to share a photo or video, the recipient may receive capture timestamps, location information, depth data, and signature information included in the file, depending on its contents and the sharing method. Data handling by other apps or services is governed by their respective privacy policies.</p>
+        </section>
+
+        <section aria-labelledby="choices-en">
+          <h2 id="choices-en">7. Your Choices and Controls</h2>
+          <p>You can adjust system permissions, disable the use of location or microphone data in TAPCam, and manage or delete locally stored media.</p>
+          <p>Stopping use of TAPCam and uninstalling it prevents the app from making further verification requests. Existing server-side verification credentials remain stored as described in Section 5 and are used only to support verification of signatures on historical media.</p>
+          <p>If you have questions about how we handle data or wish to make a request concerning your personal information, please contact us at the email address listed in this policy.</p>
+        </section>
+
+        <section aria-labelledby="changes-en">
+          <h2 id="changes-en">8. Changes to This Policy</h2>
+          <p>If TAPCam’s data processing practices, scope, or purposes change, we will update this policy and its “Last updated” date. We will notify you of changes that require a new choice from you and obtain your consent where applicable.</p>
+          <p>We will not repurpose retained verification credentials for uses unrelated to signature verification merely by updating this policy.</p>
+        </section>
+
+        <section aria-labelledby="contact-en">
+          <h2 id="contact-en">9. Contact Us</h2>
+          <p>For privacy questions, feedback, or related requests, please contact:</p>
+          <p>Operator: Jinbo Li<br />Email: <a href="mailto:devharoldlee@gmail.com">devharoldlee@gmail.com</a></p>
+        </section>
+      </article>
+    </main>
+    <script type="module" src="/src/privacy.ts"></script>
+  </body>
+</html>
