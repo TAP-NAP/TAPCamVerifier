@@ -11,8 +11,7 @@ import {
 } from "./filtering";
 import {
   makePointCloudMaterial,
-  representativeDepthForCloud,
-  splatWorldSizeForCloud
+  representativeDepthForCloud
 } from "./pointCloudMaterial";
 import type { ProjectedPixelCloud } from "./types";
 
@@ -71,10 +70,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   }
 
   const targetDepth = representativeDepthForCloud(cloud);
-  const gl = renderer.getContext();
-  const pointSizeRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array | number[];
-  const maximumPointSize = Number(pointSizeRange?.[1] ?? 64);
-  const { material, uniforms } = makePointCloudMaterial(cloud, targetDepth, maximumPointSize);
+  const { material, uniforms } = makePointCloudMaterial();
   let geometry = new THREE.BufferGeometry();
 
   const model = new THREE.Points(geometry, material);
@@ -89,16 +85,6 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   controls.screenSpacePanning = true;
   controls.minDistance = 0.05;
   controls.maxDistance = 10;
-  const raycaster = new THREE.Raycaster();
-  raycaster.params.Points = {
-    threshold: Math.max(splatWorldSizeForCloud(cloud, targetDepth) * 2.8, targetDepth * 0.008)
-  };
-  const pointerNdc = new THREE.Vector2();
-  const interactionPoint = new THREE.Vector3();
-  let hoverTarget = 0;
-  let hoverStrength = 0;
-  let pulseStartedAt: number | null = null;
-  let activePointer: { id: number; x: number; y: number; moved: boolean; pointerType: string } | null = null;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const introStartedAt = performance.now();
   let introMotionActive = !reducedMotion;
@@ -131,111 +117,11 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
 
   function handleControlsStart(): void {
     renderer.domElement.classList.add("is-grabbing");
-    hoverTarget = 0;
   }
 
   function handleControlsEnd(): void {
     renderer.domElement.classList.remove("is-grabbing");
   }
-
-  function pointAtPointer(clientX: number, clientY: number): THREE.Vector3 | null {
-    const rect = renderer.domElement.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      return null;
-    }
-    pointerNdc.set(
-      (clientX - rect.left) / rect.width * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1
-    );
-    raycaster.setFromCamera(pointerNdc, camera);
-    const hit = raycaster.intersectObject(model, false)[0];
-    if (!hit) {
-      return null;
-    }
-    if (typeof hit.index === "number") {
-      const positions = model.geometry.getAttribute("position");
-      if (positions && hit.index < positions.count) {
-        return interactionPoint.fromBufferAttribute(positions, hit.index);
-      }
-    }
-    return model.worldToLocal(interactionPoint.copy(hit.point));
-  }
-
-  function updateHoverFromPointer(event: PointerEvent): THREE.Vector3 | null {
-    const point = pointAtPointer(event.clientX, event.clientY);
-    if (point) {
-      uniforms.uHoverPoint.value.copy(point);
-      hoverTarget = 1;
-      renderer.domElement.classList.add("is-point-hovered");
-    } else {
-      hoverTarget = 0;
-      renderer.domElement.classList.remove("is-point-hovered");
-    }
-    return point;
-  }
-
-  function handlePointerDown(event: PointerEvent): void {
-    activePointer = {
-      id: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      moved: false,
-      pointerType: event.pointerType
-    };
-    updateHoverFromPointer(event);
-  }
-
-  function handlePointerMove(event: PointerEvent): void {
-    if (activePointer?.id === event.pointerId) {
-      if (Math.hypot(event.clientX - activePointer.x, event.clientY - activePointer.y) > 5) {
-        activePointer.moved = true;
-      }
-      if (activePointer.moved) {
-        hoverTarget = 0;
-      }
-      return;
-    }
-    if (event.buttons === 0 && (event.pointerType === "mouse" || event.pointerType === "pen")) {
-      updateHoverFromPointer(event);
-    }
-  }
-
-  function handlePointerUp(event: PointerEvent): void {
-    if (activePointer?.id !== event.pointerId) {
-      return;
-    }
-    const shouldPulse = !activePointer.moved;
-    const pointerType = activePointer.pointerType;
-    activePointer = null;
-    const point = updateHoverFromPointer(event);
-    if (shouldPulse && point && !reducedMotion) {
-      uniforms.uPulsePoint.value.copy(point);
-      pulseStartedAt = performance.now();
-    }
-    if (pointerType === "touch") {
-      hoverTarget = 0;
-      renderer.domElement.classList.remove("is-point-hovered");
-    }
-  }
-
-  function handlePointerCancel(): void {
-    activePointer = null;
-    hoverTarget = 0;
-    renderer.domElement.classList.remove("is-point-hovered", "is-grabbing");
-  }
-
-  function handlePointerLeave(): void {
-    if (!activePointer) {
-      hoverTarget = 0;
-      renderer.domElement.classList.remove("is-point-hovered");
-    }
-  }
-
-  renderer.domElement.addEventListener("pointerdown", handlePointerDown);
-  renderer.domElement.addEventListener("pointermove", handlePointerMove);
-  renderer.domElement.addEventListener("pointerup", handlePointerUp);
-  renderer.domElement.addEventListener("pointercancel", handlePointerCancel);
-  renderer.domElement.addEventListener("pointerleave", handlePointerLeave);
 
   const shell = host.parentElement;
   const filterPanel = shell?.querySelector<HTMLElement>("[data-geometry-filter-panel]");
@@ -399,8 +285,6 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     const height = Math.max(1, Math.floor(rect.height));
     canvasSize = { width, height };
     renderer.setSize(width, height, false);
-    uniforms.uViewportHeight.value = height;
-    uniforms.uPixelRatio.value = pixelRatio;
     uniforms.uPointSize.value = 1.55 * pixelRatio;
     updateCaptureCameraProjection(camera, cloud, width, height);
     if (!userMovedCamera) {
@@ -416,25 +300,7 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
   resize();
 
   let animationFrame = 0;
-  let lastFrameTime = performance.now();
   const render = (frameTime = performance.now()): void => {
-    const deltaSeconds = Math.min(Math.max((frameTime - lastFrameTime) / 1000, 0), 0.05);
-    lastFrameTime = frameTime;
-    hoverStrength = THREE.MathUtils.damp(hoverStrength, hoverTarget, hoverTarget > 0 ? 14 : 8, deltaSeconds);
-    uniforms.uHoverStrength.value = hoverStrength;
-    if (!reducedMotion && hoverStrength > 0.001) {
-      const rollPhase = frameTime / 1000 * 4.8;
-      uniforms.uRollDirection.value.set(Math.cos(rollPhase), Math.sin(rollPhase));
-    }
-    if (pulseStartedAt !== null) {
-      const progress = (frameTime - pulseStartedAt) / 820;
-      if (progress >= 1) {
-        pulseStartedAt = null;
-        uniforms.uPulseProgress.value = -1;
-      } else {
-        uniforms.uPulseProgress.value = progress;
-      }
-    }
     if (introMotionActive) {
       const elapsed = Math.max(0, (frameTime - introStartedAt) / 1000);
       const duration = 4.6;
@@ -472,11 +338,6 @@ export function mountGeometryViewer(host: HTMLElement, cloud: ProjectedPixelClou
     controls.removeEventListener("start", markCameraMoved);
     controls.removeEventListener("start", handleControlsStart);
     controls.removeEventListener("end", handleControlsEnd);
-    renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
-    renderer.domElement.removeEventListener("pointermove", handlePointerMove);
-    renderer.domElement.removeEventListener("pointerup", handlePointerUp);
-    renderer.domElement.removeEventListener("pointercancel", handlePointerCancel);
-    renderer.domElement.removeEventListener("pointerleave", handlePointerLeave);
     resizeObserver.disconnect();
     controls.dispose();
     geometry.dispose();

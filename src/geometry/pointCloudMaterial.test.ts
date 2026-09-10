@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  interactionRadiusForCloud,
-  makePointCloudMaterial,
-  representativeDepthForCloud,
-  splatWorldSizeForCloud
-} from "./pointCloudMaterial";
+import { representativeDepthForCloud } from "./pointCloudMaterial";
 import type { ProjectedPixelCloud } from "./types";
 
 describe("point cloud render policy", () => {
@@ -22,35 +17,7 @@ describe("point cloud render policy", () => {
     expect(representativeDepthForCloud(cloud)).toBeCloseTo(1.2);
   });
 
-  it("sizes round splats from the camera footprint and sampling interval", () => {
-    const dense = fixtureCloud({ sampleStep: 1, fx: 500, fy: 500 });
-    const sampled = fixtureCloud({ sampleStep: 4, fx: 500, fy: 500 });
 
-    expect(splatWorldSizeForCloud(sampled, 2)).toBeCloseTo(
-      splatWorldSizeForCloud(dense, 2) * 4
-    );
-  });
-
-  it("keeps the interaction field larger than an individual splat", () => {
-    const cloud = fixtureCloud({ sampleStep: 3, fx: 700, fy: 700 });
-    const targetDepth = 1.5;
-
-    expect(interactionRadiusForCloud(cloud, targetDepth)).toBeGreaterThan(
-      splatWorldSizeForCloud(cloud, targetDepth) * 2
-    );
-  });
-
-  it("keeps every rendered point at one screen-space size and preserves source color", () => {
-    const { material, uniforms } = makePointCloudMaterial(fixtureCloud(), 1.5, 64);
-
-    expect(uniforms.uRollDirection.value.toArray()).toEqual([0, 0]);
-    expect(material.vertexShader).toContain("modelViewMatrix * vec4(position, 1.0)");
-    expect(material.vertexShader).toContain("gl_PointSize = uPointSize");
-    expect(material.vertexShader).not.toContain("projectedDiameter");
-    expect(material.fragmentShader).toContain("vec4(vPointColor, softCoverage)");
-    expect(material.fragmentShader).not.toContain("selfLitColor");
-    material.dispose();
-  });
 });
 
 function fixtureCloud(overrides: Partial<ProjectedPixelCloud> = {}): ProjectedPixelCloud {

@@ -266,9 +266,6 @@ input {
   touch-action: none;
 }
 
-.geometry-canvas.is-point-hovered {
-  cursor: pointer;
-}
 
 .geometry-canvas.is-grabbing {
   cursor: grabbing;
