@@ -46,7 +46,13 @@ export function mountEmptyParticleField(
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
   camera.position.z = 2;
 
-  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false });
+  let renderer: THREE.WebGLRenderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false });
+  } catch {
+    // Decoration must not prevent the page's file input and navigation from mounting.
+    return { setActive() {}, cleanup() {} };
+  }
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
   renderer.setPixelRatio(pixelRatio);
   renderer.setClearColor(0x000000, 0);
@@ -488,37 +494,64 @@ export function mountEmptyParticleField(
   pointerSurface.addEventListener("pointercancel", handlePointerLeave);
   animationFrame = window.requestAnimationFrame(render);
 
+  let requestedActive = true;
+  let pageActive = true;
+  const syncActive = (): void => {
+    const nextActive = requestedActive && pageActive;
+    if (disposed || active === nextActive) return;
+    active = nextActive;
+    uniforms.uPointerActive.value = 0;
+    if (active) {
+      previousRenderSeconds = 0;
+      animationFrame = window.requestAnimationFrame(render);
+    } else {
+      window.cancelAnimationFrame(animationFrame);
+    }
+  };
+  const cleanup = (): void => {
+    if (disposed) return;
+    active = false;
+    disposed = true;
+    window.cancelAnimationFrame(animationFrame);
+    window.removeEventListener("pagehide", handlePageHide);
+    window.removeEventListener("pageshow", handlePageShow);
+    pointerSurface.removeEventListener("pointermove", handlePointerMove);
+    pointerSurface.removeEventListener("pointerdown", handlePointerDown);
+    pointerSurface.removeEventListener("pointerleave", handlePointerLeave);
+    pointerSurface.removeEventListener("pointercancel", handlePointerLeave);
+    resizeObserver.disconnect();
+    const catGeometries = new Set<THREE.BufferGeometry>();
+    catStates.forEach((cat) => {
+      scene.remove(cat.points);
+      Object.values(cat.geometries).forEach((catGeometry) => catGeometries.add(catGeometry));
+      cat.material.dispose();
+    });
+    catGeometries.forEach((catGeometry) => catGeometry.dispose());
+    geometry.dispose();
+    material.dispose();
+    renderer.dispose();
+    renderer.domElement.remove();
+  };
+  const handlePageHide = (event: PageTransitionEvent): void => {
+    if (!event.persisted) {
+      cleanup();
+      return;
+    }
+    pageActive = false;
+    syncActive();
+  };
+  const handlePageShow = (): void => {
+    pageActive = true;
+    syncActive();
+  };
+  window.addEventListener("pagehide", handlePageHide);
+  window.addEventListener("pageshow", handlePageShow);
+
   return {
     setActive(nextActive: boolean): void {
-      if (active === nextActive) return;
-      active = nextActive;
-      uniforms.uPointerActive.value = 0;
-      if (active) {
-        animationFrame = window.requestAnimationFrame(render);
-      } else {
-        window.cancelAnimationFrame(animationFrame);
-      }
+      requestedActive = nextActive;
+      syncActive();
     },
-    cleanup(): void {
-      active = false;
-      disposed = true;
-      window.cancelAnimationFrame(animationFrame);
-      pointerSurface.removeEventListener("pointermove", handlePointerMove);
-      pointerSurface.removeEventListener("pointerdown", handlePointerDown);
-      pointerSurface.removeEventListener("pointerleave", handlePointerLeave);
-      pointerSurface.removeEventListener("pointercancel", handlePointerLeave);
-      resizeObserver.disconnect();
-      const catGeometries = new Set<THREE.BufferGeometry>();
-      catStates.forEach((cat) => {
-        scene.remove(cat.points);
-        Object.values(cat.geometries).forEach((catGeometry) => catGeometries.add(catGeometry));
-        cat.material.dispose();
-      });
-      catGeometries.forEach((catGeometry) => catGeometry.dispose());
-      geometry.dispose();
-      material.dispose();
-      renderer.dispose();
-      renderer.domElement.remove();
-    }
+    cleanup
   };
 }

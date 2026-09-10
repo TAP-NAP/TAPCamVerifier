@@ -888,14 +888,6 @@ const heroParticleObserver = new IntersectionObserver(
   { threshold: 0.02 }
 );
 heroParticleObserver.observe(heroParticles);
-window.addEventListener(
-  "pagehide",
-  () => {
-    heroParticleObserver.disconnect();
-    heroParticleField.cleanup();
-  },
-  { once: true }
-);
 const CHAPTER_PROGRESS_GAP_PX = 12;
 const CHAPTER_TRANSITION_RUNWAY_RATIO = 0.52;
 let layoutViewportWidth = window.innerWidth;
@@ -1466,6 +1458,7 @@ window.addEventListener("pagehide", (event) => {
     scene?.setActive(false);
     return;
   }
+  heroParticleObserver.disconnect();
   scenePreloadObserver.disconnect();
   sceneVisibilityObserver.disconnect();
   scene?.dispose();
@@ -1474,6 +1467,7 @@ window.addEventListener("pageshow", (event) => {
   if (event.persisted) {
     updateStory();
     scene?.setActive(storyIsVisible && !document.hidden);
+    scheduleHeroScramble();
   }
 });
 
