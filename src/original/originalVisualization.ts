@@ -1,10 +1,12 @@
 import { prepareOriginalPreviewRgba } from "../wasm/tapcamVerifier";
-import { decodeHeifPrimaryRgba } from "./heifPrimaryDecoder";
-import type { OriginalPreviewResult } from "./types";
+import type { DecodedPrimaryImage, OriginalPreviewResult } from "./types";
 
-export async function visualizeOriginalHeicFallback(fileBytes: Uint8Array): Promise<OriginalPreviewResult> {
+export async function visualizeOriginalHeicFallback(
+  fileBytes: Uint8Array,
+  primaryImageProbe: Promise<DecodedPrimaryImage | null>
+): Promise<OriginalPreviewResult> {
   try {
-    const primaryImage = await decodeHeifPrimaryRgba(fileBytes);
+    const primaryImage = await primaryImageProbe;
     if (!primaryImage) {
       return {
         status: "unavailable",

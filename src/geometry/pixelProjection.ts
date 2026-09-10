@@ -1,11 +1,14 @@
-import { decodeHeifPrimaryRgba } from "../original/heifPrimaryDecoder";
 import type { DecodedPrimaryImage } from "../original/types";
 import { projectDepthPixels } from "../wasm/tapcamVerifier";
 import type { DecodedDepthPlane, DisplayOrientationReference } from "../depth/types";
 import type { DecodedRgbImage, PixelProjectionReport } from "./types";
 
-export async function decodeRgbForPixelProjection(file: File, fileBytes: Uint8Array): Promise<DecodedRgbImage | null> {
-  const heifImage = await decodeHeifPrimaryRgba(fileBytes);
+export async function decodeRgbForPixelProjection(
+  file: File,
+  fileBytes: Uint8Array,
+  primaryImage: Promise<DecodedPrimaryImage | null>
+): Promise<DecodedRgbImage | null> {
+  const heifImage = await primaryImage;
   if (heifImage) {
     return heifImage;
   }

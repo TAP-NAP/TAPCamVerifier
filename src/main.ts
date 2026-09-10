@@ -13,8 +13,9 @@ import {
   type CaptureInput,
   type PhotoCaptureInput
 } from "./input/captureInput";
+import { decodeHeifPrimaryRgba } from "./original/heifPrimaryDecoder";
 import { visualizeOriginalHeicFallback } from "./original/originalVisualization";
-import type { OriginalPreviewResult } from "./original/types";
+import type { DecodedPrimaryImage, OriginalPreviewResult } from "./original/types";
 import {
   drawDepthCanvas,
   drawOriginalCanvas,
@@ -151,6 +152,7 @@ let activeFileBytes: Uint8Array | null = null;
 let activeDepthPlaneProbe: Promise<DecodedDepthPlane | null> | null = null;
 let activeDepthPlane: DecodedDepthPlane | null = null;
 let activeRgbImage: DecodedRgbImage | null = null;
+let activePrimaryImageProbe: Promise<DecodedPrimaryImage | null> | null = null;
 let activeOriginalDisplayReference: DisplayOrientationReference | null = null;
 let activeGeometryViewerCleanup: GeometryViewerCleanup | null = null;
 let activeVideoPlaybackCleanup: TapVideoPlaybackCleanup | null = null;
@@ -346,6 +348,7 @@ function resetToHome(event?: Event): void {
   activeDepthPlaneProbe = null;
   activeDepthPlane = null;
   activeRgbImage = null;
+  activePrimaryImageProbe = null;
   activeOriginalDisplayReference = null;
   originalDisplayResolvedRunId = 0;
   originalFallbackNeededRunId = 0;
@@ -578,6 +581,7 @@ function beginSelectedFile(file: File): number {
   activeDepthPlaneProbe = null;
   activeDepthPlane = null;
   activeRgbImage = null;
+  activePrimaryImageProbe = null;
   activeOriginalDisplayReference = null;
   originalDisplayResolvedRunId = 0;
   originalFallbackNeededRunId = 0;
@@ -635,6 +639,7 @@ function startAnalysis(
 
   activeFileBytes = captureInput.photoBytes;
   activeDepthPlaneProbe = decodeEmbeddedDepthPlane(captureInput.photoBytes);
+  activePrimaryImageProbe = decodeHeifPrimaryRgba(captureInput.photoBytes);
   activeObjectUrl = URL.createObjectURL(captureInput.photoFile);
   renderVisualizationScaffold(captureInput.photoFile, activeObjectUrl);
   requestOriginalFallback(runId, captureInput.photoFile.name);
@@ -683,13 +688,14 @@ function requestRgbAnalysis(runId: number, file: File): void {
   if (
     runId !== activeRunId ||
     rgbStartedRunId === runId ||
-    !activeFileBytes
+    !activeFileBytes ||
+    !activePrimaryImageProbe
   ) {
     return;
   }
 
   rgbStartedRunId = runId;
-  void decodeSelectedRgb(runId, file, activeFileBytes);
+  void decodeSelectedRgb(runId, file, activeFileBytes, activePrimaryImageProbe);
 }
 
 function requestPixelProjection(runId: number): void {
@@ -715,9 +721,14 @@ function requestPixelProjection(runId: number): void {
   );
 }
 
-async function decodeSelectedRgb(runId: number, file: File, fileBytes: Uint8Array): Promise<void> {
+async function decodeSelectedRgb(
+  runId: number,
+  file: File,
+  fileBytes: Uint8Array,
+  primaryImage: Promise<DecodedPrimaryImage | null>
+): Promise<void> {
   try {
-    const rgbImage = await decodeRgbForPixelProjection(file, fileBytes);
+    const rgbImage = await decodeRgbForPixelProjection(file, fileBytes, primaryImage);
     if (runId !== activeRunId) {
       return;
     }
@@ -749,9 +760,10 @@ async function decodeSelectedRgb(runId: number, file: File, fileBytes: Uint8Arra
 async function visualizeSelectedOriginalFallback(
   runId: number,
   fileName: string,
-  fileBytes: Uint8Array
+  fileBytes: Uint8Array,
+  primaryImage: Promise<DecodedPrimaryImage | null>
 ): Promise<void> {
-  const previewState = await visualizeOriginalHeicFallback(fileBytes);
+  const previewState = await visualizeOriginalHeicFallback(fileBytes, primaryImage);
   if (runId === activeRunId) {
     updateOriginalPreview(previewState, fileName);
   }
@@ -1007,13 +1019,14 @@ function requestOriginalFallback(runId: number, fileName: string): void {
     runId !== activeRunId ||
     originalFallbackNeededRunId !== runId ||
     originalFallbackStartedRunId === runId ||
-    !activeFileBytes
+    !activeFileBytes ||
+    !activePrimaryImageProbe
   ) {
     return;
   }
 
   originalFallbackStartedRunId = runId;
-  void visualizeSelectedOriginalFallback(runId, fileName, activeFileBytes);
+  void visualizeSelectedOriginalFallback(runId, fileName, activeFileBytes, activePrimaryImageProbe);
 }
 
 function updateOriginalPreview(state: OriginalPreviewResult, fileName: string): void {

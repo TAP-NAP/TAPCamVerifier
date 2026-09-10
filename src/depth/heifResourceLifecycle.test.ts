@@ -1,9 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeHeifAuxiliaryDepthPlane, type LibHeifModule } from "./heifDepthDecoder";
 import { decodeHeifPrimaryRgba } from "../original/heifPrimaryDecoder";
+import { decodeRgbForPixelProjection } from "../geometry/pixelProjection";
+import { visualizeOriginalHeicFallback } from "../original/originalVisualization";
+import { prepareOriginalPreviewRgba } from "../wasm/tapcamVerifier";
+import type { DecodedPrimaryImage } from "../original/types";
 
 const libheif = vi.hoisted(() => ({} as LibHeifModule));
 vi.mock("libheif-js/wasm-bundle.js", () => ({ default: libheif }));
+vi.mock("../wasm/tapcamVerifier", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../wasm/tapcamVerifier")>(),
+  prepareOriginalPreviewRgba: vi.fn(async (_bytes: Uint8Array, image: DecodedPrimaryImage) => ({
+    status: "available", previewRgba: image.rgba
+  }))
+}));
+let displayCount: number;
 let failure: string;
 let allocations: Set<number>;
 let handles: Set<number>;
@@ -13,6 +24,8 @@ let topLevelImages: Set<number>;
 
 beforeEach(() => {
   failure = "";
+  displayCount = 0;
+  vi.mocked(prepareOriginalPreviewRgba).mockClear();
   allocations = new Set(); handles = new Set(); contexts = new Set();
   decodedImages = new Set(); topLevelImages = new Set();
   const heap = new ArrayBuffer(4096);
@@ -37,6 +50,7 @@ beforeEach(() => {
             },
             get_height: () => 1,
             display: (data: { data: Uint8ClampedArray }, callback: (data: unknown) => void) => {
+              displayCount += 1;
               if (failure === "display-throw") throw new Error("display");
               data.data.set([1, 2, 3, 255, 4, 5, 6, 255]);
               callback(failure === "display-null" ? null : data);
@@ -86,6 +100,39 @@ function expectReleased(): void {
 }
 
 describe("HEIF decoder resource ownership", () => {
+  it("shares one primary decode between simultaneous consumers, with fresh pixels for the next run", async () => {
+    const file = new File([], "capture.HEIC");
+    const bytes = fixture();
+    let previousRgb: DecodedPrimaryImage | null = null;
+    for (let run = 1; run <= 2; run += 1) {
+      const primaryProbe = decodeHeifPrimaryRgba(bytes);
+      const [rgb, preview] = await Promise.all([
+        decodeRgbForPixelProjection(file, bytes, primaryProbe),
+        visualizeOriginalHeicFallback(bytes, primaryProbe)
+      ]);
+      expect(rgb).not.toBeNull();
+      expect(rgb).not.toBe(previousRgb);
+      expect(preview.status).toBe("available");
+      expect(prepareOriginalPreviewRgba).toHaveBeenLastCalledWith(bytes, rgb);
+      expect(displayCount).toBe(run);
+      expectReleased();
+      previousRgb = rgb;
+    }
+  });
+  it("reports a shared decode failure to both consumers without retrying it", async () => {
+    failure = "display-null";
+    const bytes = fixture();
+    const primaryProbe = decodeHeifPrimaryRgba(bytes);
+    const [projection, preview] = await Promise.allSettled([
+      decodeRgbForPixelProjection(new File([], "capture.HEIC"), bytes, primaryProbe),
+      visualizeOriginalHeicFallback(bytes, primaryProbe)
+    ]);
+    expect(projection.status).toBe("rejected");
+    expect(preview.status === "fulfilled" && preview.value.status).toBe("error");
+    expect(displayCount).toBe(1);
+    expect(prepareOriginalPreviewRgba).not.toHaveBeenCalled();
+    expectReleased();
+  });
   it("copies primary pixels before releasing every image and the context", async () => {
     const image = await decodeHeifPrimaryRgba(fixture());
     expect(image).toEqual({ width: 2, height: 1, rgba: new Uint8ClampedArray([1, 2, 3, 255, 4, 5, 6, 255]) });
