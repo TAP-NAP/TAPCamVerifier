@@ -1,3 +1,4 @@
+import { t } from "../i18n/i18n";
 import {
   decodeTapDepthFrame,
   inspectTapVideoDepth,
@@ -26,7 +27,8 @@ export function mountTapVideoDepthPlayback(
   try {
     inspection = inspectTapVideoDepth(videoBytes);
   } catch (error) {
-    status.textContent = error instanceof Error ? error.message : String(error);
+    console.warn("TAP video depth inspection failed", { errorType: error instanceof TypeError ? "TypeError" : "Error" });
+    status.textContent = t("videoPlayer.depthUnavailable");
     status.classList.add("is-error");
     return () => {
       disposed = true;
@@ -37,15 +39,15 @@ export function mountTapVideoDepthPlayback(
   const displayTransform = inspection.manifest.payload.rgbTrack?.transform;
   const frames = inspection.depthFrames;
   if (!format || frames.length === 0) {
-    status.textContent = "该 TAP Video 没有存储深度帧；视频仍可正常播放。";
-    metadata.textContent = "0 depth frames";
+    status.textContent = t("videoPlayer.noDepth");
+    metadata.textContent = "";
     return () => {
       disposed = true;
     };
   }
 
-  status.textContent = "等待视频播放位置…";
-  metadata.textContent = `${frames.length} frames · ${format.width} × ${format.height} · ${format.pixelFormat} · ${displayTransform || "identity"}`;
+  status.textContent = t("videoPlayer.depthWaiting");
+  metadata.textContent = `${format.width} × ${format.height}`;
 
   const renderAtCurrentTime = (): void => {
     if (disposed) return;
@@ -54,13 +56,14 @@ export function mountTapVideoDepthPlayback(
     const generation = ++renderGeneration;
     void decodedFrame(frame).then((decoded) => {
       if (disposed || generation !== renderGeneration) return;
-      const range = renderTapDepthFrame(decoded, format, canvas, displayTransform);
+      renderTapDepthFrame(decoded, format, canvas, displayTransform);
       renderedFrameIndex = frame.frameIndex;
-      status.textContent = `深度帧 ${frame.frameIndex} · ${formatTime(frame.presentationTimeSeconds)} · ${format.kind} ${formatNumber(range.min)}–${formatNumber(range.max)}`;
+      status.textContent = t("videoPlayer.depthAtTime", { time: formatTime(frame.presentationTimeSeconds) });
       status.classList.remove("is-error");
     }).catch((error) => {
       if (disposed || generation !== renderGeneration) return;
-      status.textContent = error instanceof Error ? error.message : String(error);
+      console.warn("TAP video depth rendering failed", { errorType: error instanceof TypeError ? "TypeError" : "Error" });
+      status.textContent = t("videoPlayer.depthUnavailable");
       status.classList.add("is-error");
     });
   };
@@ -140,9 +143,4 @@ function formatTime(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds - minutes * 60;
   return `${minutes}:${remainder.toFixed(3).padStart(6, "0")}`;
-}
-
-function formatNumber(value: number): string {
-  if (!Number.isFinite(value)) return "—";
-  return Math.abs(value) >= 100 ? value.toFixed(1) : value.toFixed(4);
 }

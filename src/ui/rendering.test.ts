@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { DepthVisualizationAvailable } from "../depth/types";
 import type { ProjectedPixelCloud } from "../geometry/types";
 import type { OriginalPreviewAvailable } from "../original/types";
@@ -10,7 +10,8 @@ import {
   renderOriginalPreviewResult,
   renderPixelProjectionPanel,
   renderVerificationResult,
-  renderVerificationSuccessGate
+  renderVerificationError,
+  logVerificationDiagnostics
 } from "./rendering";
 
 const result: CombinedVerificationResult = {
@@ -53,144 +54,43 @@ const result: CombinedVerificationResult = {
 };
 
 describe("renderVerificationResult", () => {
-  it("renders the valid signature modal before analysis is revealed", () => {
-    const html = renderVerificationSuccessGate(result);
-
-    expect(html).toContain("Photo verified");
-    expect(html).toContain("registered credential signature and declared resource-byte binding passed verification");
-    expect(html).toContain("capture.HEIC · 2.0 KB");
-    expect(html).toContain("View details");
-    expect(html).toContain("result-modal-backdrop");
-    expect(html).toContain("result-modal--success");
-  });
-
-  it("keeps the local summary visible and collapses detailed checks", () => {
+  it("keeps the result and useful file facts without internal diagnostics", () => {
     const html = renderVerificationResult(result);
-
-    expect(html).toContain("All local content binding checks passed.");
-    expect(html).toContain("Server boundary echo matched");
-    expect(html).toContain("Server Echo SHA-256");
-    expect(html).toContain("Server Boundary");
-    expect(html).toContain('<details class="checks-disclosure">');
-    expect(html).not.toContain('<details class="checks-disclosure" open>');
-    expect(html).toContain("Local content binding checks");
-    expect(html).toContain("Recompute asset hash excluding proof slot");
+    expect(html).toContain("The signature and file integrity passed verification");
+    expect(html).toContain("capture.HEIC · 2.0 KB");
+    expect(html).toContain("2026-06-23T00:00:00.000Z");
+    expect(html).toContain("HEIC");
+    expect(html).not.toMatch(/SHA-256|Capture ID|Server Boundary|Server Echo|proof slot|Values match|checks-disclosure|capture-id|binding/);
   });
 
-  it("renders a mismatch as server integration drift", () => {
+  it("keeps failed results failed without rendering arbitrary diagnostic text", () => {
     const html = renderVerificationResult({
-      ...result,
-      server: {
-        status: "valid",
-        signingBindingSHA256: "server-binding"
-      },
-      serverBoundary: {
-        status: "mismatch",
-        summary:
-          "Server boundary integration drift: echoed signingBindingSHA256 does not match the browser/WASM hash of the submitted signingBinding.",
-        localSigningBindingSHA256: "binding",
-        serverSigningBindingSHA256: "server-binding"
-      }
+      ...result, finalStatus: "invalid", server: { status: "invalid", reason: "private-key private-assertion" },
+      local: { ...result.local, status: "invalid", mediaKind: "video", verificationScope: "fullVideo", summary: "raw bytes secret", checks: [{ id: "video-proof", status: "fail", label: "private-key", detail: "private-assertion" }] }
     });
-
-    expect(html).toContain("integration drift");
-    expect(html).toContain("server-binding");
-    expect(html).toContain("submitted signingBinding");
+    expect(html).toContain("This file did not pass verification");
+    expect(html).toContain("Complete video");
+    expect(html).not.toMatch(/private-key|private-assertion|raw bytes secret/);
   });
 
-  it("renders a missing server echo without calling it a content failure", () => {
-    const html = renderVerificationResult({
-      ...result,
-      server: {
-        status: "valid"
-      },
-      serverBoundary: {
-        status: "not-echoed",
-        summary: "Server response did not echo signingBindingSHA256; boundary comparison was skipped.",
-        localSigningBindingSHA256: "binding"
-      }
-    });
-
-    expect(html).toContain("not echoed");
-    expect(html).toContain("boundary comparison was skipped");
+  it("preserves the limited Live Photo scope and missing video warning", () => {
+    const html = renderVerificationResult({ ...result, local: {
+      ...result.local, mediaKind: "livePhoto", verificationScope: "primaryPhotoFromLivePhoto",
+      livePhoto: { pairedVideo: { status: "missing" } },
+      warnings: [{ message: "internal-raw-warning" }]
+    } });
+    expect(html).toContain("Live Photo photo only");
+    expect(html).toContain("Video not included; only the photo was checked");
+    expect(html).not.toContain("internal-raw-warning");
   });
 
-  it("renders absent server verification as not run", () => {
-    const html = renderVerificationResult({
-      ...result,
-      server: null,
-      serverError: "Failed to fetch",
-      serverBoundary: {
-        status: "not-run",
-        summary: "Server boundary comparison did not run: Failed to fetch.",
-        localSigningBindingSHA256: "binding"
-      },
-      finalStatus: "invalid"
-    });
-
-    expect(html).toContain("not run");
-    expect(html).toContain("Failed to fetch");
-  });
-
-  it("renders Live Photo paired video status", () => {
-    const html = renderVerificationResult({
-      ...result,
-      local: {
-        ...result.local,
-        mediaKind: "livePhoto",
-        verificationScope: "primaryPhotoFromLivePhoto",
-        claims: {
-          primaryPhotoVerified: true,
-          manifestVerified: true,
-          pairedVideoVerified: false,
-          fullLivePhotoVerified: false
-        },
-        warnings: [
-          {
-            id: "paired-video-not-supplied",
-            severity: "warning",
-            message:
-              "paired-video.mov was not supplied. The verifier checked the signed Live Photo primary photo and manifest, but did not verify motion/video bytes."
-          }
-        ],
-        livePhoto: {
-          pairedVideoFilename: "paired-video.mov",
-          pairedVideo: {
-            status: "missing",
-            expectedSHA256: "expected",
-            actualSHA256: null,
-            byteCount: null
-          }
-        }
-      },
-      finalStatus: "valid"
-    });
-
-    expect(html).toContain("Media");
-    expect(html).toContain("Live Photo");
-    expect(html).toContain("Verified Scope");
-    expect(html).toContain("Live Photo primary photo");
-    expect(html).toContain("Live Photo Video");
-    expect(html).toContain("paired-video.mov not supplied");
-    expect(html).toContain("did not verify motion/video bytes");
-  });
-
-  it("does not label a failed TAP Video as byte-verified", () => {
-    const html = renderVerificationResult({
-      ...result,
-      finalStatus: "invalid",
-      local: {
-        ...result.local,
-        status: "invalid",
-        mediaKind: "video",
-        verificationScope: "fullVideo",
-        manifest: { containerFormat: "mp4" }
-      }
-    });
-
-    expect(html).toContain("TAP Video");
-    expect(html).toContain("Complete video bytes did not pass the local content-binding check");
-    expect(html).not.toContain("Complete video bytes passed the local content-binding check");
+  it("logs every check status without proof, keys, hashes, or arbitrary error text", () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    logVerificationDiagnostics({ ...result, server: { status: "invalid", keyId: "private-key", reason: "private-assertion" } });
+    expect(log).toHaveBeenCalledWith("TAP verification checks", expect.objectContaining({ checks: [{ id: "asset-hash", status: "pass" }] }));
+    expect(JSON.stringify(log.mock.calls)).not.toMatch(/private-key|private-assertion|binding|Values match/);
+    log.mockRestore();
+    expect(renderVerificationError()).toContain("Select the original file exported from TAPCam");
   });
 });
 
@@ -202,7 +102,8 @@ describe("renderDepthPanel", () => {
       warnings: ["No embedded depth plane."]
     });
 
-    expect(html).toContain("No embedded depth plane.");
+    expect(html).toContain("Depth data is unavailable");
+    expect(html).not.toContain("No embedded depth plane.");
     expect(html).not.toContain("<canvas");
   });
 
@@ -240,7 +141,8 @@ describe("renderOriginalPreviewResult", () => {
   it("renders fallback loading copy", () => {
     const html = renderOriginalPreviewLoading("capture.HEIC");
 
-    expect(html).toContain("Decoding original image with WASM.");
+    expect(html).toContain("Preparing a preview");
+    expect(html).not.toContain("WASM");
     expect(html).toContain("capture.HEIC");
   });
 
@@ -254,7 +156,8 @@ describe("renderOriginalPreviewResult", () => {
       "capture.HEIC"
     );
 
-    expect(html).toContain("No HEIF primary image was found.");
+    expect(html).toContain("Try another browser");
+    expect(html).not.toContain("No HEIF primary image was found.");
     expect(html).not.toContain("<canvas");
   });
 
@@ -291,7 +194,8 @@ describe("renderPixelProjectionPanel", () => {
       warnings: ["No embedded depth pixels."]
     });
 
-    expect(html).toContain("No embedded depth pixels.");
+    expect(html).toContain("The 3D view is unavailable");
+    expect(html).not.toContain("No embedded depth pixels.");
     expect(html).not.toContain("geometryViewer");
   });
 

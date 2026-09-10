@@ -3,11 +3,7 @@ import type { DepthPanelState, DepthVisualizationAvailable } from "../depth/type
 import { defaultFilterOptions, filterProjectedPixelCloud, formatSensitivity } from "../geometry/filtering";
 import type { PixelProjectionState, ProjectedPixelCloud } from "../geometry/types";
 import type { OriginalPreviewAvailable, OriginalPreviewResult } from "../original/types";
-import type {
-  CombinedVerificationResult,
-  ServerBoundaryDiagnostic,
-  VerificationCheck
-} from "../verifier/types";
+import type { CombinedVerificationResult } from "../verifier/types";
 
 export function renderVerificationBusy(fileName: string, fileSize: number): string {
   return `
@@ -18,23 +14,13 @@ export function renderVerificationBusy(fileName: string, fileSize: number): stri
   `;
 }
 
-export function renderVerificationError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
+export function renderVerificationError(): string {
   return `
     <div class="status-line">
       <span class="status-pill status-pill--invalid">${t("status.invalid")}</span>
-      <span>${escapeHtml(message)}</span>
+      <span>${t("modal.parseErrorDesc")}</span>
     </div>
   `;
-}
-
-export function renderVerificationSuccessGate(result: CombinedVerificationResult): string {
-  return renderResultModal("success", {
-    title: t("modal.validTitle"),
-    desc: t("modal.validDesc"),
-    detail: t("modal.validNote", { fileName: result.fileName, fileSize: formatBytes(result.fileSize) }),
-    buttonText: t("modal.viewDetails")
-  });
 }
 
 export type ResultModalType = "success" | "invalid" | "noSignature" | "networkError" | "parseError";
@@ -101,30 +87,32 @@ export function classifyResult(result: CombinedVerificationResult): ResultModalT
   return "invalid";
 }
 
+export function logVerificationDiagnostics(result: CombinedVerificationResult): void {
+  // Deliberately omit proof bodies, keys, media bytes, and free-form error text.
+  console.info("TAP verification checks", {
+    result: result.finalStatus,
+    local: result.local.status,
+    checks: result.local.checks.map(({ id, status }) => ({ id, status })),
+    server: result.server?.status === "valid" ? "valid" : result.server ? "invalid" : "not-run",
+    serverBoundary: result.serverBoundary.status
+  });
+}
+
 export function renderVerificationResult(result: CombinedVerificationResult): string {
-  const serverStatus = result.server
-    ? `${result.server.status}${result.server.reason ? ` · ${result.server.reason}` : ""}`
-    : result.serverError ?? t("result.notRun");
-
-  const statusText = result.finalStatus === "valid" ? t("status.valid") : t("status.invalid");
-
   return `
     <div class="status-line">
-      <span class="status-pill status-pill--${result.finalStatus}">${statusText}</span>
+      <span class="status-pill status-pill--${result.finalStatus}">${t(`status.${result.finalStatus}`)}</span>
       <span>${escapeHtml(result.fileName)} · ${formatBytes(result.fileSize)}</span>
     </div>
+    <p class="summary">${t(`result.summary.${classifyResult(result)}`)}</p>
     <dl class="summary-grid">
-      <div>
-        <dt>${t("result.captureId")}</dt>
-        <dd>${escapeHtml(result.local.captureId ?? t("result.missing"))}</dd>
-      </div>
       <div>
         <dt>${t("result.capturedAt")}</dt>
         <dd>${escapeHtml(result.local.capturedAt ?? t("result.missing"))}</dd>
       </div>
       <div>
         <dt>${t("result.format")}</dt>
-        <dd>${escapeHtml(result.local.manifest?.containerFormat ?? "unknown")}</dd>
+        <dd>${escapeHtml(formatContainer(result.local.manifest?.containerFormat))}</dd>
       </div>
       <div>
         <dt>${t("result.media")}</dt>
@@ -134,43 +122,20 @@ export function renderVerificationResult(result: CombinedVerificationResult): st
         <dt>${t("result.scope")}</dt>
         <dd>${escapeHtml(formatVerificationScope(result.local.verificationScope))}</dd>
       </div>
+      ${result.local.mediaKind === "livePhoto" ? `
       <div>
-        <dt>${t(result.local.mediaKind === "video" ? "result.videoIntegrity" : "result.livePhotoVideo")}</dt>
-        <dd>${escapeHtml(result.local.mediaKind === "video"
-          ? t(result.local.status === "valid" ? "video.fullVerified" : "video.notVerified")
-          : formatLivePhotoVideoStatus(result.local))}</dd>
-      </div>
-      <div>
-        <dt>${t("result.server")}</dt>
-        <dd>${escapeHtml(serverStatus)}</dd>
-      </div>
-      <div>
-        <dt>${t("result.assetSha")}</dt>
-        <dd>${escapeHtml(result.local.recomputed?.assetSHA256 ?? t("result.missing"))}</dd>
-      </div>
-      <div>
-        <dt>${t("result.signingSha")}</dt>
-        <dd>${escapeHtml(result.local.recomputed?.signingBindingSHA256 ?? t("result.missing"))}</dd>
-      </div>
-      <div>
-        <dt>${t("result.serverEchoSha")}</dt>
-        <dd>${escapeHtml(formatServerEcho(result.serverBoundary))}</dd>
-      </div>
-      <div>
-        <dt>${t("result.serverBoundary")}</dt>
-        <dd>${escapeHtml(formatServerBoundaryStatus(result.serverBoundary))}</dd>
-      </div>
+        <dt>${t("result.livePhotoVideo")}</dt>
+        <dd>${escapeHtml(formatLivePhotoVideoStatus(result.local))}</dd>
+      </div>` : ""}
     </dl>
-    <p class="summary">${escapeHtml(result.local.summary)}</p>
-    ${renderVerificationWarnings(result.local)}
-    ${renderServerBoundaryDiagnostic(result.serverBoundary)}
-    <details class="checks-disclosure">
-      <summary>${t("checks.title")}</summary>
-      <div class="checks">
-        ${result.local.checks.map(renderCheck).join("")}
-      </div>
-    </details>
   `;
+}
+
+function formatContainer(format: string | undefined): string {
+  if (format === "heif" || format === "heic") return "HEIC";
+  if (format === "jpeg") return "JPEG";
+  if (format === "mp4") return "MP4";
+  return t("result.missing");
 }
 
 function formatMediaKind(mediaKind: string | undefined): string {
@@ -183,7 +148,7 @@ function formatMediaKind(mediaKind: string | undefined): string {
   if (mediaKind === "video") {
     return t("media.video");
   }
-  return mediaKind ?? "unknown";
+  return t("result.missing");
 }
 
 function formatVerificationScope(scope: string | undefined): string {
@@ -199,27 +164,16 @@ function formatVerificationScope(scope: string | undefined): string {
   if (scope === "fullVideo") {
     return t("scope.fullVideo");
   }
-  return scope ?? "unknown";
+  return t("result.missing");
 }
 
 function formatLivePhotoVideoStatus(local: CombinedVerificationResult["local"]): string {
-  if (local.mediaKind !== "livePhoto") {
-    return t("video.notRequired");
+  switch (local.livePhoto?.pairedVideo?.status) {
+    case "matched": return t("video.included");
+    case "missing": return t("video.notSupplied");
+    case "mismatch": return t("video.mismatch");
+    default: return t("video.unchecked");
   }
-
-  const pairedVideo = local.livePhoto?.pairedVideo;
-  const status = pairedVideo?.status ?? "unknown";
-  const filename = local.livePhoto?.pairedVideoFilename ?? "paired-video.mov";
-  if (status === "matched") {
-    return t("video.verified", { filename });
-  }
-  if (status === "missing") {
-    return t("video.notSupplied", { filename });
-  }
-  if (status === "mismatch") {
-    return t("video.mismatch", { filename });
-  }
-  return `${filename} ${status}`;
 }
 
 function formatWarningSeverity(severity: string | undefined): string {
@@ -237,54 +191,6 @@ function formatWarningSeverity(severity: string | undefined): string {
   }
 }
 
-function renderVerificationWarnings(local: CombinedVerificationResult["local"]): string {
-  const warnings = local.warnings ?? [];
-  if (warnings.length === 0) {
-    return "";
-  }
-
-  return `
-    <ul class="verification-warnings">
-      ${warnings
-        .map((warning) => `
-          <li>
-            <strong>${escapeHtml(formatWarningSeverity(warning.severity))}</strong>
-            ${escapeHtml(warning.message ?? "Verification scope warning.")}
-          </li>
-        `)
-        .join("")}
-    </ul>
-  `;
-}
-
-function formatServerBoundaryStatus(diagnostic: ServerBoundaryDiagnostic): string {
-  if (diagnostic.status === "matched") {
-    return t("server.matched");
-  }
-  if (diagnostic.status === "mismatch") {
-    return t("server.drift");
-  }
-  if (diagnostic.status === "not-echoed") {
-    return t("result.notEchoed");
-  }
-  return t("result.notRun");
-}
-
-function formatServerEcho(diagnostic: ServerBoundaryDiagnostic): string {
-  if (diagnostic.serverSigningBindingSHA256) {
-    return diagnostic.serverSigningBindingSHA256;
-  }
-  return diagnostic.status === "not-run" ? t("result.notRun") : t("result.notEchoed");
-}
-
-function renderServerBoundaryDiagnostic(diagnostic: ServerBoundaryDiagnostic): string {
-  return `
-    <p class="summary server-boundary server-boundary--${diagnostic.status}">
-      ${escapeHtml(diagnostic.summary)}
-    </p>
-  `;
-}
-
 export function renderDepthPanel(state: DepthPanelState): string {
   if (state.status === "idle") {
     return renderDepthMessage(t("depth.noData"));
@@ -293,10 +199,10 @@ export function renderDepthPanel(state: DepthPanelState): string {
     return renderDepthMessage(t("depth.loading"));
   }
   if (state.status === "unavailable") {
-    return renderDepthMessage(state.message);
+    return renderDepthMessage(t("depth.unavailable"));
   }
   if (state.status === "error") {
-    return renderDepthMessage(state.message);
+    return renderDepthMessage(t("depth.unavailable"));
   }
 
   return `
@@ -344,10 +250,10 @@ export function renderPixelProjectionPanel(state: PixelProjectionState): string 
     return renderProjectionMessage(t("geom.loading"));
   }
   if (state.status === "unavailable") {
-    return renderProjectionMessage(state.message);
+    return renderProjectionMessage(t("geom.unavailable"));
   }
   if (state.status === "error") {
-    return renderProjectionMessage(state.message);
+    return renderProjectionMessage(t("geom.unavailable"));
   }
 
   const defaultFilter = defaultFilterOptions();
@@ -461,7 +367,7 @@ export function renderOriginalPreviewResult(state: OriginalPreviewResult, fileNa
   if (state.status === "unavailable" || state.status === "error") {
     return `
       <div class="preview-message">
-        <span>${t("orig.unavailable", { fileName, message: state.message })}</span>
+        <span>${escapeHtml(t("orig.unavailable", { fileName }))}</span>
       </div>
     `;
   }
@@ -673,18 +579,6 @@ function renderProjectionWarnings(state: ProjectedPixelCloud): string {
         `)
         .join("")}
     </ul>
-  `;
-}
-
-function renderCheck(check: VerificationCheck): string {
-  return `
-    <article class="check check--${check.status}">
-      <div>
-        <strong>${escapeHtml(check.label)}</strong>
-        <p>${escapeHtml(check.detail)}</p>
-      </div>
-      <span>${check.status}</span>
-    </article>
   `;
 }
 

@@ -29,6 +29,7 @@ import {
   renderResultModal,
   renderVerificationBusy,
   renderVerificationError,
+  logVerificationDiagnostics,
   renderVerificationResult,
   type ResultModalType
 } from "./ui/rendering";
@@ -319,7 +320,7 @@ function progressDetailForStep(index: number): string {
     return t("progress.failed");
   }
   if (currentProgressStatus === "invalid" && index > currentProgressPhase) {
-    return t("progress.notRun");
+    return t(index === 4 ? "progress.stopped" : "progress.notRun");
   }
   if (index === 0) {
     return t(currentProgressPhase === 0 ? "progress.fileReading" : "progress.fileRead");
@@ -437,17 +438,17 @@ async function verifyFile(file: File): Promise<void> {
     if (runId === activeRunId) {
       isVerifying = false;
       setVerificationProgress(0, "invalid");
-      const message = error instanceof Error ? error.message : String(error);
+      console.warn("TAP file processing failed", { errorType: error instanceof TypeError ? "TypeError" : error instanceof SyntaxError ? "SyntaxError" : "Error" });
+      const message = t("modal.parseErrorDesc");
       await showResultModal("parseError", {
         title: t("modal.parseErrorTitle"),
         desc: t("modal.parseErrorDesc"),
-        detail: message,
         buttonText: t("modal.retry")
       });
       if (runId !== activeRunId) {
         return;
       }
-      resultEl.innerHTML = renderVerificationError(error);
+      resultEl.innerHTML = renderVerificationError();
       updateDepthPanel({
         status: "error",
         message,
@@ -470,6 +471,7 @@ async function verifyFile(file: File): Promise<void> {
       return;
     }
 
+    logVerificationDiagnostics(result);
     currentResult = result;
     isVerifying = false;
     setVerificationProgress(verificationResultPhase(result), result.finalStatus);
@@ -487,17 +489,16 @@ async function verifyFile(file: File): Promise<void> {
       isVerifying = false;
       setVerificationProgress(Math.max(1, currentProgressPhase), "invalid");
       updatePaneHeaders();
-      const message = error instanceof Error ? error.message : String(error);
+      console.warn("TAP file processing failed", { errorType: error instanceof TypeError ? "TypeError" : error instanceof SyntaxError ? "SyntaxError" : "Error" });
       await showResultModal("parseError", {
         title: t("modal.parseErrorTitle"),
         desc: t("modal.parseErrorDesc"),
-        detail: message,
         buttonText: t("modal.retry")
       });
       if (runId !== activeRunId) {
         return;
       }
-      resultEl.innerHTML = renderVerificationError(error);
+      resultEl.innerHTML = renderVerificationError();
       revealVisualization(runId);
     }
   }
@@ -556,8 +557,8 @@ function resultModalFor(result: CombinedVerificationResult): {
         config: {
           title: t("modal.noSignatureTitle"),
           desc: t(isVideo ? "modal.videoNoSignatureDesc" : "modal.noSignatureDesc"),
-          detail: t(isVideo ? "modal.videoNoSignatureHint" : "modal.noSignatureHint"),
-          buttonText: t("modal.continueAnalysis")
+          detail: isVideo ? undefined : t("modal.noSignatureHint"),
+          buttonText: t(isVideo ? "modal.retry" : "modal.continueAnalysis")
         }
       };
     case "networkError":
@@ -576,8 +577,8 @@ function resultModalFor(result: CombinedVerificationResult): {
         config: {
           title: t("modal.invalidTitle"),
           desc: t(isVideo ? "modal.videoInvalidDesc" : "modal.invalidDesc"),
-          detail: t("modal.invalidHint"),
-          buttonText: t("modal.continueAnalysis")
+          detail: isVideo ? undefined : t("modal.invalidHint"),
+          buttonText: t(isVideo ? "modal.retry" : "modal.continueAnalysis")
         }
       };
     case "parseError":
@@ -757,7 +758,8 @@ async function decodeSelectedRgb(runId: number, file: File, fileBytes: Uint8Arra
     requestPixelProjection(runId);
   } catch (error) {
     if (runId === activeRunId) {
-      const message = error instanceof Error ? error.message : String(error);
+      console.warn("TAP file processing failed", { errorType: error instanceof TypeError ? "TypeError" : error instanceof SyntaxError ? "SyntaxError" : "Error" });
+      const message = t("modal.parseErrorDesc");
       updateGeometryPanel({
         status: "error",
         message,
@@ -813,7 +815,8 @@ async function visualizeSelectedDepth(
     }
   } catch (error) {
     if (runId === activeRunId) {
-      const message = error instanceof Error ? error.message : String(error);
+      console.warn("TAP file processing failed", { errorType: error instanceof TypeError ? "TypeError" : error instanceof SyntaxError ? "SyntaxError" : "Error" });
+      const message = t("modal.parseErrorDesc");
       updateDepthPanel({
         status: "error",
         message,
@@ -1142,7 +1145,7 @@ async function verifyFileBytes(
     if (runId === activeRunId && !localFailure) {
       setVerificationProgress(2, "invalid");
     }
-    const serverErrorMsg = localFailure ? t("error.serverNotRun") : t("error.serverMissingRequest");
+    const serverErrorMsg = localFailure ? "Local verification failed." : "Missing server request.";
     return {
       fileName: captureInput.fileName,
       fileSize: captureInput.fileSize,
@@ -1167,7 +1170,8 @@ async function verifyFileBytes(
     }
     server = await verifyCaptureSignature(local.serverRequest);
   } catch (error) {
-    serverError = formatServerVerifyError(error);
+    console.warn("TAP signature request failed", { errorType: error instanceof TypeError ? "TypeError" : "Error" });
+    serverError = "Signature verification unavailable.";
   }
 
   return {
@@ -1206,16 +1210,6 @@ function finalStatus(
 
 function hasLocalFailure(local: LocalVerificationReport): boolean {
   return local.status !== "valid" || local.checks.some((check) => check.status === "fail");
-}
-
-function formatServerVerifyError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-
-  if (error instanceof TypeError && message === "Failed to fetch") {
-    return t("error.fetchFailed");
-  }
-
-  return message;
 }
 
 function refreshUI(): void {
