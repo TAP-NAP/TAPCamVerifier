@@ -11,26 +11,18 @@ The documentation-only
 repository owns the shared Still/Live/Video manifest, content-binding, proof,
 container, KLV, and `.tapnap` wire conventions. This implementation was reviewed
 against shared revision
-[`ca3b223e0717242ce1016b34dc34f04ef2417936`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/ca3b223e0717242ce1016b34dc34f04ef2417936).
+[`970f5102ac2176c76c0e133c7b99e6ce287a55c0`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/970f5102ac2176c76c0e133c7b99e6ce287a55c0).
 
-This checkout also implements the local capture-telemetry v1 extension candidate
-in `TAPArtifactContracts/containers/tap-video-capture-telemetry-v1.md`; it has not
-yet acquired a new reviewed commit pin. Its optional `TAPCAMTELEMETRY1` UUID is
-covered by the existing asset hash. After binding passes, the reader validates
-its exact schema, observed filtering counts, motion coordinates/availability,
-timestamps and 4 MiB / 8,192-sample bounds before any server request. Inspection
-returns the retained device-motion samples; the verification report includes
-the telemetry and a concise observation summary. Old files without this box
-remain supported with unknown provenance. Motion is not full camera pose, and
-this extension does not enable browser Video 3D.
+The adopted optional `TAPCAMTELEMETRY1` UUID records filtering observations and
+bounded device motion under the existing asset hash. After binding succeeds,
+the reader validates its schema, counts, coordinates, timestamps and size
+limits before requesting server verification. Files without telemetry retain
+unknown provenance; motion samples describe device motion, not full camera pose.
 
-The local, unpublished `CALD` KLV candidate in
-`TAPArtifactContracts/containers/tap-video-container-v1.md` also retains a current
-frame's full calibration when no `CALI` index is available. The reader validates
-its canonical JSON, existing calibration schema, 3,072-byte limit, and mutual
-exclusion with `CALI`. It preserves the existing calibration-table coverage
-counts and signed byte view. This candidate has no new reviewed commit pin and
-does not enable browser Video 3D.
+The optional `CALD` KLV record preserves a frame's calibration when no `CALI`
+index is available. The reader validates its canonical JSON, calibration fields,
+3,072-byte limit and mutual exclusion with `CALI`, preserving existing coverage
+counts and signed bytes. Both extensions keep their existing v1 identifiers.
 
 Public claims follow the [product contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/main/ProductContract.md#7-claim-boundaries).
 
@@ -65,7 +57,7 @@ cannot upgrade a failed result. For a valid signature, the result modal is shown
 before the visualization panes are revealed.
 
 The required verification relationships live in the shared
-[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/bindings/capture-binding-and-proof-v1.md).
+[binding/proof contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/970f5102ac2176c76c0e133c7b99e6ce287a55c0/bindings/capture-binding-and-proof-v1.md).
 Rust/WASM owns HEIC/JPEG proof-slot/XMP parsing and Still/Live reconstruction.
 TypeScript owns `.tapnap` resolution, TAP Video verification, and server
 orchestration.
@@ -73,12 +65,12 @@ orchestration.
 ### Local Consumer Policy
 
 - `.tapnap` layout, sidecar roles, and rejection rules live in the shared
-  [transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/transport/tapnap-v1.md).
+  [transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/970f5102ac2176c76c0e133c7b99e6ce287a55c0/transport/tapnap-v1.md).
   The sidecar is untrusted routing metadata and cannot determine the signed
   family or verdict.
 - Raw TAP Video MP4 consumes the shared
-  [manifest](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/manifests/tap-video-v1.md)
-  and [container/KLV](https://github.com/TAP-NAP/TAPArtifactContracts/blob/ca3b223e0717242ce1016b34dc34f04ef2417936/containers/tap-video-container-v1.md)
+  [manifest](https://github.com/TAP-NAP/TAPArtifactContracts/blob/970f5102ac2176c76c0e133c7b99e6ce287a55c0/manifests/tap-video-v1.md)
+  and [container/KLV](https://github.com/TAP-NAP/TAPArtifactContracts/blob/970f5102ac2176c76c0e133c7b99e6ce287a55c0/containers/tap-video-container-v1.md)
   contracts; TAP Video is not routed through `.tapnap`.
 - Native AAC exports name the codec using CoreMedia (`aac `), while the v1
   manifest table names the MP4 sample entry (`mp4a`). The reader accepts both
@@ -181,6 +173,13 @@ physical-device HEIC/JPEG decoding; their tests skip when the files are absent.
 A skip is not current schema, device, backend, or acceptance evidence.
 
 `src/video/tapVideo.test.ts` keeps literal hermetic mirrors of the shared
-[exact vectors](https://github.com/TAP-NAP/TAPArtifactContracts/tree/ca3b223e0717242ce1016b34dc34f04ef2417936/examples/vectors).
+[exact vectors](https://github.com/TAP-NAP/TAPArtifactContracts/tree/970f5102ac2176c76c0e133c7b99e6ce287a55c0/examples/vectors).
 When the reviewed contract revision changes, compare those literals with the
 shared vectors; the local copies are executable mirrors, not a second authority.
+
+The exact extension vectors are mirrored in
+`src/video/fixtures/tap-video-extensions-v1.json`; `tapVideo.test.ts` exercises
+them through the artifact verifier. Compare this mirror byte-for-byte with
+[`examples/vectors/tap-video-extensions-v1.json`](https://github.com/TAP-NAP/TAPArtifactContracts/blob/970f5102ac2176c76c0e133c7b99e6ce287a55c0/examples/vectors/tap-video-extensions-v1.json)
+when updating the contract pin. Expected bytes come from the contract, not the
+implementation under test.

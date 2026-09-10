@@ -736,7 +736,7 @@ function parseCanonicalJSON(text: string, label: string): CanonicalJSONDocument 
 
   const parseObject = (path: string[]): Record<string, unknown> => {
     offset += 1;
-    const result: Record<string, unknown> = {};
+    const result: Record<string, unknown> = Object.create(null);
     let previousKey: string | null = null;
     if (text[offset] === "}") { offset += 1; return result; }
     while (true) {
@@ -1143,7 +1143,7 @@ function requireNumberArray(value: unknown, length: number, label: string): void
 
 function requireBase64(value: unknown, label: string): void {
   requireString(value, label);
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value as string)) {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value as string) || btoa(atob(value as string)) !== value) {
     throw new Error(`${label} is not canonical base64.`);
   }
 }
@@ -2014,7 +2014,7 @@ function requireTimestamp(value: unknown, label: string): asserts value is strin
 
 function decodeUTF8(bytes: Uint8Array, label: string): string {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     throw new Error(`${label} is not valid UTF-8.`);
   }

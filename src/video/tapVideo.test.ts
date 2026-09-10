@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import extensionVectors from "./fixtures/tap-video-extensions-v1.json";
 import { classifyResult } from "../ui/rendering";
 import type { LocalVerificationReport } from "../verifier/types";
 import {
@@ -32,6 +33,24 @@ vi.mock("../wasm/tapcamVerifier", () => ({
 }));
 
 describe("TAP Video v1 local verification", () => {
+  it.each(extensionVectors.cases)("matches the adopted extension bytes: $id", async (vector) => {
+    const bytes = fromBase64(vector.utf8Base64);
+    expect(bytes.length).toBe(vector.utf8ByteCount);
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes)));
+    expect(Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")).toBe(vector.utf8SHA256);
+    const artifact = await makeArtifact(vector.extension === "cald"
+      ? { depthFrames: [{ cali: null, cald: bytes }] }
+      : { depthFrames: [{}], telemetryBoxes: [bytes] });
+    const report = await verifyTapVideoLocally(artifact.bytes);
+    expect(report.status).toBe(vector.expectedDecision === "accept" ? "valid" : "invalid");
+    if (vector.expectedDecision === "reject") {
+      expect(report.serverRequest).toBeNull();
+      expect(report.checks).toContainEqual(expect.objectContaining({ status: "fail" }));
+    } else {
+      expect(report.serverRequest).not.toBeNull();
+    }
+  });
+
   it("authenticates optional capture telemetry without changing the v1 manifest or depth track", async () => {
     const telemetry = captureTelemetry();
     const artifact = await makeArtifact({ telemetryBoxes: [encoder.encode(canonical(telemetry))] });
