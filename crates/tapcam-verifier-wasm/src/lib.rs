@@ -830,6 +830,7 @@ fn visualize_depth_u8_inner(
         .unwrap_or((manifest_width, manifest_height));
 
     let transform = display_orientation_transform(
+        file_bytes,
         width,
         height,
         display_width,
@@ -936,35 +937,30 @@ fn prepare_original_rgba_inner(
     }
 
     let photo_metadata = read_photo_metadata(file_bytes).unwrap_or_default();
-    let transform = decoded_heif_display_transform(width, height, &photo_metadata);
-    let (oriented_width, oriented_height) = transform.output_dimensions(width, height);
     let max_edge = if max_edge == 0 {
-        oriented_width.max(oriented_height)
+        width.max(height)
     } else {
         max_edge
     };
-    let scale = (max_edge as f64 / oriented_width.max(oriented_height) as f64).min(1.0);
-    let output_width = ((oriented_width as f64 * scale).round() as u32).max(1);
-    let output_height = ((oriented_height as f64 * scale).round() as u32).max(1);
+    let scale = (max_edge as f64 / width.max(height) as f64).min(1.0);
+    let output_width = ((width as f64 * scale).round() as u32).max(1);
+    let output_height = ((height as f64 * scale).round() as u32).max(1);
 
     let mut preview = vec![0u8; output_width as usize * output_height as usize * 4];
     resample_original_rgba(
         rgba,
         width,
         height,
-        transform,
-        oriented_width,
-        oriented_height,
         output_width,
         output_height,
         &mut preview,
     );
 
     let mut warnings = Vec::new();
-    if output_width != oriented_width || output_height != oriented_height {
+    if output_width != width || output_height != height {
         warnings.push(format!(
             "original preview was downscaled from {}x{} to {}x{}",
-            oriented_width, oriented_height, output_width, output_height
+            width, height, output_width, output_height
         ));
     }
     Ok(json!({
@@ -974,10 +970,10 @@ fn prepare_original_rgba_inner(
         "height": output_height,
         "inputWidth": width,
         "inputHeight": height,
-        "orientedWidth": oriented_width,
-        "orientedHeight": oriented_height,
+        "orientedWidth": width,
+        "orientedHeight": height,
         "photoOrientation": photo_metadata.orientation.unwrap_or_else(|| "unknown".to_string()),
-        "rotation": transform.as_report_str(),
+        "rotation": "none",
         "scale": scale,
         "previewRgbaBase64": STANDARD.encode(preview),
         "warnings": warnings
@@ -1060,6 +1056,7 @@ fn project_depth_pixels_inner(
         .map(|(width, height)| (Some(width), Some(height)))
         .unwrap_or((manifest_width, manifest_height));
     let transform = display_orientation_transform(
+        file_bytes,
         depth_width,
         depth_height,
         display_width,
@@ -1087,8 +1084,19 @@ fn project_depth_pixels_inner(
         infer_depth_value_unit(source_kind, pixel_format, metric_unit, value_range_kind);
     let relative_geometry = true;
     let camera = if is_front_camera {
-        pinhole_camera_from_manifest(depth, depth_width, depth_height)
-            .map(|camera| camera.display_oriented(transform))
+        let (camera_transform, camera_width, camera_height) =
+            if matches!(detect_container(file_bytes), Ok(Container::Heic)) {
+                let camera_transform = OrientationTransform::from_photo_orientation_str(photo_orientation)
+                    .unwrap_or(OrientationTransform::None);
+                // HEIF pixels are oriented, but signed calibration remains in native coordinates.
+                let (native_width, native_height) =
+                    camera_transform.output_dimensions(output_width, output_height);
+                (camera_transform, native_width, native_height)
+            } else {
+                (transform, depth_width, depth_height)
+            };
+        pinhole_camera_from_manifest(depth, camera_width, camera_height)
+            .map(|camera| camera.display_oriented(camera_transform))
     } else {
         pinhole_camera_from_manifest(depth, output_width, output_height)
     }
@@ -1105,7 +1113,6 @@ fn project_depth_pixels_inner(
         output_height,
         transform,
     );
-    let rgb_is_native_heif = matches!(detect_container(file_bytes), Ok(Container::Heic));
     let quality = analyze_depth_quality(
         &display_depth,
         output_width,
@@ -1139,16 +1146,8 @@ fn project_depth_pixels_inner(
             push_f32_le(&mut positions, y_unit as f32);
             push_f32_le(&mut positions, view_z as f32);
 
-            let (rgb_x, rgb_y) = display_rgb_source_coordinate(
-                x,
-                y,
-                output_width,
-                output_height,
-                rgb_width,
-                rgb_height,
-                transform,
-                rgb_is_native_heif,
-            );
+            let rgb_x = scaled_coordinate(x, output_width, rgb_width);
+            let rgb_y = scaled_coordinate(y, output_height, rgb_height);
             let rgb_offset = (rgb_y * rgb_width as usize + rgb_x) * 4;
             colors.push(rgba[rgb_offset]);
             colors.push(rgba[rgb_offset + 1]);
@@ -1222,7 +1221,7 @@ fn project_depth_pixels_inner(
         "inputDepthHeight": depth_height,
         "rgbWidth": rgb_width,
         "rgbHeight": rgb_height,
-        "rgbCoordinateSpace": if rgb_is_native_heif { "native-heif" } else { "display-oriented" },
+        "rgbCoordinateSpace": "display-oriented",
         "orientation": orientation,
         "photoOrientation": photo_orientation,
         "rotation": transform.as_report_str(),
@@ -2608,6 +2607,7 @@ fn read_u64_be(bytes: &[u8], offset: usize) -> Result<u64, String> {
 }
 
 fn display_orientation_transform(
+    file_bytes: &[u8],
     width: u32,
     height: u32,
     display_width: Option<u32>,
@@ -2615,6 +2615,11 @@ fn display_orientation_transform(
     photo_orientation: Option<&str>,
     is_front_camera: bool,
 ) -> OrientationTransform {
+    // Both HEIF decoders use libheif defaults, which already apply irot/imir.
+    if matches!(detect_container(file_bytes), Ok(Container::Heic)) {
+        return OrientationTransform::None;
+    }
+
     if !is_front_camera {
         return legacy_display_orientation_transform(
             width,
@@ -2847,9 +2852,6 @@ impl OrientationTransform {
 #[derive(Default)]
 struct PhotoMetadata {
     orientation: Option<String>,
-    width: Option<u32>,
-    height: Option<u32>,
-    is_front_camera: bool,
 }
 
 fn read_photo_metadata(file_bytes: &[u8]) -> Result<PhotoMetadata, String> {
@@ -2864,74 +2866,26 @@ fn read_photo_metadata(file_bytes: &[u8]) -> Result<PhotoMetadata, String> {
             .and_then(|value| value.get("orientation"))
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
-        width: photo.and_then(|value| optional_u32(value, "width")),
-        height: photo.and_then(|value| optional_u32(value, "height")),
-        is_front_camera: payload.map(is_front_camera_capture).unwrap_or(false),
     })
 }
 
-fn decoded_heif_display_transform(
-    width: u32,
-    height: u32,
-    photo_metadata: &PhotoMetadata,
-) -> OrientationTransform {
-    if !photo_metadata.is_front_camera {
-        return OrientationTransform::None;
-    }
-
-    let Some(photo_orientation) = photo_metadata.orientation.as_deref() else {
-        return OrientationTransform::None;
-    };
-    let expected_display = match (
-        photo_metadata.width,
-        photo_metadata.height,
-        OrientationTransform::from_photo_orientation_str(photo_orientation),
-    ) {
-        (Some(photo_width), Some(photo_height), Some(photo_transform)) => {
-            Some(photo_transform.output_dimensions(photo_width, photo_height))
-        }
-        _ => None,
-    };
-    let (display_width, display_height) = expected_display.unwrap_or((width, height));
-
-    display_orientation_transform(
-        width,
-        height,
-        Some(display_width),
-        Some(display_height),
-        Some(photo_orientation),
-        true,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 fn resample_original_rgba(
     source: &[u8],
     source_width: u32,
     source_height: u32,
-    transform: OrientationTransform,
-    oriented_width: u32,
-    oriented_height: u32,
     output_width: u32,
     output_height: u32,
     output: &mut [u8],
 ) {
-    let x_scale = oriented_width as f64 / output_width as f64;
-    let y_scale = oriented_height as f64 / output_height as f64;
+    let x_scale = source_width as f64 / output_width as f64;
+    let y_scale = source_height as f64 / output_height as f64;
 
     for y in 0..output_height as usize {
         for x in 0..output_width as usize {
-            let oriented_x =
-                ((x as f64 + 0.5) * x_scale - 0.5).clamp(0.0, (oriented_width - 1) as f64);
-            let oriented_y =
-                ((y as f64 + 0.5) * y_scale - 0.5).clamp(0.0, (oriented_height - 1) as f64);
-            let (source_x, source_y) = inverse_orientation_transform(
-                oriented_x,
-                oriented_y,
-                source_width,
-                source_height,
-                transform,
-            );
+            let source_x =
+                ((x as f64 + 0.5) * x_scale - 0.5).clamp(0.0, (source_width - 1) as f64);
+            let source_y =
+                ((y as f64 + 0.5) * y_scale - 0.5).clamp(0.0, (source_height - 1) as f64);
             let offset = (y * output_width as usize + x) * 4;
             sample_bilinear_rgba(
                 source,
@@ -3009,37 +2963,6 @@ fn scaled_coordinate(pixel: u32, source_extent: u32, target_extent: u32) -> usiz
     ((pixel as f64 / (source_extent - 1) as f64) * (target_extent - 1) as f64)
         .round()
         .clamp(0.0, (target_extent - 1) as f64) as usize
-}
-
-#[allow(clippy::too_many_arguments)]
-fn display_rgb_source_coordinate(
-    display_x: u32,
-    display_y: u32,
-    display_width: u32,
-    display_height: u32,
-    rgb_width: u32,
-    rgb_height: u32,
-    transform: OrientationTransform,
-    rgb_is_native_heif: bool,
-) -> (usize, usize) {
-    if !rgb_is_native_heif {
-        return (
-            scaled_coordinate(display_x, display_width, rgb_width),
-            scaled_coordinate(display_y, display_height, rgb_height),
-        );
-    }
-
-    let (oriented_rgb_width, oriented_rgb_height) =
-        transform.output_dimensions(rgb_width, rgb_height);
-    let oriented_x = scaled_coordinate(display_x, display_width, oriented_rgb_width) as f64;
-    let oriented_y = scaled_coordinate(display_y, display_height, oriented_rgb_height) as f64;
-    let (source_x, source_y) =
-        inverse_orientation_transform(oriented_x, oriented_y, rgb_width, rgb_height, transform);
-
-    (
-        source_x.round().clamp(0.0, (rgb_width - 1) as f64) as usize,
-        source_y.round().clamp(0.0, (rgb_height - 1) as f64) as usize,
-    )
 }
 
 fn depth_display_value(normalized: f64, min_value: f64, max_value: f64) -> f64 {
@@ -3839,6 +3762,7 @@ mod tests {
     fn display_orientation_prefers_front_camera_mirrored_rotation() {
         assert_eq!(
             display_orientation_transform(
+                &[],
                 3,
                 2,
                 Some(2),
@@ -3850,6 +3774,7 @@ mod tests {
         );
         assert_eq!(
             display_orientation_transform(
+                &[],
                 3,
                 2,
                 Some(2),
@@ -3868,7 +3793,7 @@ mod tests {
             "cgImagePropertyOrientation:7",
         ] {
             assert_eq!(
-                display_orientation_transform(2, 3, Some(2), Some(3), Some(orientation), true),
+                display_orientation_transform(&[], 2, 3, Some(2), Some(3), Some(orientation), true),
                 OrientationTransform::DownMirrored
             );
         }
@@ -3878,6 +3803,7 @@ mod tests {
     fn front_camera_landscape_down_mirrored_uses_full_vertical_flip() {
         assert_eq!(
             display_orientation_transform(
+                &[],
                 640,
                 480,
                 Some(4032),
@@ -3893,6 +3819,7 @@ mod tests {
     fn non_front_capture_keeps_legacy_mirrored_orientation_behavior() {
         assert_eq!(
             display_orientation_transform(
+                &[],
                 640,
                 480,
                 Some(4032),
@@ -3948,33 +3875,28 @@ mod tests {
     }
 
     #[test]
-    fn original_preview_applies_remaining_front_heif_mirror() {
-        let bytes = depth_manifest_fixture(
-            2,
-            2,
-            "cgImagePropertyOrientation:4",
-            r#""photoLens":{"position":"front"}"#,
-        )
-        .replace(
-            r#""photo":{"orientation":"cgImagePropertyOrientation:4"}"#,
-            r#""photo":{"height":2,"orientation":"cgImagePropertyOrientation:4","width":2}"#,
-        );
-        let rgba = [10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255, 40, 0, 0, 255];
-
-        let report = prepare_original_rgba(bytes.as_bytes(), &rgba, 2, 2, 100);
-
-        assert_eq!(report["status"], "available");
-        assert_eq!(report["rotation"], "downMirrored");
-        let preview = STANDARD
-            .decode(report["previewRgbaBase64"].as_str().unwrap())
-            .unwrap();
-        assert_eq!(
-            preview
-                .chunks_exact(4)
-                .map(|pixel| pixel[0])
-                .collect::<Vec<_>>(),
-            vec![30, 40, 10, 20]
-        );
+    fn decoded_front_heif_pixels_are_not_reoriented_for_any_exif_direction() {
+        let rgba = [10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255,
+                    40, 0, 0, 255, 50, 0, 0, 255, 60, 0, 0, 255];
+        for orientation in 1..=8 {
+            let manifest = depth_manifest_fixture(
+                3, 2, &format!("cgImagePropertyOrientation:{orientation}"),
+                r#""photoLens":{"position":"front"}"#,
+            );
+            let mut bytes = vec![0, 0, 0, 12];
+            bytes.extend_from_slice(b"ftypheic");
+            bytes.extend_from_slice(manifest.as_bytes());
+            let report = prepare_original_rgba(&bytes, &rgba, 3, 2, 100);
+            assert_eq!(report["rotation"], "none");
+            assert_eq!(report["width"], 3);
+            assert_eq!(report["height"], 2);
+            assert_eq!(STANDARD.decode(report["previewRgbaBase64"].as_str().unwrap()).unwrap(), rgba);
+            assert_eq!(
+                display_orientation_transform(&bytes, 3, 2, Some(3), Some(2),
+                    Some(&format!("cgImagePropertyOrientation:{orientation}")), true),
+                OrientationTransform::None,
+            );
+        }
     }
 
     #[test]
@@ -4285,7 +4207,7 @@ mod tests {
     }
 
     #[test]
-    fn pixel_projection_transforms_native_heif_rgb_with_front_depth() {
+    fn pixel_projection_preserves_display_oriented_heif_rgb_and_depth() {
         let manifest = depth_manifest_fixture(
             2,
             2,
@@ -4302,8 +4224,8 @@ mod tests {
         let report = project_depth_pixels(&bytes, &rgba, 2, 2, &depth, 2, 2, 2, 2);
 
         assert_eq!(report["status"], "available");
-        assert_eq!(report["rotation"], "downMirrored");
-        assert_eq!(report["rgbCoordinateSpace"], "native-heif");
+        assert_eq!(report["rotation"], "none");
+        assert_eq!(report["rgbCoordinateSpace"], "display-oriented");
         let colors = STANDARD
             .decode(report["colorsBase64"].as_str().unwrap())
             .unwrap();
@@ -4312,8 +4234,61 @@ mod tests {
                 .chunks_exact(3)
                 .map(|color| color[0])
                 .collect::<Vec<_>>(),
-            vec![30, 40, 10, 20]
+            vec![10, 20, 30, 40]
         );
+        let positions = STANDARD
+            .decode(report["positionsBase64"].as_str().unwrap())
+            .unwrap();
+        let z_values = (0..4)
+            .map(|index| read_f32_le(&positions, index * 3 + 2))
+            .collect::<Vec<_>>();
+        for (actual, expected) in z_values.iter().zip([-0.25, -5.0 / 6.0, -17.0 / 12.0, -2.0]) {
+            assert!((actual - expected).abs() < 0.000_1);
+        }
+
+        let preview = visualize_depth_u8(&bytes, &depth, 2, 2);
+        assert_eq!(preview["rotation"], "none");
+    }
+
+    #[test]
+    fn front_heif_projection_orients_native_calibration_once() {
+        let calibration = r#""cameraCalibration":{
+            "intrinsicMatrix":[40,0,0,0,30,0,0.5,1.25,1],
+            "intrinsicMatrixReferenceWidth":4,"intrinsicMatrixReferenceHeight":3,
+            "pixelSizeMillimeters":0.001,"lensDistortionCenterX":0.5,
+            "lensDistortionCenterY":1.25,"extrinsicMatrix":[1,0,0,0,1,0,0,0,1,0,0,0]
+        }"#;
+        let cases = [
+            (1, 4, 3, 40.0, 30.0, 0.5, 1.25),
+            (2, 4, 3, 40.0, 30.0, 2.5, 1.25),
+            (3, 4, 3, 40.0, 30.0, 2.5, 0.75),
+            (4, 4, 3, 40.0, 30.0, 0.5, 0.75),
+            (5, 3, 4, 30.0, 40.0, 1.25, 0.5),
+            (6, 3, 4, 30.0, 40.0, 0.75, 0.5),
+            (7, 3, 4, 30.0, 40.0, 0.75, 2.5),
+            (8, 3, 4, 30.0, 40.0, 1.25, 2.5),
+        ];
+        for (orientation, width, height, fx, fy, cx, cy) in cases {
+            let manifest = depth_manifest_fixture(
+                4, 3, &format!("cgImagePropertyOrientation:{orientation}"),
+                r#""photoLens":{"position":"front"}"#,
+            ).replace(r#""width":4}"#, &format!(r#""width":4,{calibration}}}"#));
+            let mut bytes = vec![0, 0, 0, 12];
+            bytes.extend_from_slice(b"ftypheic");
+            bytes.extend_from_slice(manifest.as_bytes());
+            let rgba = [128; 48];
+            let depth = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+            let report = project_depth_pixels(&bytes, &rgba, width, height, &depth,
+                width, height, width, height);
+            assert_eq!(report["rotation"], "none");
+            assert_eq!(report["cameraModel"], "metadata-pinhole");
+            assert_eq!(report["imageWidth"], width);
+            assert_eq!(report["imageHeight"], height);
+            assert_eq!(report["fx"], fx);
+            assert_eq!(report["fy"], fy);
+            assert_eq!(report["cx"], cx);
+            assert_eq!(report["cy"], cy);
+        }
     }
 
     #[test]
