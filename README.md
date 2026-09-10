@@ -13,6 +13,25 @@ container, KLV, and `.tapnap` wire conventions. This implementation was reviewed
 against shared revision
 [`ca3b223e0717242ce1016b34dc34f04ef2417936`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/ca3b223e0717242ce1016b34dc34f04ef2417936).
 
+This checkout also implements the local capture-telemetry v1 extension candidate
+in `TAPArtifactContracts/containers/tap-video-capture-telemetry-v1.md`; it has not
+yet acquired a new reviewed commit pin. Its optional `TAPCAMTELEMETRY1` UUID is
+covered by the existing asset hash. After binding passes, the reader validates
+its exact schema, observed filtering counts, motion coordinates/availability,
+timestamps and 4 MiB / 8,192-sample bounds before any server request. Inspection
+returns the retained device-motion samples; the verification report includes
+the telemetry and a concise observation summary. Old files without this box
+remain supported with unknown provenance. Motion is not full camera pose, and
+this extension does not enable browser Video 3D.
+
+The local, unpublished `CALD` KLV candidate in
+`TAPArtifactContracts/containers/tap-video-container-v1.md` also retains a current
+frame's full calibration when no `CALI` index is available. The reader validates
+its canonical JSON, existing calibration schema, 3,072-byte limit, and mutual
+exclusion with `CALI`. It preserves the existing calibration-table coverage
+counts and signed byte view. This candidate has no new reviewed commit pin and
+does not enable browser Video 3D.
+
 Public claims follow the [product contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/main/ProductContract.md#7-claim-boundaries).
 
 ## Verification Flow

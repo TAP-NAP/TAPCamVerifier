@@ -60,6 +60,7 @@ export interface LocalVerificationReport {
   }>;
   captureId: string | null;
   capturedAt: string | null;
+  captureTelemetry?: unknown;
   manifest?: {
     containerFormat?: "heif" | "jpeg" | "mp4" | "unknown" | string;
     schemaId?: string | null;

@@ -5,6 +5,9 @@ import { decodeLzfseFrame } from "../wasm/tapcamVerifier";
 
 const MANIFEST_UUID = "TAPCAMVIDEOMANF1";
 const PROOF_UUID = "TAPCAMPROOFSLOT1";
+const TELEMETRY_UUID = "TAPCAMTELEMETRY1";
+const MAX_TELEMETRY_BYTES = 4 * 1024 * 1024;
+const MAX_MOTION_SAMPLES = 8192;
 const PROOF_MAGIC = "TAPCAM-PROOF-SLOT-V1";
 const PROOF_PAYLOAD_BYTES = 60 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
@@ -12,6 +15,7 @@ const MAX_BOX_COUNT = 4096;
 const MAX_DEPTH_SAMPLES = 180 * 60;
 const MAX_DEPTH_FRAME_BYTES = 32 * 1024 * 1024;
 const MAX_KLV_FRAME_BYTES = MAX_DEPTH_FRAME_BYTES + 4096;
+const MAX_INLINE_CALIBRATION_BYTES = 3072;
 const TAP_DEPTH_METADATA_KEY = "com.tapnap.depth.klv";
 const VIDEO_MANIFEST_ID = "urn:tapnap:tapcam:video-manifest:v1";
 const VIDEO_MANIFEST_MEDIA_TYPE = "application/vnd.tapnap.video-manifest+json;version=1";
@@ -63,12 +67,36 @@ export interface TapVideoDepthFrame {
   compression: "raw" | "zstd1" | "lzfse";
   uncompressedByteCount: number;
   calibrationIndex: number | null;
+  inlineCalibration: Record<string, unknown> | null;
   payload: Uint8Array;
 }
 
 export interface TapVideoInspection {
   manifest: TapVideoManifest;
   depthFrames: TapVideoDepthFrame[];
+  captureTelemetry: TapVideoCaptureTelemetry | null;
+}
+
+export interface TapVideoCaptureTelemetry {
+  schema: { id: string; version: number; mediaType: string };
+  filtering: { requestedEnabled: boolean; filteredSampleCount: number; unfilteredSampleCount: number };
+  motion: {
+    status: "available" | "unavailable" | "noSamples" | "partial";
+    referenceFrame: "xArbitraryZVertical";
+    deviceCoordinateSystem: "core-motion-device-right-handed";
+    timeBase: "capture-relative-seconds";
+    motionToCaptureOffsetSeconds: number | null;
+    sampleIntervalSeconds: number;
+    droppedSampleCount: number;
+    errorCount: number;
+    samples: Array<{
+      ptsSeconds: number;
+      quaternion: number[];
+      rotationRate: number[];
+      gravity: number[];
+      userAcceleration: number[];
+    }>;
+  };
 }
 
 export type TapVideoDisplayOrientation =
@@ -173,6 +201,7 @@ interface ParsedDepthFrame extends TapVideoDepthFrame {
 export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVerificationReport> {
   const checks: VerificationCheck[] = [];
   let manifest: TapVideoManifest | undefined;
+  let captureTelemetry: TapVideoCaptureTelemetry | null = null;
   let failureStage = { id: "video-container", label: "TAP Video container" };
   try {
     if (bytes.byteLength > MAX_CAPTURE_INPUT_BYTES) {
@@ -251,6 +280,13 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
         "TAP Video v1 manifest and timed metadata",
         "Manifest groups, finalized MP4 track facts, and every timed-depth sample satisfy the v1 relationships."
       ));
+      failureStage = { id: "video-capture-telemetry", label: "TAP Video capture telemetry" };
+      captureTelemetry = parseCaptureTelemetry(bytes, topLevel, manifest);
+      if (captureTelemetry) {
+        const { filtering, motion } = captureTelemetry;
+        checks.push(pass("video-capture-telemetry", "TAP Video capture telemetry",
+          `Signed capture telemetry: Apple filtering requested ${filtering.requestedEnabled ? "on" : "off"}; ${filtering.filteredSampleCount} filtered and ${filtering.unfilteredSampleCount} unfiltered delivered depth samples. Core Motion ${motion.status}: ${motion.samples.length} samples, ${motion.droppedSampleCount} dropped, ${motion.errorCount} errors. Device attitude is not camera position or scene truth.`));
+      }
     } else {
       checks.push({
         id: "video-semantics",
@@ -279,6 +315,7 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
         manifestVerified: digestMatches
       },
       captureId: manifest.payload.id,
+      captureTelemetry,
       capturedAt: manifest.payload.capturedAt,
       manifest: {
         containerFormat: "mp4",
@@ -331,9 +368,10 @@ export function inspectTapVideoDepth(bytes: Uint8Array): TapVideoInspection {
   const topLevel = parseBoxes(bytes, 0, bytes.byteLength);
   const manifestBox = requireUniqueUUIDBox(topLevel, MANIFEST_UUID, "TAP video manifest");
   const manifest = parseManifest(bytes.subarray(manifestBox.payloadStart, manifestBox.payloadEnd)).manifest;
+  const captureTelemetry = parseCaptureTelemetry(bytes, topLevel, manifest);
   const coverage = manifest.payload.depthCoverage;
   if (!coverage.format || coverage.sampleCount === 0 || coverage.trackID === null) {
-    return { manifest, depthFrames: [] };
+    return { manifest, depthFrames: [], captureTelemetry };
   }
   const moov = topLevel.find((box) => box.type === "moov");
   if (!moov) {
@@ -354,7 +392,71 @@ export function inspectTapVideoDepth(bytes: Uint8Array): TapVideoInspection {
     requireTapDepthKeyMapping(keyMappings, sample.sampleDescriptionIndex, frame.localKeyID);
     return frame;
   });
-  return { manifest, depthFrames };
+  return { manifest, depthFrames, captureTelemetry };
+}
+
+function parseCaptureTelemetry(bytes: Uint8Array, boxes: Box[], manifest: TapVideoManifest): TapVideoCaptureTelemetry | null {
+  const matches = boxes.filter((box) => box.type === "uuid" && box.userType === TELEMETRY_UUID);
+  if (matches.length === 0) return null;
+  if (matches.length !== 1) throw new Error("Duplicate TAP Video capture telemetry boxes.");
+  const box = matches[0];
+  if (box.payloadEnd - box.payloadStart > MAX_TELEMETRY_BYTES) throw new Error("Capture telemetry exceeds 4 MiB.");
+  const document = parseCanonicalJSON(decodeUTF8(bytes.subarray(box.payloadStart, box.payloadEnd), "capture telemetry"), "capture telemetry");
+  const value = requireObject(document.value, "capture telemetry");
+  requireExactKeys(value, ["schema", "filtering", "motion"], "capture telemetry");
+  const schema = requireObject(value.schema, "telemetry.schema");
+  requireExactKeys(schema, ["id", "version", "mediaType"], "telemetry.schema");
+  requireInteger(schema.version, document.numberTokens, ["schema", "version"], "telemetry.schema.version");
+  if (schema.id !== "urn:tapnap:tapcam:video-capture-telemetry:v1" || schema.version !== 1 ||
+    schema.mediaType !== "application/vnd.tapnap.video-capture-telemetry+json;version=1") {
+    throw new Error("Unsupported capture telemetry schema.");
+  }
+  const filtering = requireObject(value.filtering, "telemetry.filtering");
+  requireExactKeys(filtering, ["requestedEnabled", "filteredSampleCount", "unfilteredSampleCount"], "telemetry.filtering");
+  requireBoolean(filtering.requestedEnabled, "filtering.requestedEnabled");
+  for (const key of ["filteredSampleCount", "unfilteredSampleCount"]) {
+    requireNonNegativeInteger(filtering[key], document.numberTokens, ["filtering", key], `filtering.${key}`);
+  }
+  if ((filtering.filteredSampleCount as number) + (filtering.unfilteredSampleCount as number) !== manifest.payload.depthCoverage.deliveredSampleCount) {
+    throw new Error("Filtering observations do not match delivered depth samples.");
+  }
+  const motion = requireObject(value.motion, "telemetry.motion");
+  requireExactKeys(motion, ["status", "referenceFrame", "deviceCoordinateSystem", "timeBase", "motionToCaptureOffsetSeconds",
+    "sampleIntervalSeconds", "droppedSampleCount", "errorCount", "samples"], "telemetry.motion");
+  requireEnum(motion.status, ["available", "unavailable", "noSamples", "partial"], "motion.status");
+  if (motion.referenceFrame !== "xArbitraryZVertical" || motion.deviceCoordinateSystem !== "core-motion-device-right-handed" ||
+    motion.timeBase !== "capture-relative-seconds") throw new Error("Unsupported motion coordinates or clock.");
+  if (motion.motionToCaptureOffsetSeconds !== null) requireFiniteNumber(motion.motionToCaptureOffsetSeconds, "motion.motionToCaptureOffsetSeconds");
+  requireFiniteNumber(motion.sampleIntervalSeconds, "motion.sampleIntervalSeconds");
+  if ((motion.sampleIntervalSeconds as number) <= 0 || (motion.sampleIntervalSeconds as number) > 1) throw new Error("Invalid motion sample interval.");
+  for (const key of ["droppedSampleCount", "errorCount"]) {
+    requireNonNegativeInteger(motion[key], document.numberTokens, ["motion", key], `motion.${key}`);
+  }
+  if (!Array.isArray(motion.samples) || motion.samples.length > MAX_MOTION_SAMPLES) throw new Error("Invalid or excessive motion samples.");
+  const hasSamples = motion.samples.length > 0;
+  const degraded = (motion.droppedSampleCount as number) > 0 || (motion.errorCount as number) > 0;
+  if ((motion.status === "available" && (!hasSamples || degraded)) ||
+    (motion.status === "partial" && (!hasSamples || !degraded)) ||
+    ((motion.status === "noSamples" || motion.status === "unavailable") && hasSamples) ||
+    (motion.status === "noSamples" && motion.errorCount !== 0) || (hasSamples && motion.motionToCaptureOffsetSeconds === null)) {
+    throw new Error("Motion availability, counts, and clock mapping disagree.");
+  }
+  const duration = manifest.payload.container?.durationSeconds as number;
+  const timeScale = manifest.payload.container?.timeScale as number;
+  let previousPTS = -1;
+  for (const entry of motion.samples) {
+    const sample = requireObject(entry, "motion sample");
+    requireExactKeys(sample, ["ptsSeconds", "quaternion", "rotationRate", "gravity", "userAcceleration"], "motion sample");
+    requireNonNegativeNumber(sample.ptsSeconds, "motion sample.ptsSeconds");
+    const pts = sample.ptsSeconds as number;
+    if (pts <= previousPTS || pts > duration + 1 / timeScale) throw new Error("Motion timestamps regress or exceed the capture duration.");
+    previousPTS = pts;
+    requireNumberArray(sample.quaternion, 4, "motion sample.quaternion");
+    for (const key of ["rotationRate", "gravity", "userAcceleration"]) requireNumberArray(sample[key], 3, `motion sample.${key}`);
+    const normSquared = (sample.quaternion as number[]).reduce((sum, component) => sum + component * component, 0);
+    if (Math.abs(normSquared - 1) > 0.01) throw new Error("Motion quaternion is not normalized.");
+  }
+  return value as unknown as TapVideoCaptureTelemetry;
 }
 
 let zstdDecoderPromise: Promise<ZSTDDecoder> | null = null;
@@ -892,7 +994,7 @@ function validateSpatialRegistration(registration: Record<string, unknown>, cove
     requireEnum(registration.recordedTransform, registrationTransforms(), "spatialRegistration.recordedTransform");
   }
   if (!Array.isArray(registration.calibrationTable) || registration.calibrationTable.length > 16) throw new Error("Invalid TAP Video calibration table.");
-  registration.calibrationTable.forEach((item, index) => validateCalibration(item, index));
+  registration.calibrationTable.forEach((item, index) => validateCalibration(item, `calibrationTable[${index}]`));
   const calibrationCoverage = requireObject(registration.calibrationCoverage, "spatialRegistration.calibrationCoverage");
   requireExactKeys(calibrationCoverage, ["indexedSampleCount", "missingCalibrationSampleCount", "overflowUnindexedSampleCount", "tableOverflowed"], "spatialRegistration.calibrationCoverage");
   for (const key of ["indexedSampleCount", "missingCalibrationSampleCount", "overflowUnindexedSampleCount"]) {
@@ -949,20 +1051,31 @@ function validateRegistrationGeometry(registration: Record<string, unknown>, rgb
   }
 }
 
-function validateCalibration(value: unknown, index: number): void {
-  const calibration = requireObject(value, `calibrationTable[${index}]`);
+function validateCalibration(value: unknown, label: string): void {
+  const calibration = requireObject(value, label);
   requireAllowedKeys(calibration, [
     "extrinsicMatrix", "intrinsicMatrix", "intrinsicMatrixReferenceDimensions", "inverseLensDistortionLookupTable",
     "lensDistortionCenter", "lensDistortionLookupTable", "pixelSizeMillimeters"
-  ], ["extrinsicMatrix", "intrinsicMatrix", "intrinsicMatrixReferenceDimensions", "lensDistortionCenter", "pixelSizeMillimeters"], `calibrationTable[${index}]`);
-  requireNumberArray(calibration.intrinsicMatrix, 9, `calibrationTable[${index}].intrinsicMatrix`);
-  requireNumberArray(calibration.extrinsicMatrix, 12, `calibrationTable[${index}].extrinsicMatrix`);
-  validateDimensions(calibration.intrinsicMatrixReferenceDimensions, `calibrationTable[${index}].intrinsicMatrixReferenceDimensions`);
-  requireFiniteNumber(calibration.pixelSizeMillimeters, `calibrationTable[${index}].pixelSizeMillimeters`);
-  validatePoint(calibration.lensDistortionCenter, `calibrationTable[${index}].lensDistortionCenter`);
+  ], ["extrinsicMatrix", "intrinsicMatrix", "intrinsicMatrixReferenceDimensions", "lensDistortionCenter", "pixelSizeMillimeters"], label);
+  requireNumberArray(calibration.intrinsicMatrix, 9, `${label}.intrinsicMatrix`);
+  requireNumberArray(calibration.extrinsicMatrix, 12, `${label}.extrinsicMatrix`);
+  validateDimensions(calibration.intrinsicMatrixReferenceDimensions, `${label}.intrinsicMatrixReferenceDimensions`);
+  requireFiniteNumber(calibration.pixelSizeMillimeters, `${label}.pixelSizeMillimeters`);
+  validatePoint(calibration.lensDistortionCenter, `${label}.lensDistortionCenter`);
   for (const key of ["lensDistortionLookupTable", "inverseLensDistortionLookupTable"]) {
-    if (calibration[key] !== undefined && calibration[key] !== null) requireBase64(calibration[key], `calibrationTable[${index}].${key}`);
+    if (calibration[key] !== undefined && calibration[key] !== null) requireBase64(calibration[key], `${label}.${key}`);
   }
+}
+
+function decodeInlineCalibration(bytes: Uint8Array): Record<string, unknown> {
+  if (bytes.byteLength > MAX_INLINE_CALIBRATION_BYTES) throw new Error("TAP depth CALD exceeds 3072 bytes.");
+  const document = parseCanonicalJSON(decodeUTF8(bytes, "TAP depth CALD"), "TAP depth CALD");
+  const value = requireObject(document.value, "TAP depth CALD");
+  requireExactKeys(value, ["calibration", "schemaVersion"], "TAP depth CALD");
+  requireInteger(value.schemaVersion, document.numberTokens, ["schemaVersion"], "CALD.schemaVersion");
+  if (value.schemaVersion !== 1) throw new Error("Unsupported TAP depth CALD schema.");
+  validateCalibration(value.calibration, "CALD.calibration");
+  return value.calibration as Record<string, unknown>;
 }
 
 function validateRegistrationDescriptor(value: Record<string, unknown>, tokens: Map<string, string>): void {
@@ -1560,12 +1673,15 @@ function decodeMebxDepthSample(sample: Uint8Array): ParsedDepthFrame {
     throw new Error("Invalid TAP depth presentation timescale.");
   }
   const calibration = records.get("CALI");
+  const inlineCalibration = records.get("CALD");
+  if (calibration && inlineCalibration) throw new Error("TAP depth CALI and CALD are mutually exclusive.");
   return {
     frameIndex: readU32(frame, 0),
     presentationTimeSeconds: Number(readI64(pts, 0)) / timescale,
     compression,
     uncompressedByteCount: readU32(uncompressed, 0),
     calibrationIndex: calibration ? readU32(requireRecord(records, "CALI", 4), 0) : null,
+    inlineCalibration: inlineCalibration ? decodeInlineCalibration(inlineCalibration) : null,
     payload,
     ptsValue: readI64(pts, 0),
     ptsTimescale: timescale,

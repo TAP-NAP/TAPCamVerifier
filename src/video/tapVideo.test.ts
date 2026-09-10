@@ -32,6 +32,77 @@ vi.mock("../wasm/tapcamVerifier", () => ({
 }));
 
 describe("TAP Video v1 local verification", () => {
+  it("authenticates optional capture telemetry without changing the v1 manifest or depth track", async () => {
+    const telemetry = captureTelemetry();
+    const artifact = await makeArtifact({ telemetryBoxes: [encoder.encode(canonical(telemetry))] });
+    const report = await verifyTapVideoLocally(artifact.bytes);
+    expect(report.status).toBe("valid");
+    expect(report.manifest?.schemaId).toBe("urn:tapnap:tapcam:video-manifest:v1");
+    expect(report.captureTelemetry).toEqual(telemetry);
+    expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-capture-telemetry", status: "pass" }));
+    expect(inspectTapVideoDepth(artifact.bytes)).toEqual(expect.objectContaining({ captureTelemetry: telemetry, depthFrames: [] }));
+    expect(inspectTapVideoDepth((await makeArtifact()).bytes).captureTelemetry).toBeNull();
+    const numberLexemes = canonical(telemetry).replace('"ptsSeconds":0.1', '"ptsSeconds":1e-1').replace('"quaternion":[0,0,0,1]', '"quaternion":[0.0,0,0,1e+0]');
+    expect((await verifyTapVideoLocally((await makeArtifact({ telemetryBoxes: [encoder.encode(numberLexemes)] })).bytes)).status).toBe("valid");
+
+    const tampered = artifact.bytes.slice();
+    const marker = encoder.encode('"quaternion":[0,0,0,1]');
+    const markerOffset = tampered.findIndex((_, index) => marker.every((byte, relative) => tampered[index + relative] === byte));
+    expect(markerOffset).toBeGreaterThan(0);
+    tampered[markerOffset + '"quaternion":['.length] = "1".charCodeAt(0);
+    const invalid = await verifyTapVideoLocally(tampered);
+    expect(invalid.serverRequest).toBeNull();
+    expect(invalid.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "fail" }));
+    expect(invalid.checks.some((entry) => entry.id === "video-capture-telemetry")).toBe(false);
+  });
+
+  it("rejects signed malformed telemetry before any server request", async () => {
+    const mutations: Array<(telemetry: AnyRecord) => void> = [
+      (t) => { t.schema.version = 2; },
+      (t) => { t.motion.extra = 1; },
+      (t) => { t.filtering.filteredSampleCount = 1; },
+      (t) => { t.motion.samples[0].ptsSeconds = -1; },
+      (t) => { t.motion.samples[0].ptsSeconds = 1.1; },
+      (t) => { t.motion.samples.push(t.motion.samples[0]); },
+      (t) => { t.motion.samples[0].quaternion = [0, 0, 0, 2]; },
+      (t) => { t.motion.samples[0].gravity = [0, null, 0]; },
+      (t) => { t.motion.motionToCaptureOffsetSeconds = null; },
+      (t) => { t.motion.droppedSampleCount = 1; },
+      (t) => { t.motion.status = "partial"; },
+      (t) => { t.motion.status = "noSamples"; },
+      (t) => { t.motion.samples = Array.from({ length: 8193 }, () => t.motion.samples[0]); }
+    ];
+    for (const mutate of mutations) {
+      const telemetry = captureTelemetry();
+      mutate(telemetry);
+      const report = await verifyTapVideoLocally((await makeArtifact({ telemetryBoxes: [encoder.encode(canonical(telemetry))] })).bytes);
+      expect(report.serverRequest).toBeNull();
+      expect(report.checks.at(-1)).toEqual(expect.objectContaining({ id: "video-capture-telemetry", status: "fail" }));
+    }
+    const payload = encoder.encode(canonical(captureTelemetry()));
+    for (const telemetryBoxes of [[payload, payload], [new Uint8Array(4 * 1024 * 1024 + 1)]]) {
+      const report = await verifyTapVideoLocally((await makeArtifact({ telemetryBoxes })).bytes);
+      expect(report.checks.at(-1)).toEqual(expect.objectContaining({ id: "video-capture-telemetry", status: "fail" }));
+      expect(report.serverRequest).toBeNull();
+    }
+  });
+
+  it("accepts explicit motion degradation and truthful filtering observations", async () => {
+    for (const status of ["unavailable", "noSamples", "partial"]) {
+      const telemetry = captureTelemetry();
+      telemetry.filtering = { requestedEnabled: true, filteredSampleCount: 1, unfilteredSampleCount: 1 };
+      telemetry.motion.status = status;
+      if (status === "partial") telemetry.motion.droppedSampleCount = 1;
+      else {
+        telemetry.motion.samples = [];
+        telemetry.motion.motionToCaptureOffsetSeconds = null;
+      }
+      const artifact = await makeArtifact({ depthFrames: [{}, {}], telemetryBoxes: [encoder.encode(canonical(telemetry))] });
+      expect((await verifyTapVideoLocally(artifact.bytes)).status).toBe("valid");
+      expect(inspectTapVideoDepth(artifact.bytes).captureTelemetry).toEqual(telemetry);
+    }
+  });
+
   it("preserves successful proof checks when a bound MP4 fails track semantics", async () => {
     const original = await makeArtifact();
     expect((await verifyTapVideoLocally(original.bytes)).status).toBe("valid");
@@ -96,6 +167,57 @@ describe("TAP Video v1 local verification", () => {
     expect(inspection.depthFrames.map((frame) => frame.frameIndex)).toEqual([0, 1]);
     expect(inspection.depthFrames.map((frame) => frame.presentationTimeSeconds)).toEqual([0, 0.5]);
     expect(Array.from(await decodeTapDepthFrame(inspection.depthFrames[0]))).toEqual([0, 60, 0, 64]);
+  });
+
+  it("retains CALD after the calibration table overflows without counting it as CALI", async () => {
+    const calibration = { ...cameraCalibration(), inverseLensDistortionLookupTable: "AAAAAA==", lensDistortionLookupTable: null };
+    const artifact = await makeArtifact({
+      depthFrames: [{}, { cali: null, cald: encoder.encode(canonical({ calibration, schemaVersion: 1 })), extraUnknownRecords: 1 }],
+      mutateManifest: (manifest) => {
+        manifest.payload.spatialRegistration.calibrationTable = Array.from({ length: 16 }, cameraCalibration);
+        manifest.payload.spatialRegistration.calibrationCoverage = {
+          indexedSampleCount: 1, missingCalibrationSampleCount: 0, overflowUnindexedSampleCount: 1, tableOverflowed: true
+        };
+      }
+    });
+    const report = await verifyTapVideoLocally(artifact.bytes);
+    expect(report.status).toBe("valid");
+    expect(report.serverRequest).not.toBeNull();
+    expect(inspectTapVideoDepth(artifact.bytes).depthFrames.map((frame) => [frame.calibrationIndex, frame.inlineCalibration]))
+      .toEqual([[0, null], [null, calibration]]);
+  });
+
+  it("rejects malformed CALD and ambiguous CALI/CALD before a server request", async () => {
+    const valid = canonical({ calibration: cameraCalibration(), schemaVersion: 1 });
+    const invalid = [
+      valid.replace('"schemaVersion":1', '"schemaVersion":2'),
+      valid.replace('"schemaVersion":1', '"schemaVersion":1.0'),
+      valid.replace('"schemaVersion":1', '"schemaVersion":1,"schemaVersion":1'),
+      valid.replace('"schemaVersion":1', '"schemaVersion":1,"unknown":0'),
+      valid.replace('"extrinsicMatrix":', '"extra":0,"extrinsicMatrix":'),
+      valid.replace('"intrinsicMatrix":[1,0,0,0,1,0,1,1,1]', '"intrinsicMatrix":[1]'),
+      valid.replace('"pixelSizeMillimeters":0.001', '"pixelSizeMillimeters":1e400'),
+      canonical({ calibration: { ...cameraCalibration(), inverseLensDistortionLookupTable: "not base64" }, schemaVersion: 1 }),
+      canonical({ calibration: { ...cameraCalibration(), lensDistortionCenter: { x: 1, y: 2, z: 3 } }, schemaVersion: 1 }),
+      valid + " "
+    ].map((text) => encoder.encode(text));
+    invalid.push(new Uint8Array([0xff]));
+    const frames: FrameOptions[] = invalid.map((cald) => ({ cali: null, cald }));
+    frames.push({ cali: 0, cald: encoder.encode(valid) }, { cali: null, cald: encoder.encode(valid), duplicateCALD: true });
+    for (const frame of frames) {
+      const report = await verifyTapVideoLocally((await makeArtifact({ depthFrames: [frame] })).bytes);
+      expect(report.status).toBe("invalid");
+      expect(report.serverRequest).toBeNull();
+    }
+  });
+
+  it("accepts CALD at 3072 bytes and rejects 3073 bytes", async () => {
+    const original = canonical({ calibration: cameraCalibration(), schemaVersion: 1 });
+    const atLimit = original.replace('"pixelSizeMillimeters":0.001', '"pixelSizeMillimeters":0.001' + "0".repeat(3072 - encoder.encode(original).length));
+    for (const [text, status] of [[atLimit, "valid"], [atLimit.replace('"pixelSizeMillimeters":0.001', '"pixelSizeMillimeters":0.0010'), "invalid"]]) {
+      const report = await verifyTapVideoLocally((await makeArtifact({ depthFrames: [{ cali: null, cald: encoder.encode(text) }] })).bytes);
+      expect(report.status).toBe(status);
+    }
   });
 
   it("accepts the optional finalized audio track when all signed facts match", async () => {
@@ -480,15 +602,18 @@ interface FrameOptions {
   compression?: "raw" | "zstd1" | "lzfse";
   ulen?: number;
   cali?: number | null;
+  cald?: Uint8Array;
   payload?: Uint8Array;
   localKeyID?: number;
   nonZeroPadding?: boolean;
   duplicateTVER?: boolean;
+  duplicateCALD?: boolean;
   omitDPTH?: boolean;
   extraUnknownRecords?: number;
 }
 
 interface ArtifactOptions {
+  telemetryBoxes?: Uint8Array[];
   depthFrames?: FrameOptions[];
   format?: Partial<AnyRecord>;
   includeMetadataTrack?: boolean;
@@ -565,7 +690,8 @@ async function makeArtifact(options: ArtifactOptions = {}): Promise<{ bytes: Uin
     }));
   }
   const moov = box("moov", concat(makeMovieHeader(options.actualMovieTimeScale ?? 600, options.actualMovieDuration ?? 600), ...tracks));
-  const prefix = concat(ftyp, mdat, moov, manifestBox);
+  const prefix = concat(ftyp, mdat, moov, manifestBox,
+    ...(options.telemetryBoxes ?? []).map((payload) => uuidBox("TAPCAMTELEMETRY1", payload)));
   const proofOffset = prefix.length;
   const proofBoxLength = 8 + 16 + 60 * 1024;
   const contentDigest = {
@@ -610,13 +736,30 @@ async function makeArtifact(options: ArtifactOptions = {}): Promise<{ bytes: Uin
   return { bytes: concat(prefix, uuidBox("TAPCAMPROOFSLOT1", proofPayload)), payloadText };
 }
 
-function baseManifest(hasDepth: boolean, frames: FrameOptions[], format: AnyRecord, withAudio: boolean): AnyRecord {
-  const indexed = hasDepth ? frames.filter((frame) => frame.cali !== null).length : 0;
-  const calibration = {
+function captureTelemetry(): AnyRecord {
+  return {
+    schema: { id: "urn:tapnap:tapcam:video-capture-telemetry:v1", version: 1, mediaType: "application/vnd.tapnap.video-capture-telemetry+json;version=1" },
+    filtering: { requestedEnabled: false, filteredSampleCount: 0, unfilteredSampleCount: 0 },
+    motion: {
+      status: "available", referenceFrame: "xArbitraryZVertical", deviceCoordinateSystem: "core-motion-device-right-handed",
+      timeBase: "capture-relative-seconds", motionToCaptureOffsetSeconds: -100, sampleIntervalSeconds: 1 / 30,
+      droppedSampleCount: 0, errorCount: 0,
+      samples: [{ ptsSeconds: 0.1, quaternion: [0, 0, 0, 1], rotationRate: [0, 0, 0], gravity: [0, -1, 0], userAcceleration: [0, 0, 0] }]
+    }
+  };
+}
+
+function cameraCalibration(): AnyRecord {
+  return {
     intrinsicMatrix: [1, 0, 0, 0, 1, 0, 1, 1, 1], intrinsicMatrixReferenceDimensions: { width: 2, height: 1 },
     extrinsicMatrix: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], pixelSizeMillimeters: 0.001,
     lensDistortionCenter: { x: 1, y: 0.5 }
   };
+}
+
+function baseManifest(hasDepth: boolean, frames: FrameOptions[], format: AnyRecord, withAudio: boolean): AnyRecord {
+  const indexed = hasDepth ? frames.filter((frame) => frame.cali !== null).length : 0;
+  const calibration = cameraCalibration();
   return {
     schema: { id: "urn:tapnap:tapcam:video-manifest:v1", version: 1, mediaType: "application/vnd.tapnap.video-manifest+json;version=1" },
     payload: {
@@ -661,6 +804,7 @@ function makeDepthSample(frame: FrameOptions, index: number, defaultDelta: numbe
     record("PTS ", concat(i64(frame.ptsValue ?? BigInt(index * defaultDelta)), i32(frame.ptsTimescale ?? 600))),
     record("COMP", encoder.encode(compression), frame.nonZeroPadding), record("ULEN", u32(frame.ulen ?? 4)),
     ...(frame.cali === null ? [] : [record("CALI", u32(frame.cali ?? 0))]),
+    ...(frame.cald ? [record("CALD", frame.cald), ...(frame.duplicateCALD ? [record("CALD", frame.cald)] : [])] : []),
     ...Array.from({ length: frame.extraUnknownRecords ?? 0 }, (_, extra) => record(`X${String(extra).padStart(3, "0")}`, new Uint8Array())),
     ...(frame.omitDPTH ? [] : [record("DPTH", payload)])
   ];
