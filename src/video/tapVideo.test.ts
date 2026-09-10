@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { classifyResult } from "../ui/rendering";
+import type { LocalVerificationReport } from "../verifier/types";
 import {
   decodeTapDepthFrame,
   inspectTapVideoDepth,
@@ -27,6 +29,47 @@ vi.mock("../wasm/tapcamVerifier", () => ({
 }));
 
 describe("TAP Video v1 local verification", () => {
+  it("preserves successful proof checks when a bound MP4 fails track semantics", async () => {
+    const original = await makeArtifact();
+    expect((await verifyTapVideoLocally(original.bytes)).status).toBe("valid");
+
+    // The fixture rebuilds the binding over these bytes, so only the signed
+    // codec declaration disagrees with the actual track.
+    const artifact = await makeArtifact({ actualRGBCodec: "hvc1" });
+    const report = await verifyTapVideoLocally(artifact.bytes);
+
+    expect(report.status).toBe("invalid");
+    expect(report.serverRequest).toBeNull();
+    expect(report.captureId).toBe(JSON.parse(artifact.payloadText).id);
+    expect(report.manifest?.capture).toEqual(JSON.parse(artifact.payloadText));
+    expect(report.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "video-proof", status: "pass" }),
+      expect.objectContaining({ id: "video-content-binding", status: "pass" }),
+      expect.objectContaining({ id: "video-signing-binding", status: "pass" }),
+      expect.objectContaining({ id: "video-semantics", status: "fail" })
+    ]));
+    expect(report.checks.some((check) => check.id === "parse")).toBe(false);
+    expect(classifyVideoReport(report)).toBe("invalid");
+  });
+
+  it("distinguishes absent TAP material from malformed proof and container bytes", async () => {
+    const noSignature = await verifyTapVideoLocally(box("ftyp", encoder.encode("mp42")));
+    expect(classifyVideoReport(noSignature)).toBe("noSignature");
+
+    const artifact = await makeArtifact();
+    const badProof = artifact.bytes.slice();
+    badProof[badProof.length - 1] = 1;
+    const malformedProof = await verifyTapVideoLocally(badProof);
+    expect(malformedProof.checks.at(-1)).toEqual(expect.objectContaining({ id: "video-proof", status: "fail" }));
+    expect(classifyVideoReport(malformedProof)).toBe("invalid");
+    expect(malformedProof.serverRequest).toBeNull();
+
+    const malformedContainer = await verifyTapVideoLocally(artifact.bytes.subarray(0, -1));
+    expect(malformedContainer.checks.at(-1)).toEqual(expect.objectContaining({ id: "video-container", status: "fail" }));
+    expect(classifyVideoReport(malformedContainer)).toBe("invalid");
+    expect(malformedContainer.serverRequest).toBeNull();
+  });
+
   it("hashes the exact canonical raw payload value bytes instead of reserializing", async () => {
     const artifact = await makeArtifact({ exactNumberToken: true });
     expect(artifact.payloadText).toContain('"nominalFrameRate":1e+0');
@@ -259,6 +302,18 @@ interface ArtifactOptions {
   exactNumberToken?: boolean;
   payloadTextTransform?: (payload: string) => string;
   mutateManifest?: (manifest: AnyRecord) => void;
+}
+
+function classifyVideoReport(local: LocalVerificationReport) {
+  return classifyResult({
+    fileName: "capture.mp4",
+    fileSize: 0,
+    finalStatus: "invalid",
+    local,
+    server: null,
+    serverError: null,
+    serverBoundary: { status: "not-run", summary: "Local validation failed." }
+  });
 }
 
 async function makeArtifact(options: ArtifactOptions = {}): Promise<{ bytes: Uint8Array; payloadText: string }> {

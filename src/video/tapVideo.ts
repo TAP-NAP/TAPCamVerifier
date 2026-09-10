@@ -158,24 +158,32 @@ interface ParsedDepthFrame extends TapVideoDepthFrame {
 
 export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVerificationReport> {
   const checks: VerificationCheck[] = [];
+  let manifest: TapVideoManifest | undefined;
+  let failureStage = { id: "video-container", label: "TAP Video container" };
   try {
     if (bytes.byteLength > MAX_CAPTURE_INPUT_BYTES) {
       throw new Error("TAP Video exceeds the 512 MiB browser verification limit.");
     }
     const topLevel = parseBoxes(bytes, 0, bytes.byteLength);
+    if (!topLevel.some((box) => box.type === "uuid" && (box.userType === MANIFEST_UUID || box.userType === PROOF_UUID))) {
+      failureStage = { id: "video-signature-missing", label: "TAP Video signature" };
+    }
     const manifestBox = requireUniqueUUIDBox(topLevel, MANIFEST_UUID, "TAP video manifest");
     const proofBox = requireUniqueUUIDBox(topLevel, PROOF_UUID, "TAP proof slot");
     if (manifestBox.payloadEnd - manifestBox.payloadStart > MAX_MANIFEST_BYTES) {
       throw new Error("TAP video manifest exceeds the bounded payload limit.");
     }
+    failureStage = { id: "video-manifest", label: "TAP Video manifest" };
     const manifestDocument = parseManifest(bytes.subarray(manifestBox.payloadStart, manifestBox.payloadEnd));
-    const manifest = manifestDocument.manifest;
+    manifest = manifestDocument.manifest;
     checks.push(pass("video-container", "TAP Video container", "Found one v1 video manifest and one fixed proof slot."));
 
+    failureStage = { id: "video-proof", label: "TAP Video proof envelope" };
     const proof = parseProofEnvelope(bytes, proofBox);
     const proofValue = parseProofValue(proof);
     checks.push(pass("video-proof", "TAP Video proof envelope", "The App Attest proof envelope and fixed-slot padding are structurally valid."));
 
+    failureStage = { id: "video-content-binding", label: "TAP Video v1 content binding" };
     const recomputedDigest = await buildContentDigest(bytes, proofBox, manifest, manifestDocument.payloadBytes);
     const suppliedDigest = proofValue.contentDigest;
     const digestMatches = canonicalJSON(suppliedDigest) === canonicalJSON(recomputedDigest);
@@ -188,6 +196,7 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
         : "Signed TAP Video content binding does not match the supplied MP4 bytes."
     ));
 
+    failureStage = { id: "video-signing-binding", label: "TAP Video signing binding" };
     const expectedSigningBinding = {
       bodySHA256: await sha256Base64Url(utf8(canonicalJSON(recomputedDigest))),
       captureID: manifest.payload.id,
@@ -221,6 +230,7 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
 
     const localBindingMatches = proofFieldsValid && signingBindingMatches && digestMatches;
     if (localBindingMatches) {
+      failureStage = { id: "video-semantics", label: "TAP Video v1 manifest and timed metadata" };
       await validateVideoSemantics(bytes, topLevel, manifest);
       checks.push(pass(
         "video-semantics",
@@ -280,9 +290,8 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const parseCheck: VerificationCheck = {
-      id: "parse",
-      label: "TAP Video parse",
+    const failedCheck: VerificationCheck = {
+      ...failureStage,
       status: "fail",
       detail: message
     };
@@ -291,11 +300,15 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
       summary: message,
       mediaKind: "video",
       verificationScope: "fullVideo",
-      captureId: null,
-      capturedAt: null,
-      manifest: { containerFormat: "mp4" },
+      captureId: manifest?.payload.id ?? null,
+      capturedAt: manifest?.payload.capturedAt ?? null,
+      manifest: {
+        containerFormat: "mp4",
+        schemaId: manifest?.schema.id,
+        capture: manifest?.payload
+      },
       serverRequest: null,
-      checks: [parseCheck]
+      checks: [...checks, failedCheck]
     };
   }
 }
