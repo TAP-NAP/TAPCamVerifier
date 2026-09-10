@@ -144,24 +144,34 @@ the WASM module and Vite site, and deploys `dist/` on pushes to `main` or a
 manual workflow dispatch. Configure the repository's Pages source as
 `GitHub Actions`.
 
-After tests and the build pass, the workflow also uploads the contents of `dist/`
-as `tapnap-web-${{ github.sha }}-${{ github.run_attempt }}`, retained for 30 days.
-The ECS deployment tool requires the `build` job (tests, build, and artifact upload)
-to succeed in the artifact's workflow run and attempt, then verifies its GitHub
-archive digest before publishing it. A pending or failed Pages deployment does
-not block ECS deployment. See the
+After the `build` job passes its tests, build, and artifact upload, a separate
+`publish-ecs` job publishes those same static files to the `ecs-web` branch.
+Only this job has repository write permission. It skips publication if `main`
+has advanced, so rerunning an older workflow cannot replace a newer website.
+A pending or failed Pages deployment does not block this publication.
+
+On ECS, `tap update web` downloads the public `ecs-web` branch with Git and
+switches the website served by Nginx. ECS needs no frontend compiler, GitHub
+token, Actions run ID, or SSH access from GitHub. The branch contains generated
+files only; change source on `main` instead of editing it directly. The
+`.tap-source` file records the original source commit, and the branch's own Git
+commit identifies the published files. See the
 [server deployment instructions](https://github.com/TAP-NAP/server/tree/main/deploy)
-for manual deployment and rollback. JavaScript, CSS, and the verifier WASM are
-published with content-hashed asset filenames. A compatibility copy at
+for installation and updates. The first ECS update requires a successful run
+of the new `publish-ecs` job to create the branch.
+
+JavaScript, CSS, and the verifier WASM are published with content-hashed asset
+filenames. A compatibility copy at
 `/wasm/tapcam_verifier_wasm.wasm` remains for previously loaded Pages tabs;
 new pages reference only the hashed WASM asset.
 
-- Production page: <https://verifier.tapnap.net/>
+- ECS production target: <https://www.tapnap.net/>; configure `tapnap.net` to redirect here.
+- Overseas and testing page: <https://verifier.tapnap.net/>
 - Default project page: <https://tap-nap.github.io/TAPCamVerifier/>
 - Server endpoint:
   <https://www.tapnap.net/tapcam/capture-signatures/verify>
 
-The server must allow the exact production origin
+The server must allow the exact overseas origin
 `https://verifier.tapnap.net`. Local `http://127.0.0.1:*` origins are expected
 to fail server verification unless explicitly added to its CORS allowlist.
 

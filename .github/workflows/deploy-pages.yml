@@ -8,8 +8,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -18,10 +16,15 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -48,18 +51,57 @@ jobs:
       - name: Build static site
         run: npm run build
 
-      - name: Upload site for manual server deployment
-        uses: actions/upload-artifact@v4
-        with:
-          name: tapnap-web-${{ github.sha }}-${{ github.run_attempt }}
-          path: dist/
-          if-no-files-found: error
-          retention-days: 30
-
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+
+  publish-ecs:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the tested site
+        uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: artifact
+
+      - name: Publish static files to ecs-web
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir site
+          tar -xf artifact/artifact.tar -C site
+          cd site
+          git init -b ecs-web
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+          auth=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git config http.https://github.com/.extraheader "AUTHORIZATION: basic $auth"
+
+          # Keep branch history and use an ordinary fast-forward push.
+          previous=$(git ls-remote origin refs/heads/ecs-web)
+          if [ -n "$previous" ]; then
+            git fetch --depth=1 origin refs/heads/ecs-web
+            git reset --soft FETCH_HEAD
+          fi
+          printf '%s\n' "$GITHUB_SHA" > .tap-source
+          git add --all
+          git commit --allow-empty -m "Build $GITHUB_SHA (run $GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT)"
+
+          # An old workflow rerun must not replace the current main build.
+          latest=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$latest" != "$GITHUB_SHA" ]; then
+            echo 'Skipping ECS publication: main has advanced.'
+            exit 0
+          fi
+          git push origin HEAD:refs/heads/ecs-web
 
   deploy:
     environment:
@@ -67,6 +109,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      pages: write
+      id-token: write
 
     steps:
       - name: Deploy to GitHub Pages
