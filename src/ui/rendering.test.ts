@@ -4,6 +4,7 @@ import type { ProjectedPixelCloud } from "../geometry/types";
 import type { OriginalPreviewAvailable } from "../original/types";
 import type { CombinedVerificationResult } from "../verifier/types";
 import {
+  classifyResult,
   renderDepthPanel,
   verificationResultPhase,
   renderOriginalPreviewLoading,
@@ -66,11 +67,30 @@ describe("renderVerificationResult", () => {
   it("keeps failed results failed without rendering arbitrary diagnostic text", () => {
     const html = renderVerificationResult({
       ...result, finalStatus: "invalid", server: { status: "invalid", reason: "private-key private-assertion" },
-      local: { ...result.local, status: "invalid", mediaKind: "video", verificationScope: "fullVideo", summary: "raw bytes secret", checks: [{ id: "video-proof", status: "fail", label: "private-key", detail: "private-assertion" }] }
+      local: { ...result.local, status: "invalid", mediaKind: "video", verificationScope: "fullVideo", summary: "raw bytes secret", checks: [{ id: "video-content-binding", status: "fail", label: "private-key", detail: "private-assertion" }] }
     });
     expect(html).toContain("This file did not pass verification");
     expect(html).toContain("Complete video");
     expect(html).not.toMatch(/private-key|private-assertion|raw bytes secret/);
+  });
+
+  it("distinguishes parse failures and a missing signature from signature rejection", () => {
+    for (const id of ["parse", "video-container", "video-manifest", "video-proof"]) {
+      const failed = { ...result, finalStatus: "invalid" as const, server: null,
+        local: { ...result.local, status: "invalid", checks: [{ id, label: "Parse", status: "fail" as const, detail: "Malformed data" }] } };
+      expect(classifyResult(failed)).toBe("parseError");
+      expect(renderVerificationResult(failed)).not.toContain("No TAPCam signature was found");
+    }
+    for (const id of ["signature-missing", "video-signature-missing"]) {
+      expect(classifyResult({ ...result, finalStatus: "invalid", server: null,
+        local: { ...result.local, status: "invalid", checks: [{ id, label: "Signature", status: "fail", detail: "Absent" }] } })).toBe("noSignature");
+    }
+  });
+
+  it("shows passed local integrity independently from a server request that has not completed", () => {
+    const html = renderVerificationResult({ ...result, finalStatus: "invalid", server: null, serverError: "offline" });
+    expect(html).toContain("Signature verification is incomplete");
+    expect(html).not.toContain("The signature and file integrity passed verification");
   });
 
   it("preserves the limited Live Photo scope and missing video warning", () => {

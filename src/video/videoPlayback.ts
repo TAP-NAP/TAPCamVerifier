@@ -19,9 +19,9 @@ export function mountTapVideoDepthPlayback(
 ): TapVideoPlaybackCleanup {
   let disposed = false;
   let renderGeneration = 0;
-  let renderedFrameIndex = -1;
+  let renderedFrame: TapVideoDepthFrame | null = null;
   let callbackHandle = 0;
-  const decodedCache = new Map<number, Uint8Array>();
+  const decodedCache = new Map<TapVideoDepthFrame, Uint8Array>();
 
   let inspection: ReturnType<typeof inspectTapVideoDepth>;
   try {
@@ -35,7 +35,7 @@ export function mountTapVideoDepthPlayback(
     };
   }
 
-  const format = inspection.manifest.payload.depthCoverage.format;
+  const format = inspection.manifest.payload.depthCoverage?.format;
   const displayTransform = inspection.manifest.payload.rgbTrack?.transform;
   const registration = inspection.manifest.payload.spatialRegistration;
   const frames = inspection.depthFrames;
@@ -53,12 +53,12 @@ export function mountTapVideoDepthPlayback(
   const renderAtCurrentTime = (): void => {
     if (disposed) return;
     const frame = nearestFrame(frames, video.currentTime);
-    if (!frame || frame.frameIndex === renderedFrameIndex) return;
+    if (!frame || frame === renderedFrame) return;
     const generation = ++renderGeneration;
     void decodedFrame(frame).then((decoded) => {
       if (disposed || generation !== renderGeneration) return;
       renderTapDepthFrame(decoded, format, canvas, displayTransform, registration);
-      renderedFrameIndex = frame.frameIndex;
+      renderedFrame = frame;
       status.textContent = t("videoPlayer.depthAtTime", { time: formatTime(frame.presentationTimeSeconds) });
       status.classList.remove("is-error");
     }).catch((error) => {
@@ -70,12 +70,12 @@ export function mountTapVideoDepthPlayback(
   };
 
   const decodedFrame = async (frame: TapVideoDepthFrame): Promise<Uint8Array> => {
-    const cached = decodedCache.get(frame.frameIndex);
+    const cached = decodedCache.get(frame);
     if (cached) return cached;
     const decoded = await decodeTapDepthFrame(frame);
-    decodedCache.set(frame.frameIndex, decoded);
+    decodedCache.set(frame, decoded);
     while (decodedCache.size > 2) {
-      const oldest = decodedCache.keys().next().value as number | undefined;
+      const oldest = decodedCache.keys().next().value as TapVideoDepthFrame | undefined;
       if (oldest === undefined) break;
       decodedCache.delete(oldest);
     }
@@ -97,7 +97,7 @@ export function mountTapVideoDepthPlayback(
   const onPause = (): void => renderAtCurrentTime();
   const onSeek = (): void => {
     renderGeneration += 1;
-    renderedFrameIndex = -1;
+    renderedFrame = null;
     renderAtCurrentTime();
   };
   const onTimeUpdate = (): void => renderAtCurrentTime();
@@ -126,18 +126,17 @@ export function mountTapVideoDepthPlayback(
 
 function nearestFrame(frames: TapVideoDepthFrame[], time: number): TapVideoDepthFrame | null {
   if (frames.length === 0 || !Number.isFinite(time)) return null;
-  let low = 0;
-  let high = frames.length - 1;
-  while (low <= high) {
-    const middle = (low + high) >> 1;
-    if (frames[middle].presentationTimeSeconds < time) low = middle + 1;
-    else high = middle - 1;
+  // Preserve sample identity and file order; signed timestamps may repeat or regress.
+  let nearest: TapVideoDepthFrame | null = null;
+  let distance = Number.POSITIVE_INFINITY;
+  for (const frame of frames) {
+    const candidate = Math.abs(frame.presentationTimeSeconds - time);
+    if (candidate < distance) {
+      nearest = frame;
+      distance = candidate;
+    }
   }
-  const after = frames[Math.min(low, frames.length - 1)];
-  const before = frames[Math.max(0, low - 1)];
-  return Math.abs(after.presentationTimeSeconds - time) < Math.abs(before.presentationTimeSeconds - time)
-    ? after
-    : before;
+  return nearest;
 }
 
 function formatTime(seconds: number): string {

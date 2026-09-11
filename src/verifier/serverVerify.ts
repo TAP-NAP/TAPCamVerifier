@@ -20,27 +20,10 @@ export async function verifyCaptureSignature(
     body: JSON.stringify(request)
   });
 
-  let payload: unknown = null;
-  const text = await response.text();
-  if (text.trim().length > 0) {
-    payload = JSON.parse(text) as CaptureSignatureVerifyResponse;
-  }
-
-  if (!response.ok) {
-    const reason = isObject(payload) && typeof payload.reason === "string"
-      ? payload.reason
-      : `HTTP ${response.status}`;
-    return {
-      status: "invalid",
-      reason
-    };
-  }
-
-  if (!isObject(payload) || typeof payload.status !== "string") {
-    return {
-      status: "invalid",
-      reason: "Verify endpoint returned an invalid response shape."
-    };
+  if (!response.ok) throw new Error(`Signature verification endpoint returned HTTP ${response.status}.`);
+  const payload: unknown = await response.json();
+  if (!isObject(payload) || (payload.status !== "valid" && payload.status !== "invalid")) {
+    throw new Error("Signature verification endpoint returned an invalid response shape.");
   }
 
   return payload as unknown as CaptureSignatureVerifyResponse;

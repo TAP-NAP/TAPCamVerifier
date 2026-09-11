@@ -16,14 +16,18 @@ const LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID: &str =
     "urn:tapnap:tapcam:live-photo-content-binding:v1";
 const MANIFEST_SCHEMA_ID: &str = "urn:tapnap:tapcam:still-photo-manifest:v1";
 const LIVE_PHOTO_MANIFEST_SCHEMA_ID: &str = "urn:tapnap:tapcam:live-photo-manifest:v1";
+#[cfg(test)]
 const MANIFEST_MEDIA_TYPE: &str = "application/vnd.tapnap.still-photo-manifest+json;version=1";
+#[cfg(test)]
 const LIVE_PHOTO_MANIFEST_MEDIA_TYPE: &str =
     "application/vnd.tapnap.live-photo-manifest+json;version=1";
 const MANIFEST_PAYLOAD_MEDIA_TYPE: &str =
     "application/vnd.tapnap.still-photo-manifest.payload+json;version=1";
 const LIVE_PHOTO_MANIFEST_PAYLOAD_MEDIA_TYPE: &str =
     "application/vnd.tapnap.live-photo-manifest.payload+json;version=1";
+#[cfg(test)]
 const MANIFEST_XMP_NAMESPACE_URI: &str = "urn:tapnap:tapcam:depth:1.0";
+#[cfg(test)]
 const MANIFEST_XMP_PREFIX: &str = "tapdepth";
 const MANIFEST_XMP_PATH: &str = "tapdepth:Manifest";
 const LIVE_PHOTO_PAIRED_VIDEO_FILENAME: &str = "paired-video.mov";
@@ -111,17 +115,9 @@ fn decode_lzfse_exact(encoded: &[u8], decoded: &mut [u8]) -> Result<(), String> 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tapcam_verify_file(
-    ptr: *const u8,
-    len: usize,
-    actual_depth_present: u32,
-) -> *const u8 {
+pub unsafe extern "C" fn tapcam_verify_file(ptr: *const u8, len: usize) -> *const u8 {
     let bytes = slice::from_raw_parts(ptr, len);
-    store_result(verify_capture_bytes_with_depth_readback(
-        bytes,
-        None,
-        actual_depth_present,
-    ))
+    store_result(verify_capture_package_bytes(bytes, None))
 }
 
 #[no_mangle]
@@ -130,19 +126,14 @@ pub unsafe extern "C" fn tapcam_verify_file_with_paired_video(
     file_len: usize,
     video_ptr: *const u8,
     video_len: usize,
-    actual_depth_present: u32,
 ) -> *const u8 {
     let bytes = slice::from_raw_parts(file_ptr, file_len);
-    let paired_video = if video_ptr.is_null() || video_len == 0 {
-        None
+    let paired_video = Some(if video_len == 0 {
+        &[][..]
     } else {
-        Some(slice::from_raw_parts(video_ptr, video_len))
-    };
-    store_result(verify_capture_bytes_with_depth_readback(
-        bytes,
-        paired_video,
-        actual_depth_present,
-    ))
+        slice::from_raw_parts(video_ptr, video_len)
+    });
+    store_result(verify_capture_package_bytes(bytes, paired_video))
 }
 
 #[no_mangle]
@@ -252,31 +243,8 @@ pub unsafe extern "C" fn tapcam_verify_clear_result() {
     LAST_RESULT = None;
 }
 
-pub fn verify_capture_package_bytes(
-    bytes: &[u8],
-    paired_video: Option<&[u8]>,
-    actual_depth_present: bool,
-) -> Value {
-    verification_result(verify_capture_bytes_inner(
-        bytes,
-        paired_video,
-        actual_depth_present,
-    ))
-}
-
-fn verify_capture_bytes_with_depth_readback(
-    bytes: &[u8],
-    paired_video: Option<&[u8]>,
-    actual_depth_present: u32,
-) -> Value {
-    let result = match actual_depth_present {
-        0 => verify_capture_bytes_inner(bytes, paired_video, false),
-        1 => verify_capture_bytes_inner(bytes, paired_video, true),
-        value => Err(format!(
-            "actual auxiliary depth readback flag must be 0 or 1, got {value}"
-        )),
-    };
-    verification_result(result)
+pub fn verify_capture_package_bytes(bytes: &[u8], paired_video: Option<&[u8]>) -> Value {
+    verification_result(verify_capture_bytes_inner(bytes, paired_video))
 }
 
 fn verification_result(result: Result<Value, String>) -> Value {
@@ -290,7 +258,7 @@ fn verification_result(result: Result<Value, String>) -> Value {
             "serverRequest": null,
             "checks": [
                 {
-                    "id": "parse",
+                    "id": if error == "missing proof slot" || error == "expected exactly one TAP proof slot; found 0" { "signature-missing" } else { "parse" },
                     "label": "Parse TAP content binding",
                     "status": "fail",
                     "detail": error
@@ -386,11 +354,7 @@ fn pixel_projection_result(result: Result<Value, String>) -> Value {
     }
 }
 
-fn verify_capture_bytes_inner(
-    bytes: &[u8],
-    paired_video: Option<&[u8]>,
-    actual_depth_present: bool,
-) -> Result<Value, String> {
+fn verify_capture_bytes_inner(bytes: &[u8], paired_video: Option<&[u8]>) -> Result<Value, String> {
     let container = detect_container(bytes)?;
     let slot = locate_proof_slot(bytes, container)?;
     let proof_envelope = read_proof_envelope(bytes, &slot)?;
@@ -402,16 +366,17 @@ fn verify_capture_bytes_inner(
         .map_err(|error| format!("tapdepth:Manifest is not valid JSON: {error}"))?;
     let schema = field(&manifest, "schema")?;
     let payload = field(&manifest, "payload")?;
-    let proofs = field(&manifest, "proofs")?
-        .as_array()
-        .ok_or("manifest.proofs is not an array")?;
+    let proof_count = manifest
+        .get("proofs")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
 
     let manifest_capture_id = string_field(payload, "id")?;
     let manifest_captured_at = string_field(payload, "capturedAt")?;
     let proof_type = string_field(&proof, "type")?;
     let proof_algorithm = string_field(&proof, "algorithm")?;
     let proof_key_id = string_field(&proof, "keyID")?;
-    let proof_created_at = string_field(&proof, "createdAt")?;
+
     let proof_value_encoded = string_field(&proof, "value")?;
 
     let proof_value_bytes = decode_base64url(proof_value_encoded)
@@ -427,23 +392,16 @@ fn verify_capture_bytes_inner(
         .get("schemaID")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let payload_is_live_photo = payload
-        .get("livePhoto")
-        .is_some_and(|live_photo| !live_photo.is_null());
-    let is_live_photo = match (manifest_schema_id, content_schema_id, payload_is_live_photo) {
-        (MANIFEST_SCHEMA_ID, CONTENT_BINDING_SCHEMA_ID, false) => false,
-        (LIVE_PHOTO_MANIFEST_SCHEMA_ID, LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID, true) => true,
-        _ => {
-            return Err(
-                "manifest schema, payload media kind, and content binding family do not match"
-                    .to_string(),
-            )
-        }
+    let is_live_photo = match (manifest_schema_id, content_schema_id) {
+        (MANIFEST_SCHEMA_ID, CONTENT_BINDING_SCHEMA_ID) => false,
+        (LIVE_PHOTO_MANIFEST_SCHEMA_ID, LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID) => true,
+        _ => return Err("manifest schema and content binding family do not match".to_string()),
     };
     if !is_live_photo && paired_video.is_some() {
         return Err("still-photo verification input must not include a paired video".to_string());
     }
-    let depth_availability = manifest_depth_availability(payload, actual_depth_present)?;
+    // The declaration is authenticated by bodySHA256, not inferred by a decoder.
+    let depth_resource = field(content_digest, "depthResource")?;
 
     let asset_hash_actual =
         sha256_base64url_excluding(bytes, slot.container_offset, slot.container_length)?;
@@ -513,7 +471,7 @@ fn verify_capture_bytes_inner(
                 embedded_payload_bytes.len(),
                 &video_hash,
                 video_bytes.len(),
-                depth_availability,
+                depth_resource,
             );
             paired_video_hash_actual = Some(video_hash.clone());
 
@@ -536,13 +494,6 @@ fn verify_capture_bytes_inner(
         }
 
         let mut live_checks = Vec::new();
-        live_checks.push(live_photo_payload_check(payload.get("livePhoto")));
-        live_checks.push(optional_json_equality_check(
-            "depth-resource",
-            "Rebuild auxiliary depth resource from readback",
-            &depth_resource_object(depth_availability),
-            content_digest.get("depthResource"),
-        ));
         live_checks.push(optional_json_equality_check(
             "live-photo-primary-resource",
             "Recompute Live Photo primary photo resource",
@@ -586,16 +537,11 @@ fn verify_capture_bytes_inner(
 
         let mut checks = common_verification_checks(
             &slot,
-            schema,
             is_live_photo,
-            proofs.len(),
-            container,
-            payload.get("capture"),
             proof_type,
             proof_algorithm,
             proof_key_id,
             proof_value_key_id,
-            proof_created_at,
             manifest_captured_at,
             content_schema_id,
             manifest_capture_id,
@@ -644,7 +590,7 @@ fn verify_capture_bytes_inner(
             live_photo_scope,
             container,
             schema,
-            proofs.len(),
+            proof_count,
             payload,
             manifest_capture_id,
             manifest_captured_at,
@@ -652,7 +598,7 @@ fn verify_capture_bytes_inner(
             proof_type,
             proof_algorithm,
             proof_key_id,
-            proof_created_at,
+            manifest_captured_at,
             &asset_hash_actual,
             &metadata_hash_actual,
             body_sha_actual.as_deref(),
@@ -679,7 +625,7 @@ fn verify_capture_bytes_inner(
         manifest_captured_at,
         &asset_hash_actual,
         &metadata_hash_actual,
-        depth_availability,
+        depth_resource,
     );
     let body_sha = sha256_base64url(&canonical_json_bytes(&digest)?);
     let signing_binding_expected = json!({
@@ -694,16 +640,11 @@ fn verify_capture_bytes_inner(
 
     let mut checks = common_verification_checks(
         &slot,
-        schema,
         is_live_photo,
-        proofs.len(),
-        container,
-        payload.get("capture"),
         proof_type,
         proof_algorithm,
         proof_key_id,
         proof_value_key_id,
-        proof_created_at,
         manifest_captured_at,
         content_schema_id,
         manifest_capture_id,
@@ -744,7 +685,7 @@ fn verify_capture_bytes_inner(
         SCOPE_STILL_PHOTO,
         container,
         schema,
-        proofs.len(),
+        proof_count,
         payload,
         manifest_capture_id,
         manifest_captured_at,
@@ -752,7 +693,7 @@ fn verify_capture_bytes_inner(
         proof_type,
         proof_algorithm,
         proof_key_id,
-        proof_created_at,
+        manifest_captured_at,
         &asset_hash_actual,
         &metadata_hash_actual,
         body_sha_actual.as_deref(),
@@ -1086,8 +1027,9 @@ fn project_depth_pixels_inner(
     let camera = if is_front_camera {
         let (camera_transform, camera_width, camera_height) =
             if matches!(detect_container(file_bytes), Ok(Container::Heic)) {
-                let camera_transform = OrientationTransform::from_photo_orientation_str(photo_orientation)
-                    .unwrap_or(OrientationTransform::None);
+                let camera_transform =
+                    OrientationTransform::from_photo_orientation_str(photo_orientation)
+                        .unwrap_or(OrientationTransform::None);
                 // HEIF pixels are oriented, but signed calibration remains in native coordinates.
                 let (native_width, native_height) =
                     camera_transform.output_dimensions(output_width, output_height);
@@ -1699,6 +1641,7 @@ enum Container {
     Jpeg,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DepthAvailability {
     Available,
@@ -1727,13 +1670,6 @@ impl Container {
         }
     }
 
-    fn expected_codec(self) -> &'static str {
-        match self {
-            Container::Heic => "hvc1",
-            Container::Jpeg => "jpeg",
-        }
-    }
-
     fn uniform_type_identifier(self) -> &'static str {
         match self {
             Container::Heic => "public.heic",
@@ -1758,7 +1694,7 @@ fn recompute_content_digest(
     captured_at: &str,
     asset_hash: &str,
     metadata_hash: &str,
-    depth_availability: DepthAvailability,
+    depth_resource: &Value,
 ) -> Value {
     json!({
         "schemaID": CONTENT_BINDING_SCHEMA_ID,
@@ -1768,7 +1704,7 @@ fn recompute_content_digest(
         "assetHash": asset_hash_object(container, byte_count, slot, asset_hash),
         "metadataHash": metadata_hash_object(MANIFEST_PAYLOAD_MEDIA_TYPE, metadata_hash),
         "proofSlot": proof_slot_object(slot),
-        "depthResource": depth_resource_object(depth_availability)
+        "depthResource": depth_resource
     })
 }
 
@@ -1784,7 +1720,7 @@ fn recompute_live_photo_content_digest(
     payload_byte_count: usize,
     paired_video_hash: &str,
     paired_video_byte_count: usize,
-    depth_availability: DepthAvailability,
+    depth_resource: &Value,
 ) -> Value {
     json!({
         "schemaID": LIVE_PHOTO_CONTENT_BINDING_SCHEMA_ID,
@@ -1794,7 +1730,7 @@ fn recompute_live_photo_content_digest(
         "assetHash": asset_hash_object(container, byte_count, slot, asset_hash),
         "metadataHash": metadata_hash_object(LIVE_PHOTO_MANIFEST_PAYLOAD_MEDIA_TYPE, metadata_hash),
         "proofSlot": proof_slot_object(slot),
-        "depthResource": depth_resource_object(depth_availability),
+        "depthResource": depth_resource,
         "signedResources": [
             live_photo_primary_resource(container, byte_count, slot, asset_hash),
             live_photo_manifest_resource(payload_byte_count, metadata_hash),
@@ -1845,6 +1781,7 @@ fn proof_slot_object(slot: &ProofSlot) -> Value {
     })
 }
 
+#[cfg(test)]
 fn depth_resource_object(availability: DepthAvailability) -> Value {
     match availability {
         DepthAvailability::Available => json!({
@@ -1916,16 +1853,11 @@ fn signed_resource_by_role<'a>(content_digest: &'a Value, role: &str) -> Option<
 #[allow(clippy::too_many_arguments)]
 fn common_verification_checks(
     slot: &ProofSlot,
-    schema: &Value,
     is_live_photo: bool,
-    proof_count: usize,
-    container: Container,
-    capture: Option<&Value>,
     proof_type: &str,
     proof_algorithm: &str,
     proof_key_id: &str,
     proof_value_key_id: &str,
-    proof_created_at: &str,
     manifest_captured_at: &str,
     content_schema_id: &str,
     manifest_capture_id: &str,
@@ -1956,9 +1888,6 @@ fn common_verification_checks(
             "Read XMP tapdepth:Manifest",
             "Manifest JSON was found in the uploaded photo.",
         ),
-        schema_check(schema, is_live_photo),
-        manifest_proofs_empty_check(proof_count),
-        capture_policy_check(container, capture),
         equality_check(
             "proof-type",
             "Require appAttestAssertion proof",
@@ -1977,12 +1906,6 @@ fn common_verification_checks(
             "Proof key id matches proof value key id",
             proof_key_id,
             proof_value_key_id,
-        ),
-        equality_check(
-            "proof-created-at",
-            "Proof timestamp matches capture digest",
-            proof_created_at,
-            manifest_captured_at,
         ),
         equality_check(
             "content-binding-schema",
@@ -2183,7 +2106,10 @@ fn locate_bmff_proof_slot(bytes: &[u8]) -> Result<ProofSlot, String> {
     let mut offset = 0usize;
     let mut matches = Vec::new();
 
-    while offset + 8 <= bytes.len() {
+    while offset < bytes.len() {
+        if bytes.len() - offset < 8 {
+            return Err("incomplete BMFF box header while locating proof slot".to_string());
+        }
         let box_start = offset;
         let size32 = read_u32_be(bytes, offset)? as usize;
         let type_offset = offset + 4;
@@ -2191,11 +2117,11 @@ fn locate_bmff_proof_slot(bytes: &[u8]) -> Result<ProofSlot, String> {
 
         let box_size = if size32 == 1 {
             if offset + 8 > bytes.len() {
-                break;
+                return Err("incomplete BMFF extended box size".to_string());
             }
             let large_size = read_u64_be(bytes, offset)?;
             if large_size > usize::MAX as u64 {
-                break;
+                return Err("BMFF box size exceeds addressable range".to_string());
             }
             offset += 8;
             large_size as usize
@@ -2205,12 +2131,11 @@ fn locate_bmff_proof_slot(bytes: &[u8]) -> Result<ProofSlot, String> {
             size32
         };
 
-        let box_end = match box_start.checked_add(box_size) {
-            Some(value) => value,
-            None => break,
-        };
+        let box_end = box_start
+            .checked_add(box_size)
+            .ok_or("BMFF box range overflow")?;
         if box_size < offset - box_start || box_end > bytes.len() {
-            break;
+            return Err("invalid BMFF box range while locating proof slot".to_string());
         }
 
         if &bytes[type_offset..type_offset + 4] == b"uuid"
@@ -2240,43 +2165,44 @@ fn locate_jpeg_proof_slot(bytes: &[u8]) -> Result<ProofSlot, String> {
 
     let mut offset = 2usize;
     let mut matches = Vec::new();
-    while offset + 4 <= bytes.len() {
+    while offset < bytes.len() {
         if bytes[offset] != 0xff {
-            break;
+            return Err("invalid JPEG marker while locating proof slot".to_string());
         }
         let mut marker_offset = offset;
         while marker_offset < bytes.len() && bytes[marker_offset] == 0xff {
             marker_offset += 1;
         }
         if marker_offset >= bytes.len() {
-            break;
+            return Err("incomplete JPEG marker while locating proof slot".to_string());
         }
 
         let marker = bytes[marker_offset];
         offset = marker_offset + 1;
-        if marker == 0xd9 || marker == 0xda {
+        if marker == 0xd9 {
             break;
         }
         if (0xd0..=0xd7).contains(&marker) || marker == 0x01 {
             continue;
         }
         if offset + 2 > bytes.len() {
-            break;
+            return Err("incomplete JPEG segment length while locating proof slot".to_string());
         }
 
         let segment_length = read_u16_be(bytes, offset)? as usize;
         let segment_start = marker_offset - 1;
         let payload_offset = offset + 2;
-        let segment_end = match offset.checked_add(segment_length) {
-            Some(value) => value,
-            None => break,
-        };
+        let segment_end = offset
+            .checked_add(segment_length)
+            .ok_or("JPEG segment range overflow")?;
         if segment_length < 2 || segment_end > bytes.len() {
+            return Err("invalid JPEG segment range while locating proof slot".to_string());
+        }
+        if marker == 0xda {
             break;
         }
 
         if marker == 0xeb
-            && segment_length == PROOF_PAYLOAD_BYTE_COUNT + 2
             && payload_offset + PROOF_MAGIC.len() <= segment_end
             && &bytes[payload_offset..payload_offset + PROOF_MAGIC.len()] == PROOF_MAGIC
         {
@@ -2531,46 +2457,6 @@ fn string_field<'a>(value: &'a Value, name: &str) -> Result<&'a str, String> {
     field(value, name)?
         .as_str()
         .ok_or_else(|| format!("{name} is not a string"))
-}
-
-fn manifest_depth_availability(
-    payload: &Value,
-    actual_depth_present: bool,
-) -> Result<DepthAvailability, String> {
-    let capture = field(payload, "capture")?;
-    let depth = field(payload, "depth")?;
-    let capture_availability = string_field(capture, "depthAvailability")?;
-    let depth_availability = string_field(depth, "availability")?;
-
-    if capture_availability != depth_availability {
-        return Err(format!(
-            "manifest capture.depthAvailability ({capture_availability}) and depth.availability ({depth_availability}) disagree"
-        ));
-    }
-
-    let availability = match capture_availability {
-        "available" => DepthAvailability::Available,
-        "unavailable" => DepthAvailability::Unavailable,
-        value => {
-            return Err(format!(
-                "manifest depth availability must be available or unavailable, got {value}"
-            ))
-        }
-    };
-
-    if actual_depth_present != (availability == DepthAvailability::Available) {
-        return Err(match availability {
-            DepthAvailability::Available => {
-                "manifest marks depth available but auxiliary depth readback is missing".to_string()
-            }
-            DepthAvailability::Unavailable => {
-                "manifest marks depth unavailable but auxiliary depth readback is present"
-                    .to_string()
-            }
-        });
-    }
-
-    Ok(availability)
 }
 
 fn optional_u32(value: &Value, name: &str) -> Option<u32> {
@@ -2896,8 +2782,7 @@ fn resample_original_rgba(
 
     for y in 0..output_height as usize {
         for x in 0..output_width as usize {
-            let source_x =
-                ((x as f64 + 0.5) * x_scale - 0.5).clamp(0.0, (source_width - 1) as f64);
+            let source_x = ((x as f64 + 0.5) * x_scale - 0.5).clamp(0.0, (source_width - 1) as f64);
             let source_y =
                 ((y as f64 + 0.5) * y_scale - 0.5).clamp(0.0, (source_height - 1) as f64);
             let offset = (y * output_width as usize + x) * 4;
@@ -3304,73 +3189,6 @@ fn optional_json_equality_check(
     }
 }
 
-fn manifest_proofs_empty_check(count: usize) -> Value {
-    json!({
-        "id": "manifest-proofs-empty",
-        "label": "Require empty manifest proofs",
-        "status": if count == 0 { "pass" } else { "fail" },
-        "detail": if count == 0 {
-            "Manifest carries no proof body; proof is stored in the fixed slot.".to_string()
-        } else {
-            format!("manifest.proofs must be empty, got {count}.")
-        },
-        "actual": count,
-        "expected": 0
-    })
-}
-
-fn schema_check(schema: &Value, is_live_photo: bool) -> Value {
-    let expected = json!({
-        "id": if is_live_photo { LIVE_PHOTO_MANIFEST_SCHEMA_ID } else { MANIFEST_SCHEMA_ID },
-        "mediaType": if is_live_photo { LIVE_PHOTO_MANIFEST_MEDIA_TYPE } else { MANIFEST_MEDIA_TYPE },
-        "version": 1,
-        "xmpManifestPath": MANIFEST_XMP_PATH,
-        "xmpNamespaceURI": MANIFEST_XMP_NAMESPACE_URI,
-        "xmpPrefix": MANIFEST_XMP_PREFIX
-    });
-    json_equality_check(
-        "manifest-schema",
-        "Require TAP depth manifest schema",
-        schema,
-        &expected,
-    )
-}
-
-fn live_photo_payload_check(live_photo: Option<&Value>) -> Value {
-    let Some(live_photo) = live_photo else {
-        return json!({
-            "id": "live-photo-payload",
-            "label": "Require Live Photo manifest payload",
-            "status": "fail",
-            "detail": "manifest.payload.livePhoto is missing."
-        });
-    };
-
-    let mut violations = Vec::new();
-    if live_photo.get("presence").and_then(Value::as_str) != Some("paired-video") {
-        violations.push("presence must be paired-video");
-    }
-    if live_photo
-        .get("pairedVideoFilename")
-        .and_then(Value::as_str)
-        != Some(LIVE_PHOTO_PAIRED_VIDEO_FILENAME)
-    {
-        violations.push("pairedVideoFilename must be paired-video.mov");
-    }
-
-    json!({
-        "id": "live-photo-payload",
-        "label": "Require Live Photo manifest payload",
-        "status": if violations.is_empty() { "pass" } else { "fail" },
-        "detail": if violations.is_empty() {
-            "manifest.payload.livePhoto declares the paired MOV resource.".to_string()
-        } else {
-            violations.join("; ")
-        },
-        "actual": live_photo
-    })
-}
-
 fn live_photo_paired_video_descriptor_check(resource: Option<&Value>) -> Value {
     let Some(resource) = resource else {
         return json!({
@@ -3458,58 +3276,6 @@ fn live_photo_scope_warnings(is_live_photo: bool, paired_status: &str) -> Vec<Va
         })],
         _ => Vec::new(),
     }
-}
-
-fn capture_policy_check(container: Container, capture: Option<&Value>) -> Value {
-    let Some(capture) = capture else {
-        return json!({
-            "id": "release-profile-policy",
-            "label": "Require Release capture profile policy",
-            "status": "fail",
-            "detail": "payload.capture is missing."
-        });
-    };
-
-    let expected_codec = container.expected_codec();
-    let mut violations = Vec::new();
-    if capture.get("requestedCodec").and_then(Value::as_str) != Some(expected_codec) {
-        violations.push(format!("requestedCodec must be {expected_codec}"));
-    }
-    if capture
-        .get("depthDataDeliveryEnabled")
-        .and_then(Value::as_bool)
-        != Some(true)
-    {
-        violations.push("depthDataDeliveryEnabled must be true".to_string());
-    }
-    if capture
-        .get("embedsDepthDataInPhoto")
-        .and_then(Value::as_bool)
-        != Some(true)
-    {
-        violations.push("embedsDepthDataInPhoto must be true".to_string());
-    }
-    if capture.get("depthDataFiltered").and_then(Value::as_bool) != Some(true) {
-        violations.push("depthDataFiltered must be true".to_string());
-    }
-    if capture
-        .get("photoQualityPrioritization")
-        .and_then(Value::as_str)
-        != Some("quality")
-    {
-        violations.push("photoQualityPrioritization must be quality".to_string());
-    }
-
-    json!({
-        "id": "release-profile-policy",
-        "label": "Require Release capture profile policy",
-        "status": if violations.is_empty() { "pass" } else { "fail" },
-        "detail": if violations.is_empty() {
-            "Manifest capture fields match the reviewed Release profile.".to_string()
-        } else {
-            violations.join("; ")
-        }
-    })
 }
 
 #[cfg(test)]
@@ -3890,11 +3656,15 @@ mod tests {
 
     #[test]
     fn decoded_front_heif_pixels_are_not_reoriented_for_any_exif_direction() {
-        let rgba = [10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255,
-                    40, 0, 0, 255, 50, 0, 0, 255, 60, 0, 0, 255];
+        let rgba = [
+            10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255, 40, 0, 0, 255, 50, 0, 0, 255, 60, 0, 0,
+            255,
+        ];
         for orientation in 1..=8 {
             let manifest = depth_manifest_fixture(
-                3, 2, &format!("cgImagePropertyOrientation:{orientation}"),
+                3,
+                2,
+                &format!("cgImagePropertyOrientation:{orientation}"),
                 r#""photoLens":{"position":"front"}"#,
             );
             let mut bytes = vec![0, 0, 0, 12];
@@ -3904,10 +3674,22 @@ mod tests {
             assert_eq!(report["rotation"], "none");
             assert_eq!(report["width"], 3);
             assert_eq!(report["height"], 2);
-            assert_eq!(STANDARD.decode(report["previewRgbaBase64"].as_str().unwrap()).unwrap(), rgba);
             assert_eq!(
-                display_orientation_transform(&bytes, 3, 2, Some(3), Some(2),
-                    Some(&format!("cgImagePropertyOrientation:{orientation}")), true),
+                STANDARD
+                    .decode(report["previewRgbaBase64"].as_str().unwrap())
+                    .unwrap(),
+                rgba
+            );
+            assert_eq!(
+                display_orientation_transform(
+                    &bytes,
+                    3,
+                    2,
+                    Some(3),
+                    Some(2),
+                    Some(&format!("cgImagePropertyOrientation:{orientation}")),
+                    true
+                ),
                 OrientationTransform::None,
             );
         }
@@ -4480,16 +4262,20 @@ mod tests {
         ];
         for (orientation, width, height, fx, fy, cx, cy) in cases {
             let manifest = depth_manifest_fixture(
-                4, 3, &format!("cgImagePropertyOrientation:{orientation}"),
+                4,
+                3,
+                &format!("cgImagePropertyOrientation:{orientation}"),
                 r#""photoLens":{"position":"front"}"#,
-            ).replace(r#""width":4}"#, &format!(r#""width":4,{calibration}}}"#));
+            )
+            .replace(r#""width":4}"#, &format!(r#""width":4,{calibration}}}"#));
             let mut bytes = vec![0, 0, 0, 12];
             bytes.extend_from_slice(b"ftypheic");
             bytes.extend_from_slice(manifest.as_bytes());
             let rgba = [128; 48];
             let depth = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-            let report = project_depth_pixels(&bytes, &rgba, width, height, &depth,
-                width, height, width, height);
+            let report = project_depth_pixels(
+                &bytes, &rgba, width, height, &depth, width, height, width, height,
+            );
             assert_eq!(report["rotation"], "none");
             assert_eq!(report["cameraModel"], "metadata-pinhole");
             assert_eq!(report["imageWidth"], width);
@@ -4594,7 +4380,7 @@ mod tests {
     #[test]
     fn synthetic_content_binding_verifies() {
         let bytes = synthetic_signed_heic();
-        let report = verification_result(verify_capture_bytes_inner(&bytes, None, true));
+        let report = verification_result(verify_capture_bytes_inner(&bytes, None));
         assert_eq!(report["status"], "valid");
         assert_eq!(
             report["expected"]["contentDigest"]["depthResource"],
@@ -4619,7 +4405,7 @@ mod tests {
             Some(json!("unavailable")),
             DepthAvailability::Unavailable,
         );
-        let report = verification_result(verify_capture_bytes_inner(&bytes, None, false));
+        let report = verification_result(verify_capture_bytes_inner(&bytes, None));
 
         assert_eq!(report["status"], "valid");
         assert_eq!(
@@ -4634,128 +4420,198 @@ mod tests {
     }
 
     #[test]
-    fn still_photo_rejects_available_manifest_when_depth_readback_is_missing() {
+    fn missing_signature_is_distinct_from_an_unreadable_proof() {
+        let report = verify_capture_package_bytes(&bmff_ftyp_box(), None);
+        assert_eq!(report["checks"][0]["id"], "signature-missing");
+        let report = verify_capture_package_bytes(&[0xff, 0xd8, 0xff, 0xd9], None);
+        assert_eq!(report["checks"][0]["id"], "signature-missing");
+        let mut bytes = synthetic_signed_heic();
+        let slot = locate_proof_slot(&bytes, Container::Heic).unwrap();
+        bytes[slot.payload_offset] ^= 1;
+        let report = verify_capture_package_bytes(&bytes, None);
+        assert_eq!(report["checks"][0]["id"], "parse");
+        assert!(report["serverRequest"].is_null());
+    }
+
+    #[test]
+    fn truncated_bmff_proof_framing_is_a_parse_error() {
         let bytes = synthetic_signed_heic();
-        let error = verify_capture_bytes_inner(&bytes, None, false).unwrap_err();
-
-        assert_eq!(
-            error,
-            "manifest marks depth available but auxiliary depth readback is missing"
-        );
+        let slot = locate_proof_slot(&bytes, Container::Heic).unwrap();
+        for end in [
+            slot.container_offset + 1,
+            slot.container_offset + 7,
+            slot.container_offset + 8,
+            slot.payload_offset - 1,
+            slot.payload_offset,
+            bytes.len() - 1,
+        ] {
+            let report = verify_capture_package_bytes(&bytes[..end], None);
+            assert_eq!(report["checks"][0]["id"], "parse", "cut at {end}: {report}");
+            assert!(report["serverRequest"].is_null());
+        }
+        for tail in [
+            [1u32.to_be_bytes().as_slice(), b"uuid"].concat(),
+            [1u32.to_be_bytes().as_slice(), b"uuid", &u64::MAX.to_be_bytes()].concat(),
+            [7u32.to_be_bytes().as_slice(), b"uuid"].concat(),
+        ] {
+            let malformed = [bmff_ftyp_box(), tail].concat();
+            let report = verify_capture_package_bytes(&malformed, None);
+            assert_eq!(report["checks"][0]["id"], "parse", "{report}");
+            assert!(report["serverRequest"].is_null());
+        }
     }
 
     #[test]
-    fn still_photo_rejects_unavailable_manifest_when_depth_readback_is_present() {
-        let bytes = synthetic_signed_heic_with_availability(
-            Some(json!("unavailable")),
-            Some(json!("unavailable")),
-            DepthAvailability::Unavailable,
-        );
-        let error = verify_capture_bytes_inner(&bytes, None, true).unwrap_err();
-
-        assert_eq!(
-            error,
-            "manifest marks depth unavailable but auxiliary depth readback is present"
-        );
+    fn truncated_jpeg_proof_framing_is_a_parse_error() {
+        let bytes = synthetic_signed_jpeg_with_foundation_location_number_lexemes();
+        let slot = locate_proof_slot(&bytes, Container::Jpeg).unwrap();
+        for end in [
+            slot.container_offset + 1,
+            slot.container_offset + 2,
+            slot.container_offset + 3,
+            slot.payload_offset,
+            slot.payload_offset + PROOF_MAGIC.len(),
+            slot.container_offset + slot.container_length - 1,
+        ] {
+            let report = verify_capture_package_bytes(&bytes[..end], None);
+            assert_eq!(report["checks"][0]["id"], "parse", "cut at {end}: {report}");
+            assert!(report["serverRequest"].is_null());
+        }
+        for tail in [
+            vec![0xff, 0xeb, 0, 1],
+            vec![0xff, 0xda, 0, 8, 0],
+            jpeg_segment(0xeb, PROOF_MAGIC),
+        ] {
+            let malformed = [vec![0xff, 0xd8], tail].concat();
+            let report = verify_capture_package_bytes(&malformed, None);
+            assert_eq!(report["checks"][0]["id"], "parse", "{report}");
+            assert!(report["serverRequest"].is_null());
+        }
+        // Proof discovery stops at the scan; compressed image bytes are opaque.
+        let before_scan = &bytes[..slot.container_offset + slot.container_length];
+        let opaque_scan = [before_scan, &[0xff, 0xda, 0, 2, 0x12, 0x34, 0xff]].concat();
+        let located = locate_proof_slot(&opaque_scan, Container::Jpeg).unwrap();
+        assert_eq!(located.container_offset, slot.container_offset);
+        assert_eq!(located.container_length, slot.container_length);
     }
 
     #[test]
-    fn still_photo_rejects_signed_depth_resource_that_disagrees_with_readback() {
-        let bytes = synthetic_signed_heic_with_availability(
-            Some(json!("unavailable")),
-            Some(json!("unavailable")),
+    fn photo_integrity_does_not_decode_or_assess_depth_declarations() {
+        // These HEIC fixtures contain no decodable image or auxiliary depth at all.
+        for (capture, depth) in [
+            (None, None),
+            (Some(json!("unknown")), Some(json!(0))),
+            (Some(json!("available")), Some(json!("unavailable"))),
+            (Some(json!(false)), Some(json!("available"))),
+        ] {
+            let bytes = synthetic_signed_heic_with_availability(
+                capture,
+                depth,
+                DepthAvailability::Available,
+            );
+            let report = verify_capture_package_bytes(&bytes, None);
+            assert_eq!(report["status"], "valid", "{report}");
+            assert!(report["serverRequest"].is_object());
+        }
+        let paired = b"opaque, not decodable MOV";
+        let bytes = synthetic_signed_live_photo_with_availability(
+            paired,
+            None,
+            Some(json!(0)),
             DepthAvailability::Available,
         );
-        let report = verification_result(verify_capture_bytes_inner(&bytes, None, false));
+        for supplied in [None, Some(paired.as_slice())] {
+            let report = verify_capture_package_bytes(&bytes, supplied);
+            assert_eq!(report["status"], "valid", "{report}");
+            assert!(report["serverRequest"].is_object());
+        }
+    }
 
+    #[test]
+    fn capture_profile_is_signed_metadata_not_an_integrity_requirement() {
+        let bytes = synthetic_signed_heic_payload(
+            json!({
+                "id": "capture", "capturedAt": "2026-06-22T00:00:00.000Z",
+                "capture": { "requestedCodec": "jpeg", "photoQualityPrioritization": "speed",
+                             "depthDataDeliveryEnabled": false, "embedsDepthDataInPhoto": false,
+                             "depthDataFiltered": false }
+            }),
+            DepthAvailability::Unavailable,
+        );
+        let report = verify_capture_package_bytes(&bytes, None);
+        assert_eq!(report["status"], "valid", "{report}");
+        assert!(report["serverRequest"].is_object());
+    }
+
+    #[test]
+    fn changing_covered_blob_bytes_still_blocks_verification() {
+        let mut bytes = synthetic_signed_heic();
+        let offset = bytes
+            .windows(b"aligned".len())
+            .position(|part| part == b"aligned")
+            .unwrap();
+        bytes[offset] = b'A';
+        let report = verify_capture_package_bytes(&bytes, None);
         assert_eq!(report["status"], "invalid");
+        assert!(report["serverRequest"].is_null());
+        for id in ["asset-hash", "metadata-hash"] {
+            assert!(report["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|check| check["id"] == id && check["status"] == "fail"));
+        }
+    }
+
+    #[test]
+    fn signed_depth_declaration_cannot_change_without_changing_the_bound_hash() {
+        let mut bytes = synthetic_signed_heic();
+        let slot = locate_proof_slot(&bytes, Container::Heic).unwrap();
+        let mut proof: Value =
+            serde_json::from_slice(read_proof_envelope(&bytes, &slot).unwrap()).unwrap();
+        let mut value: Value =
+            serde_json::from_slice(&decode_base64url(proof["value"].as_str().unwrap()).unwrap())
+                .unwrap();
+        value["contentDigest"]["depthResource"] = json!({ "presence": "changed" });
+        proof["value"] = json!(URL_SAFE_NO_PAD.encode(canonical_json_bytes(&value).unwrap()));
+        bytes[slot.payload_offset..slot.payload_offset + slot.payload_length]
+            .copy_from_slice(&proof_slot_payload(&canonical_json_bytes(&proof).unwrap()));
+        let report = verify_capture_package_bytes(&bytes, None);
+        assert_eq!(report["status"], "invalid");
+        assert!(report["serverRequest"].is_null());
         assert!(report["checks"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|check| check["id"] == "content-digest" && check["status"] == "fail"));
-        assert!(report["serverRequest"].is_null());
+            .any(|check| check["id"] == "body-sha" && check["status"] == "fail"));
     }
 
     #[test]
-    fn rejects_missing_unknown_and_non_string_depth_availability() {
-        let missing = synthetic_signed_heic_with_availability(
-            None,
-            Some(json!("available")),
-            DepthAvailability::Available,
-        );
-        assert_eq!(
-            verify_capture_bytes_inner(&missing, None, true).unwrap_err(),
-            "depthAvailability is missing"
-        );
-
-        let missing = synthetic_signed_heic_with_availability(
-            Some(json!("available")),
-            None,
-            DepthAvailability::Available,
-        );
-        assert_eq!(
-            verify_capture_bytes_inner(&missing, None, true).unwrap_err(),
-            "availability is missing"
-        );
-
-        let unknown = synthetic_signed_heic_with_availability(
-            Some(json!("unknown")),
-            Some(json!("unknown")),
-            DepthAvailability::Available,
-        );
-        assert_eq!(
-            verify_capture_bytes_inner(&unknown, None, true).unwrap_err(),
-            "manifest depth availability must be available or unavailable, got unknown"
-        );
-
-        let non_string = synthetic_signed_heic_with_availability(
-            Some(json!("available")),
-            Some(json!(true)),
-            DepthAvailability::Available,
-        );
-        assert_eq!(
-            verify_capture_bytes_inner(&non_string, None, true).unwrap_err(),
-            "availability is not a string"
-        );
-
-        let non_string = synthetic_signed_heic_with_availability(
-            Some(json!(true)),
-            Some(json!("available")),
-            DepthAvailability::Available,
-        );
-        assert_eq!(
-            verify_capture_bytes_inner(&non_string, None, true).unwrap_err(),
-            "depthAvailability is not a string"
-        );
+    fn unbound_outer_timestamp_is_not_used_as_a_verified_capture_time() {
+        let mut bytes = synthetic_signed_heic();
+        let slot = locate_proof_slot(&bytes, Container::Heic).unwrap();
+        let mut proof: Value =
+            serde_json::from_slice(read_proof_envelope(&bytes, &slot).unwrap()).unwrap();
+        proof["createdAt"] = json!("different outer description");
+        bytes[slot.payload_offset..slot.payload_offset + slot.payload_length]
+            .copy_from_slice(&proof_slot_payload(&canonical_json_bytes(&proof).unwrap()));
+        let report = verify_capture_package_bytes(&bytes, None);
+        assert_eq!(report["status"], "valid");
+        assert_eq!(report["capturedAt"], "2026-06-22T00:00:00.000Z");
+        assert_eq!(report["proof"]["createdAt"], report["capturedAt"]);
     }
 
     #[test]
-    fn rejects_manifest_depth_availability_disagreement() {
-        let bytes = synthetic_signed_heic_with_availability(
-            Some(json!("available")),
-            Some(json!("unavailable")),
-            DepthAvailability::Available,
-        );
-        let error = verify_capture_bytes_inner(&bytes, None, true).unwrap_err();
-
-        assert_eq!(
-            error,
-            "manifest capture.depthAvailability (available) and depth.availability (unavailable) disagree"
-        );
-    }
-
-    #[test]
-    fn rejects_unknown_wasm_depth_readback_flag() {
-        let bytes = synthetic_signed_heic();
-        let report = verify_capture_bytes_with_depth_readback(&bytes, None, 2);
-
-        assert_eq!(report["status"], "invalid");
-        assert_eq!(
-            report["summary"],
-            "actual auxiliary depth readback flag must be 0 or 1, got 2"
-        );
-        assert!(report["serverRequest"].is_null());
+    fn supplied_empty_mov_is_compared_as_bytes() {
+        let bytes = synthetic_signed_live_photo(b"recorded MOV");
+        let report = verify_capture_package_bytes(&bytes, Some(&[]));
+        assert_eq!(report["status"], "valid");
+        assert_eq!(report["verificationScope"], SCOPE_LIVE_PHOTO_PRIMARY);
+        assert_eq!(report["livePhoto"]["pairedVideo"]["status"], "mismatch");
+        let bytes = synthetic_signed_live_photo(&[]);
+        let report = verify_capture_package_bytes(&bytes, Some(&[]));
+        assert_eq!(report["status"], "valid");
+        assert_eq!(report["verificationScope"], SCOPE_FULL_LIVE_PHOTO);
     }
 
     #[test]
@@ -4775,7 +4631,7 @@ mod tests {
             SYNTHETIC_FOUNDATION_PAYLOAD_JSON.as_bytes()
         );
 
-        let report = verification_result(verify_capture_bytes_inner(&bytes, None, true));
+        let report = verification_result(verify_capture_bytes_inner(&bytes, None));
         assert_eq!(report["status"], "valid");
         assert_eq!(report["manifest"]["containerFormat"], "jpeg");
         for check_id in [
@@ -4797,8 +4653,7 @@ mod tests {
     fn synthetic_live_photo_content_binding_verifies_with_paired_video() {
         let paired_video = b"synthetic mov bytes";
         let bytes = synthetic_signed_live_photo(paired_video);
-        let report =
-            verification_result(verify_capture_bytes_inner(&bytes, Some(paired_video), true));
+        let report = verification_result(verify_capture_bytes_inner(&bytes, Some(paired_video)));
 
         assert_eq!(report["status"], "valid");
         assert_eq!(report["mediaKind"], "livePhoto");
@@ -4837,11 +4692,7 @@ mod tests {
             Some(json!("unavailable")),
             DepthAvailability::Unavailable,
         );
-        let report = verification_result(verify_capture_bytes_inner(
-            &bytes,
-            Some(paired_video),
-            false,
-        ));
+        let report = verification_result(verify_capture_bytes_inner(&bytes, Some(paired_video)));
 
         assert_eq!(report["status"], "valid");
         assert_eq!(report["verificationScope"], SCOPE_FULL_LIVE_PHOTO);
@@ -4857,63 +4708,10 @@ mod tests {
     }
 
     #[test]
-    fn live_photo_rejects_available_manifest_when_depth_readback_is_missing() {
-        let paired_video = b"synthetic mov bytes";
-        let bytes = synthetic_signed_live_photo(paired_video);
-        let error = verify_capture_bytes_inner(&bytes, Some(paired_video), false).unwrap_err();
-
-        assert_eq!(
-            error,
-            "manifest marks depth available but auxiliary depth readback is missing"
-        );
-    }
-
-    #[test]
-    fn live_photo_rejects_unavailable_manifest_when_depth_readback_is_present() {
-        let paired_video = b"synthetic mov bytes";
-        let bytes = synthetic_signed_live_photo_with_availability(
-            paired_video,
-            Some(json!("unavailable")),
-            Some(json!("unavailable")),
-            DepthAvailability::Unavailable,
-        );
-        let error = verify_capture_bytes_inner(&bytes, Some(paired_video), true).unwrap_err();
-
-        assert_eq!(
-            error,
-            "manifest marks depth unavailable but auxiliary depth readback is present"
-        );
-    }
-
-    #[test]
-    fn live_photo_rejects_signed_depth_resource_that_disagrees_with_readback() {
-        let paired_video = b"synthetic mov bytes";
-        let bytes = synthetic_signed_live_photo_with_availability(
-            paired_video,
-            Some(json!("unavailable")),
-            Some(json!("unavailable")),
-            DepthAvailability::Available,
-        );
-        let report = verification_result(verify_capture_bytes_inner(
-            &bytes,
-            Some(paired_video),
-            false,
-        ));
-
-        assert_eq!(report["status"], "invalid");
-        assert!(report["checks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|check| check["id"] == "depth-resource" && check["status"] == "fail"));
-        assert!(report["serverRequest"].is_null());
-    }
-
-    #[test]
     fn synthetic_live_photo_reports_missing_paired_video_without_reclassifying_still_photo() {
         let paired_video = b"synthetic mov bytes";
         let bytes = synthetic_signed_live_photo(paired_video);
-        let report = verification_result(verify_capture_bytes_inner(&bytes, None, true));
+        let report = verification_result(verify_capture_bytes_inner(&bytes, None));
 
         assert_eq!(report["status"], "valid");
         assert_eq!(report["mediaKind"], "livePhoto");
@@ -4941,7 +4739,7 @@ mod tests {
     fn synthetic_live_photo_reports_mismatched_paired_video() {
         let paired_video = b"synthetic mov bytes";
         let bytes = synthetic_signed_live_photo(paired_video);
-        let report = verify_capture_package_bytes(&bytes, Some(b"wrong mov bytes"), true);
+        let report = verify_capture_package_bytes(&bytes, Some(b"wrong mov bytes"));
 
         assert_eq!(report["status"], "valid");
         assert_eq!(report["mediaKind"], "livePhoto");
@@ -4966,7 +4764,7 @@ mod tests {
             paired_video,
             CONTENT_BINDING_SCHEMA_ID,
         );
-        let report = verify_capture_package_bytes(&bytes, Some(paired_video), true);
+        let report = verify_capture_package_bytes(&bytes, Some(paired_video));
 
         assert_eq!(report["status"], "invalid");
         assert!(report["summary"]
@@ -5008,6 +4806,13 @@ mod tests {
         if let Some(availability) = depth_availability {
             payload["depth"]["availability"] = availability;
         }
+        synthetic_signed_heic_payload(payload, signed_availability)
+    }
+
+    fn synthetic_signed_heic_payload(
+        payload: Value,
+        signed_availability: DepthAvailability,
+    ) -> Vec<u8> {
         let manifest = json!({
             "schema": {
                 "id": MANIFEST_SCHEMA_ID,
@@ -5045,7 +4850,7 @@ mod tests {
             "2026-06-22T00:00:00.000Z",
             &asset_hash,
             &metadata_hash,
-            signed_availability,
+            &depth_resource_object(signed_availability),
         );
         let body_sha = sha256_base64url(&canonical_json_bytes(&digest).unwrap());
         let signing_binding = json!({
@@ -5109,7 +4914,7 @@ mod tests {
             "2035-01-01T00:00:00.000Z",
             &asset_hash,
             &metadata_hash,
-            DepthAvailability::Available,
+            &depth_resource_object(DepthAvailability::Available),
         );
         let body_sha = sha256_base64url(&canonical_json_bytes(&digest).unwrap());
         let signing_binding = json!({
@@ -5254,7 +5059,7 @@ mod tests {
             payload_canonical.len(),
             &paired_video_hash,
             paired_video.len(),
-            signed_availability,
+            &depth_resource_object(signed_availability),
         );
         digest["schemaID"] = Value::String(content_schema_id.to_string());
         let body_sha = sha256_base64url(&canonical_json_bytes(&digest).unwrap());

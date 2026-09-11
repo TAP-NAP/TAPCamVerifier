@@ -34,33 +34,32 @@ vi.mock("../wasm/tapcamVerifier", () => ({
   }
 }));
 
-describe("TAP Video v1 local verification", () => {
-  it.each([false, true])("verifies the unchanged MP4 after TAPNAP resolution (depth=%s)", async (withDepth) => {
+describe("TAP Video byte binding and downstream depth", () => {
+  it.each([false, true])("verifies unchanged packaged MP4 bytes (depth=%s)", async (withDepth) => {
     const artifact = await makeArtifact({ depthFrames: withDepth ? [{}] : [] });
     const bytes = packageVideo(artifact.bytes);
-    const input = resolveCaptureInput(new File([new Uint8Array(bytes)], "TAPNAP-Capture.tapnap"), bytes);
+    const input = resolveCaptureInput(new File([new Uint8Array(bytes)], "capture.tapnap"), bytes);
     if (input.kind !== "tap-video") throw new Error("expected TAP Video input");
     expect(input.videoBytes).toEqual(artifact.bytes);
-    const report = await verifyTapVideoLocally(input.videoBytes);
-    expect(report.status).toBe("valid");
-    expect(report.serverRequest).not.toBeNull();
+    expect((await verifyTapVideoLocally(input.videoBytes)).serverRequest).not.toBeNull();
   });
 
-  it("rejects altered packaged MP4 bytes before preparing a server request", async () => {
-    const artifact = await makeArtifact();
-    const altered = artifact.bytes.slice();
-    // The first media sample follows ftyp and the mdat header in this fixture.
-    altered[20] ^= 1;
-    const bytes = packageVideo(altered);
-    const input = resolveCaptureInput(new File([new Uint8Array(bytes)], "TAPNAP-Capture.tapnap"), bytes);
-    if (input.kind !== "tap-video") throw new Error("expected TAP Video input");
-    const report = await verifyTapVideoLocally(input.videoBytes);
-    expect(report.status).toBe("invalid");
-    expect(report.serverRequest).toBeNull();
+  it("rejects changed media and telemetry bytes even when they remain parseable", async () => {
+    const artifact = await makeArtifact({ telemetryBoxes: [encoder.encode(canonical(captureTelemetry()))] });
+    const marker = encoder.encode('"quaternion":[0,0,0,1]');
+    const markerOffset = artifact.bytes.findIndex((_, index) => marker.every((byte, relative) => artifact.bytes[index + relative] === byte));
+    expect(markerOffset).toBeGreaterThan(0);
+    for (const offset of [20, markerOffset + '"quaternion":['.length]) {
+      const altered = artifact.bytes.slice();
+      altered[offset] ^= 1;
+      const report = await verifyTapVideoLocally(altered);
+      expect(report.status).toBe("invalid");
+      expect(report.serverRequest).toBeNull();
+      expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "fail" }));
+    }
   });
 
-
-  it.each(extensionVectors.cases)("matches the adopted extension bytes: $id", async (vector) => {
+  it.each(extensionVectors.cases)("binds the exact extension bytes without judging their content: $id", async (vector) => {
     const bytes = fromBase64(vector.utf8Base64);
     expect(bytes.length).toBe(vector.utf8ByteCount);
     const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes)));
@@ -68,553 +67,208 @@ describe("TAP Video v1 local verification", () => {
     const artifact = await makeArtifact(vector.extension === "cald"
       ? { depthFrames: [{ cali: null, cald: bytes }] }
       : { depthFrames: [{}], telemetryBoxes: [bytes] });
-    const report = await verifyTapVideoLocally(artifact.bytes);
-    expect(report.status).toBe(vector.expectedDecision === "accept" ? "valid" : "invalid");
-    if (vector.expectedDecision === "reject") {
-      expect(report.serverRequest).toBeNull();
-      expect(report.checks).toContainEqual(expect.objectContaining({ status: "fail" }));
-    } else {
-      expect(report.serverRequest).not.toBeNull();
-    }
+    expect((await verifyTapVideoLocally(artifact.bytes)).serverRequest).not.toBeNull();
   });
 
-  it("authenticates optional capture telemetry without changing the v1 manifest or depth track", async () => {
+  it("does not parse telemetry or let it block independent depth inspection", async () => {
     const telemetry = captureTelemetry();
-    const artifact = await makeArtifact({ telemetryBoxes: [encoder.encode(canonical(telemetry))] });
-    const report = await verifyTapVideoLocally(artifact.bytes);
-    expect(report.status).toBe("valid");
-    expect(report.manifest?.schemaId).toBe("urn:tapnap:tapcam:video-manifest:v1");
-    expect(report.captureTelemetry).toEqual(telemetry);
-    expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-capture-telemetry", status: "pass" }));
-    expect(inspectTapVideoDepth(artifact.bytes)).toEqual(expect.objectContaining({ captureTelemetry: telemetry, depthFrames: [] }));
-    expect(inspectTapVideoDepth((await makeArtifact()).bytes).captureTelemetry).toBeNull();
-    const numberLexemes = canonical(telemetry).replace('"ptsSeconds":0.1', '"ptsSeconds":1e-1').replace('"quaternion":[0,0,0,1]', '"quaternion":[0.0,0,0,1e+0]');
-    expect((await verifyTapVideoLocally((await makeArtifact({ telemetryBoxes: [encoder.encode(numberLexemes)] })).bytes)).status).toBe("valid");
-
-    const tampered = artifact.bytes.slice();
-    const marker = encoder.encode('"quaternion":[0,0,0,1]');
-    const markerOffset = tampered.findIndex((_, index) => marker.every((byte, relative) => tampered[index + relative] === byte));
-    expect(markerOffset).toBeGreaterThan(0);
-    tampered[markerOffset + '"quaternion":['.length] = "1".charCodeAt(0);
-    const invalid = await verifyTapVideoLocally(tampered);
-    expect(invalid.serverRequest).toBeNull();
-    expect(invalid.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "fail" }));
-    expect(invalid.checks.some((entry) => entry.id === "video-capture-telemetry")).toBe(false);
-  });
-
-  it("rejects signed malformed telemetry before any server request", async () => {
-    const mutations: Array<(telemetry: AnyRecord) => void> = [
-      (t) => { t.schema.version = 2; },
-      (t) => { t.motion.extra = 1; },
-      (t) => { t.filtering.filteredSampleCount = 1; },
-      (t) => { t.motion.samples[0].ptsSeconds = -1; },
-      (t) => { t.motion.samples[0].ptsSeconds = 1.1; },
-      (t) => { t.motion.samples.push(t.motion.samples[0]); },
-      (t) => { t.motion.samples[0].quaternion = [0, 0, 0, 2]; },
-      (t) => { t.motion.samples[0].gravity = [0, null, 0]; },
-      (t) => { t.motion.motionToCaptureOffsetSeconds = null; },
-      (t) => { t.motion.droppedSampleCount = 1; },
-      (t) => { t.motion.status = "partial"; },
-      (t) => { t.motion.status = "noSamples"; },
-      (t) => { t.motion.samples = Array.from({ length: 8193 }, () => t.motion.samples[0]); }
-    ];
-    for (const mutate of mutations) {
-      const telemetry = captureTelemetry();
-      mutate(telemetry);
-      const report = await verifyTapVideoLocally((await makeArtifact({ telemetryBoxes: [encoder.encode(canonical(telemetry))] })).bytes);
-      expect(report.serverRequest).toBeNull();
-      expect(report.checks.at(-1)).toEqual(expect.objectContaining({ id: "video-capture-telemetry", status: "fail" }));
-    }
-    const payload = encoder.encode(canonical(captureTelemetry()));
-    for (const telemetryBoxes of [[payload, payload], [new Uint8Array(4 * 1024 * 1024 + 1)]]) {
-      const report = await verifyTapVideoLocally((await makeArtifact({ telemetryBoxes })).bytes);
-      expect(report.checks.at(-1)).toEqual(expect.objectContaining({ id: "video-capture-telemetry", status: "fail" }));
-      expect(report.serverRequest).toBeNull();
-    }
-  });
-
-  it("accepts explicit motion degradation and truthful filtering observations", async () => {
-    for (const status of ["unavailable", "noSamples", "partial"]) {
-      const telemetry = captureTelemetry();
-      telemetry.filtering = { requestedEnabled: true, filteredSampleCount: 1, unfilteredSampleCount: 1 };
-      telemetry.motion.status = status;
-      if (status === "partial") telemetry.motion.droppedSampleCount = 1;
-      else {
-        telemetry.motion.samples = [];
-        telemetry.motion.motionToCaptureOffsetSeconds = null;
-      }
-      const artifact = await makeArtifact({ depthFrames: [{}, {}], telemetryBoxes: [encoder.encode(canonical(telemetry))] });
-      expect((await verifyTapVideoLocally(artifact.bytes)).status).toBe("valid");
-      expect(inspectTapVideoDepth(artifact.bytes).captureTelemetry).toEqual(telemetry);
-    }
-  });
-
-  it("preserves successful proof checks when a bound MP4 fails track semantics", async () => {
-    const original = await makeArtifact();
-    expect((await verifyTapVideoLocally(original.bytes)).status).toBe("valid");
-
-    // The fixture rebuilds the binding over these bytes, so only the signed
-    // codec declaration disagrees with the actual track.
-    const artifact = await makeArtifact({ actualRGBCodec: "hvc1" });
-    const report = await verifyTapVideoLocally(artifact.bytes);
-
-    expect(report.status).toBe("invalid");
-    expect(report.serverRequest).toBeNull();
-    expect(report.captureId).toBe(JSON.parse(artifact.payloadText).id);
-    expect(report.manifest?.capture).toEqual(JSON.parse(artifact.payloadText));
-    expect(report.checks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "video-proof", status: "pass" }),
-      expect.objectContaining({ id: "video-content-binding", status: "pass" }),
-      expect.objectContaining({ id: "video-signing-binding", status: "pass" }),
-      expect.objectContaining({ id: "video-semantics", status: "fail" })
-    ]));
-    expect(report.checks.some((check) => check.id === "parse")).toBe(false);
-    expect(classifyVideoReport(report)).toBe("invalid");
-  });
-
-  it("distinguishes absent TAP material from malformed proof and container bytes", async () => {
-    const noSignature = await verifyTapVideoLocally(box("ftyp", encoder.encode("mp42")));
-    expect(classifyVideoReport(noSignature)).toBe("noSignature");
-
-    const artifact = await makeArtifact();
-    const badProof = artifact.bytes.slice();
-    badProof[badProof.length - 1] = 1;
-    const malformedProof = await verifyTapVideoLocally(badProof);
-    expect(malformedProof.checks.at(-1)).toEqual(expect.objectContaining({ id: "video-proof", status: "fail" }));
-    expect(classifyVideoReport(malformedProof)).toBe("invalid");
-    expect(malformedProof.serverRequest).toBeNull();
-
-    const malformedContainer = await verifyTapVideoLocally(artifact.bytes.subarray(0, -1));
-    expect(malformedContainer.checks.at(-1)).toEqual(expect.objectContaining({ id: "video-container", status: "fail" }));
-    expect(classifyVideoReport(malformedContainer)).toBe("invalid");
-    expect(malformedContainer.serverRequest).toBeNull();
-  });
-
-  it("hashes the exact canonical raw payload value bytes instead of reserializing", async () => {
-    const artifact = await makeArtifact({ exactNumberToken: true });
-    expect(artifact.payloadText).toContain('"nominalFrameRate":1e+0');
-    expect(canonical(JSON.parse(artifact.payloadText))).not.toBe(artifact.payloadText);
-
-    const report = await verifyTapVideoLocally(artifact.bytes);
-
-    expect(report.status).toBe("valid");
-    expect(report.recomputed?.metadataSHA256).toBe(await sha256Base64Url(encoder.encode(artifact.payloadText)));
-    expect(report.serverRequest).not.toBeNull();
-  });
-
-  it("validates a raw mebx track, key mapping, sample ordinals, timestamps, and calibration coverage", async () => {
-    const artifact = await makeArtifact({ depthFrames: [{}, {}] });
-    const report = await verifyTapVideoLocally(artifact.bytes);
-    const inspection = inspectTapVideoDepth(artifact.bytes);
-
-    expect(report.status).toBe("valid");
-    expect(report.checks.some((check) => check.id === "video-semantics" && check.status === "pass")).toBe(true);
-    expect(report.serverRequest).not.toBeNull();
-    expect(inspection.depthFrames.map((frame) => frame.frameIndex)).toEqual([0, 1]);
-    expect(inspection.depthFrames.map((frame) => frame.presentationTimeSeconds)).toEqual([0, 0.5]);
-    expect(Array.from(await decodeTapDepthFrame(inspection.depthFrames[0]))).toEqual([0, 60, 0, 64]);
-  });
-
-  it("retains CALD after the calibration table overflows without counting it as CALI", async () => {
-    const calibration = { ...cameraCalibration(), inverseLensDistortionLookupTable: "AAAAAA==", lensDistortionLookupTable: null };
-    const artifact = await makeArtifact({
-      depthFrames: [{}, { cali: null, cald: encoder.encode(canonical({ calibration, schemaVersion: 1 })), extraUnknownRecords: 1 }],
-      mutateManifest: (manifest) => {
-        manifest.payload.spatialRegistration.calibrationTable = Array.from({ length: 16 }, cameraCalibration);
-        manifest.payload.spatialRegistration.calibrationCoverage = {
-          indexedSampleCount: 1, missingCalibrationSampleCount: 0, overflowUnindexedSampleCount: 1, tableOverflowed: true
-        };
-      }
-    });
-    const report = await verifyTapVideoLocally(artifact.bytes);
-    expect(report.status).toBe("valid");
-    expect(report.serverRequest).not.toBeNull();
-    expect(inspectTapVideoDepth(artifact.bytes).depthFrames.map((frame) => [frame.calibrationIndex, frame.inlineCalibration]))
-      .toEqual([[0, null], [null, calibration]]);
-  });
-
-  it("rejects malformed CALD and ambiguous CALI/CALD before a server request", async () => {
-    const valid = canonical({ calibration: cameraCalibration(), schemaVersion: 1 });
-    const invalid = [
-      valid.replace('"schemaVersion":1', '"schemaVersion":2'),
-      valid.replace('"schemaVersion":1', '"schemaVersion":1.0'),
-      valid.replace('"schemaVersion":1', '"schemaVersion":1,"schemaVersion":1'),
-      valid.replace('"schemaVersion":1', '"schemaVersion":1,"unknown":0'),
-      valid.replace('"extrinsicMatrix":', '"extra":0,"extrinsicMatrix":'),
-      valid.replace('"intrinsicMatrix":[1,0,0,0,1,0,1,1,1]', '"intrinsicMatrix":[1]'),
-      valid.replace('"pixelSizeMillimeters":0.001', '"pixelSizeMillimeters":1e400'),
-      canonical({ calibration: { ...cameraCalibration(), inverseLensDistortionLookupTable: "not base64" }, schemaVersion: 1 }),
-      canonical({ calibration: { ...cameraCalibration(), lensDistortionCenter: { x: 1, y: 2, z: 3 } }, schemaVersion: 1 }),
-      valid + " "
-    ].map((text) => encoder.encode(text));
-    invalid.push(new Uint8Array([0xff]));
-    const frames: FrameOptions[] = invalid.map((cald) => ({ cali: null, cald }));
-    frames.push({ cali: 0, cald: encoder.encode(valid) }, { cali: null, cald: encoder.encode(valid), duplicateCALD: true });
-    for (const frame of frames) {
-      const report = await verifyTapVideoLocally((await makeArtifact({ depthFrames: [frame] })).bytes);
-      expect(report.status).toBe("invalid");
-      expect(report.serverRequest).toBeNull();
-    }
-  });
-
-  it("accepts CALD at 3072 bytes and rejects 3073 bytes", async () => {
-    const original = canonical({ calibration: cameraCalibration(), schemaVersion: 1 });
-    const atLimit = original.replace('"pixelSizeMillimeters":0.001', '"pixelSizeMillimeters":0.001' + "0".repeat(3072 - encoder.encode(original).length));
-    for (const [text, status] of [[atLimit, "valid"], [atLimit.replace('"pixelSizeMillimeters":0.001', '"pixelSizeMillimeters":0.0010'), "invalid"]]) {
-      const report = await verifyTapVideoLocally((await makeArtifact({ depthFrames: [{ cali: null, cald: encoder.encode(text) }] })).bytes);
-      expect(report.status).toBe(status);
-    }
-  });
-
-  it("accepts the optional finalized audio track when all signed facts match", async () => {
-    const report = await verifyTapVideoLocally((await makeArtifact({ withAudio: true, depthFrames: [{}] })).bytes);
-    expect(report.status).toBe("valid");
-    expect(report.serverRequest).not.toBeNull();
-    const sampleEntryName = await verifyTapVideoLocally((await makeArtifact({ withAudio: true,
-      mutateManifest: (manifest) => { manifest.payload.audioTrack.codec = "mp4a"; }
-    })).bytes);
-    expect(sampleEntryName.status).toBe("valid");
-  });
-
-  it("reads Apple's mono AAC configuration instead of the stereo MP4 sample-entry placeholder", async () => {
-    // Real descriptor structure from AVAssetWriter: four-byte descriptor lengths,
-    // sample-entry channels=2, but AudioSpecificConfig 0x1208 is 44.1 kHz mono.
-    const descriptor = Uint8Array.from("0380808022000000048080801440140018000000fa000000fa0005808080021208068080800102".match(/../g)!.map((byte) => parseInt(byte, 16)));
-    const options: ArtifactOptions = {
-      withAudio: true, audioDescriptor: descriptor,
-      mutateManifest: (manifest) => { manifest.payload.audioTrack.sampleRate = 44100; manifest.payload.audioTrack.channelCount = 1; }
-    };
-    const valid = await verifyTapVideoLocally((await makeArtifact(options)).bytes);
-    expect(valid.status).toBe("valid");
-    expect(valid.serverRequest).not.toBeNull();
-
-    for (const mismatch of [{ channelCount: 2 }, { sampleRate: 48000 }, { codec: "alac" }]) {
-      const artifact = await makeArtifact({ ...options, mutateManifest: (manifest) => {
-        options.mutateManifest!(manifest);
-        Object.assign(manifest.payload.audioTrack, mismatch);
-      } });
-      const report = await verifyTapVideoLocally(artifact.bytes);
-      expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
-      expect(report.status).toBe("invalid");
-      expect(report.serverRequest).toBeNull();
-    }
-  });
-
-  it("rejects malformed descriptors and non-AAC-LC audio before server verification", async () => {
-    const config = new Uint8Array([0x11, 0x90]);
-    const valid = audioDescriptor(config);
-    const shortASC = valid.slice();
-    shortASC[21] = 1; // ASC no longer consumes its declared parent.
-    const decoder = valid.subarray(5, valid.length - 3);
-    const duplicateDecoder = concat(new Uint8Array([3, valid[1] + decoder.length]), valid.subarray(2, valid.length - 3), decoder, valid.subarray(-3));
-    const cases = [
-      new Uint8Array(), valid.subarray(0, -1),
-      new Uint8Array([3, 0x80, 0x80, 0x80, 0x80]),
-      new Uint8Array([3, 0x7f]), shortASC, concat(valid, valid), duplicateDecoder,
-      audioDescriptor(config, 0x6b),
-      audioDescriptor(new Uint8Array([0x29, 0x90])), // HE-AAC
-      audioDescriptor(new Uint8Array([0x16, 0x90])), // Reserved frequency index
-      audioDescriptor(new Uint8Array([0x11, 0x80])), // PCE channel configuration
-      audioDescriptor(new Uint8Array([0x11]))
-    ];
-    for (const descriptor of cases) {
-      const report = await verifyTapVideoLocally((await makeArtifact({ withAudio: true, audioDescriptor: descriptor })).bytes);
-      expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
-      expect(report.checks.at(-1)).toMatchObject({ id: "video-semantics", status: "fail" });
-      expect(report.serverRequest).toBeNull();
-    }
-  });
-
-  it("accepts and decodes the shared zstd1 golden payload", async () => {
-    const artifact = await makeArtifact({
-      depthFrames: [{ compression: "zstd1", payload: ZSTD_PAYLOAD, ulen: 40 }],
-      format: { width: 20, height: 1, packedRowStride: 40, sourceRowStride: 40, uncompressedFrameByteCount: 40, compressionPolicy: "per-frame:zstd1|raw" }
-    });
-    const report = await verifyTapVideoLocally(artifact.bytes);
-    const decoded = await decodeTapDepthFrame(inspectTapVideoDepth(artifact.bytes).depthFrames[0]);
-
-    expect(report.status).toBe("valid");
-    expect(new TextDecoder().decode(decoded)).toBe("TAP_DEPTH_VECTOR_V2:TAP_DEPTH_VECTOR_V2:");
-  });
-
-  it("accepts the library's fixed LZFSE vector and rejects a malformed stream before server submission", async () => {
-    const artifact = await makeArtifact({
-      depthFrames: [{ compression: "lzfse", payload: LZFSE_ZERO_4096, ulen: 4096 }],
-      format: { width: 2048, height: 1, packedRowStride: 4096, sourceRowStride: 4096, uncompressedFrameByteCount: 4096, compressionPolicy: "per-frame:lzfse|raw" }
-    });
-    const report = await verifyTapVideoLocally(artifact.bytes);
-    const decoded = await decodeTapDepthFrame(inspectTapVideoDepth(artifact.bytes).depthFrames[0]);
-
-    expect(report.status).toBe("valid");
-    expect(report.serverRequest).not.toBeNull();
-    expect(decoded).toEqual(new Uint8Array(4096));
-
-    const malformed = await makeArtifact({
-      depthFrames: [{ compression: "lzfse", payload: LZFSE_ZERO_4096.subarray(0, -1), ulen: 4096 }],
-      format: { width: 2048, height: 1, packedRowStride: 4096, sourceRowStride: 4096, uncompressedFrameByteCount: 4096, compressionPolicy: "per-frame:lzfse|raw" }
-    });
-    const malformedReport = await verifyTapVideoLocally(malformed.bytes);
-    expect(malformedReport.status).toBe("invalid");
-    expect(malformedReport.serverRequest).toBeNull();
-  });
-
-  it("does not inspect untrusted KLV after the local artifact-binding gate fails", async () => {
-    const bytes = (await makeArtifact({ depthFrames: [{ fram: 4 }] })).bytes.slice();
-    bytes[8] ^= 1;
-
-    const report = await verifyTapVideoLocally(bytes);
-
-    expect(report.status).toBe("invalid");
-    expect(report.serverRequest).toBeNull();
-    expect(report.checks).toContainEqual(expect.objectContaining({
-      id: "video-semantics",
-      status: "warning"
-    }));
-    expect(report.checks.some((check) => check.detail.includes("FRAM"))).toBe(false);
-  });
-
-  it("rejects missing groups, wrong types/enums/counts, and invalid zero-depth relationships", async () => {
-    const cases: Array<(manifest: AnyRecord) => void> = [
-      (manifest) => { delete manifest.payload.software; },
-      (manifest) => { manifest.payload.container.trackCount = 1.5; },
-      (manifest) => { manifest.payload.audioTrack.status = "muted"; },
-      (manifest) => { manifest.payload.depthCoverage.deliveredSampleCount = -1; },
-      (manifest) => { manifest.payload.depthCoverage.trackID = 2; },
-      (manifest) => { manifest.payload.synchronization.rgbToDepthMapping = "independent-timed-metadata"; }
-    ];
-    for (const mutateManifest of cases) {
-      const report = await verifyTapVideoLocally((await makeArtifact({ mutateManifest })).bytes);
-      expect(report.status).toBe("invalid");
-      expect(report.serverRequest).toBeNull();
-    }
-  });
-
-  it("rejects non-canonical embedded manifest JSON even when the proof hashes those exact bytes", async () => {
-    const report = await verifyTapVideoLocally((await makeArtifact({
-      payloadTextTransform: (text) => text.replace('"audioTrack":', '"audioTrack" :')
-    })).bytes);
-    expect(report.status).toBe("invalid");
-    expect(report.summary).toContain("whitespace");
-    expect(report.serverRequest).toBeNull();
-  });
-
-  it("rejects any metadata track for the canonical zero-depth form", async () => {
-    const report = await verifyTapVideoLocally((await makeArtifact({
-      includeMetadataTrack: true,
-      mutateManifest: (manifest) => { manifest.payload.container.trackCount = 2; }
-    })).bytes);
-    expect(report.status).toBe("invalid");
-    expect(report.summary).toContain("Zero-depth");
-    expect(report.serverRequest).toBeNull();
-  });
-
-  it("rejects mismatched track composition, IDs, codecs, counts, durations, and timescales", async () => {
-    const cases: ArtifactOptions[] = [
-      { actualRGBCodec: "hvc1" },
-      { actualRGBTrackID: 9 },
-      { actualMovieTimeScale: 1000 },
-      { actualMovieDuration: 599 },
-      { withAudio: true, actualAudioCodec: "alac" },
-      { depthFrames: [{}], actualDepthCodec: "mett" },
-      { depthFrames: [{}, {}], actualDepthDuration: 599 }
-    ];
-    for (const options of cases) {
-      const report = await verifyTapVideoLocally((await makeArtifact(options)).bytes);
-      expect(report.status).toBe("invalid");
-      expect(report.serverRequest).toBeNull();
-    }
-  });
-
-  it("resolves the sample local key ID through the mebx metadata key table", async () => {
-    const wrongKey = await verifyTapVideoLocally((await makeArtifact({ depthFrames: [{}], metadataKey: "com.example.wrong" })).bytes);
-    const wrongID = await verifyTapVideoLocally((await makeArtifact({ depthFrames: [{ localKeyID: 7 }], metadataLocalKeyID: 3 })).bytes);
-
-    expect(wrongKey.status).toBe("invalid");
-    expect(wrongKey.summary).toContain("local key");
-    expect(wrongKey.serverRequest).toBeNull();
-    expect(wrongID.status).toBe("invalid");
-    expect(wrongID.serverRequest).toBeNull();
-  });
-
-  it("rejects non-contiguous FRAM values and timestamp disagreement, regression, or overflow", async () => {
-    const cases: ArtifactOptions[] = [
-      { depthFrames: [{ fram: 4 }] },
-      { depthFrames: [{ ptsValue: 10n }] },
-      { depthFrames: [{}, { ptsValue: 0n }] },
-      { depthFrames: [{ ptsValue: 601n }] }
-    ];
-    for (const options of cases) {
-      const report = await verifyTapVideoLocally((await makeArtifact(options)).bytes);
-      expect(report.status).toBe("invalid");
-      expect(report.serverRequest).toBeNull();
-    }
-  });
-
-  it("checks presented track durations and maps depth samples through v0/v1 edits", async () => {
-    for (const version of [0, 1]) {
-      const artifact = await makeArtifact({
-        withAudio: true, depthFrames: [{ ptsValue: 0n }, { ptsValue: 270n }],
-        actualDepthTimeScale: 60000, actualDepthDuration: 60000,
-        trackEdits: { rgb: trackEdit(600, 0, version), audio: trackEdit(570, 2400, version), depth: trackEdit(540, 3000, version) },
-        mutateManifest: (manifest) => {
-          manifest.payload.audioTrack.durationSeconds = 0.95;
-          manifest.payload.depthCoverage.trackTimeScale = 60000;
-          manifest.payload.depthCoverage.trackDurationSeconds = 0.9;
-        }
-      });
+    telemetry.motion.samples.push(telemetry.motion.samples[0]);
+    telemetry.motion.samples[0].quaternion = [0, 0, 0, 2];
+    telemetry.filtering.filteredSampleCount = 900;
+    for (const telemetryBoxes of [
+      [encoder.encode(canonical(telemetry))],
+      [new Uint8Array([255])],
+      [new Uint8Array(), new Uint8Array()],
+      [new Uint8Array(4 * 1024 * 1024 + 1)]
+    ]) {
+      const artifact = await makeArtifact({ depthFrames: [{}], telemetryBoxes });
       const report = await verifyTapVideoLocally(artifact.bytes);
       expect(report.status).toBe("valid");
       expect(report.serverRequest).not.toBeNull();
-      expect(inspectTapVideoDepth(artifact.bytes).depthFrames.map((frame) => frame.presentationTimeSeconds)).toEqual([0, 0.45]);
+      expect(inspectTapVideoDepth(artifact.bytes).depthFrames).toHaveLength(1);
     }
   });
 
-  it.each([0, 1])("accepts leading empty edits and maps all tracks onto movie time (v%s)", async (version) => {
-    const artifact = await makeArtifact({
-      withAudio: true, depthFrames: [{ ptsValue: 30n }, { ptsValue: 300n }],
-      actualDepthTimeScale: 60000, actualDepthDuration: 60000,
-      trackEdits: {
-        rgb: trackEditList([[30, -1], [570, 30]], version),
-        audio: trackEditList([[15, -1], [570, 2400]], version),
-        depth: trackEditList([[30, -1], [540, 3000]], version)
-      },
-      mutateManifest: (manifest) => {
-        // Track durations include the leading empty interval, as AVAssetTrack reports them.
-        manifest.payload.audioTrack.durationSeconds = 585 / 600;
-        manifest.payload.depthCoverage.trackTimeScale = 60000;
-        manifest.payload.depthCoverage.trackDurationSeconds = 570 / 600;
-      }
-    });
-    const report = await verifyTapVideoLocally(artifact.bytes);
-    expect(report.status).toBe("valid");
-    expect(report.serverRequest).not.toBeNull();
-    expect(inspectTapVideoDepth(artifact.bytes).depthFrames.map((frame) => frame.presentationTimeSeconds)).toEqual([0.05, 0.5]);
-  });
-
-  it.each([[0n, 300n], [60n, 300n]])("rejects depth PTS that omit the leading empty offset (%s, %s)", async (firstPTS, secondPTS) => {
-    const report = await verifyTapVideoLocally((await makeArtifact({
-      depthFrames: [{ ptsValue: firstPTS }, { ptsValue: secondPTS }],
-      trackEdits: { depth: trackEditList([[60, -1], [540, 0]]) }
-    })).bytes);
-    expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
-    expect(report.checks.at(-1)).toMatchObject({ id: "video-semantics", status: "fail" });
-    expect(report.checks.at(-1)?.detail).toContain("KLV PTS does not agree");
-    expect(report.serverRequest).toBeNull();
-  });
-
-  it.each(["rgb", "audio", "depth"] as const)("rejects signed %s duration that omits the leading empty interval", async (track) => {
-    const edit = trackEditList([[60, -1], [540, 0]]);
-    const report = await verifyTapVideoLocally((await makeArtifact({
-      withAudio: true, depthFrames: [{ ptsValue: 60n }, { ptsValue: 360n }],
-      trackEdits: { rgb: edit, audio: edit, depth: edit },
-      mutateManifest: (manifest) => {
-        if (track === "depth") manifest.payload.depthCoverage.trackDurationSeconds = 0.9;
-        else manifest.payload[`${track}Track`].durationSeconds = 0.9;
-      }
-    })).bytes);
-    expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
-    expect(report.checks.at(-1)).toMatchObject({ id: "video-semantics", status: "fail" });
-    expect(report.checks.at(-1)?.detail).toContain("track facts do not match");
-    expect(report.serverRequest).toBeNull();
-  });
-
-  it.each([0, 1])("rejects unsupported leading-empty structures, rates, and media ranges (v%s)", async (version) => {
-    const cases: Array<[string, Array<[number, number, number?]>]> = [
-      ["only empty", [[600, -1]]],
-      ["trailing empty", [[540, 0], [60, -1]]],
-      ["two empty segments", [[60, -1], [540, -1]]],
-      ["repeated leading empty", [[30, -1], [30, -1], [540, 0]]],
-      ["multiple media segments", [[60, 0], [540, 60]]],
-      ["zero empty duration", [[0, -1], [600, 0]]],
-      ["zero media duration", [[60, -1], [0, 0]]],
-      ["non-unit empty rate", [[60, -1, 0], [540, 0]]],
-      ["non-unit media rate", [[60, -1], [540, 0, 0]]],
-      ["negative media start", [[60, -1], [540, -2]]],
-      ["media start at end", [[60, -1], [540, 600]]],
-      ["media range overrun", [[60, -1], [541, 60]]]
+  it("binds descriptive manifest fields without requiring content validity", async () => {
+    const mutations: Array<(manifest: AnyRecord) => void> = [
+      (m) => { delete m.payload.software; delete m.payload.selectedCameraPlan; },
+      (m) => { m.payload.extra = { future: true }; m.payload.capturedAt = "unknown capture clock"; },
+      (m) => { m.payload.container = { durationSeconds: -1, trackCount: 1.5 }; m.payload.stop = null; },
+      (m) => { m.payload.audioTrack = { status: "muted", sampleRate: -1 }; },
+      (m) => { m.payload.depthCoverage = { sampleCount: -1, gaps: [{ startPTS: 10, endPTS: 0 }] }; },
+      (m) => { delete m.payload.depthCoverage; delete m.payload.synchronization; },
+      (m) => { m.payload.rgbTrack.transform = "rotation:450;mirrored"; },
+      (m) => { m.payload.spatialRegistration = { status: "registered", descriptor: null, calibrationTable: [null], calibrationCoverage: { indexedSampleCount: 900 } }; },
+      (m) => { m.payload.selectedCameraPlan.depthCapable = false; m.payload.depthCoverage.deliveredSampleCount = 0; },
+      (m) => { m.payload.depthCoverage.format = { kind: "unknown", width: -1, bytesPerSample: 3 }; }
     ];
-    for (const [label, entries] of cases) {
-      const report = await verifyTapVideoLocally((await makeArtifact({
-        depthFrames: [{ ptsValue: 60n }], trackEdits: { depth: trackEditList(entries, version) }
-      })).bytes);
-      expect(report.checks, label).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
-      expect(report.checks.at(-1), label).toMatchObject({ id: "video-semantics", status: "fail" });
-      expect(report.serverRequest, label).toBeNull();
+    for (const mutateManifest of mutations) {
+      const report = await verifyTapVideoLocally((await makeArtifact({ depthFrames: [{}], mutateManifest })).bytes);
+      expect(report.status).toBe("valid");
+      expect(report.serverRequest).not.toBeNull();
     }
   });
 
-  it("uses the encoded KLV tick after edit mapping and rejects larger disagreement", async () => {
-    for (const [pts, expected] of [[270n, "valid"], [271n, "valid"], [272n, "invalid"]] as const) {
-      const report = await verifyTapVideoLocally((await makeArtifact({
-        depthFrames: [{ ptsValue: 0n }, { ptsValue: pts }], actualDepthTimeScale: 60000, actualDepthDuration: 60000,
-        trackEdits: { depth: trackEdit(540, 3000) },
-        mutateManifest: (manifest) => {
-          manifest.payload.depthCoverage.trackTimeScale = 60000;
-          manifest.payload.depthCoverage.trackDurationSeconds = 0.9;
-        }
-      })).bytes);
-      expect(report.status).toBe(expected);
-      expect(report.serverRequest !== null).toBe(expected === "valid");
+  it("preserves the signed depth descriptor without inferring blob presence", async () => {
+    for (const depthResource of [null, { presence: "producer-observation", binding: "opaque" }]) {
+      const report = await verifyTapVideoLocally((await makeArtifact({ depthFrames: [{}], depthResource })).bytes);
+      expect(report.status).toBe("valid");
+      expect(report.expected?.contentDigest).toMatchObject({ depthResource });
     }
   });
 
-  it("rejects a KLV timestamp past the signed edit end even when within one alignment tick", async () => {
-    const report = await verifyTapVideoLocally((await makeArtifact({
-      depthFrames: [{ ptsValue: 0n }, { ptsValue: 271n }],
-      actualMovieTimeScale: 1200, actualMovieDuration: 1200,
-      actualDepthTimeScale: 60000, actualDepthDuration: 60000,
-      trackEdits: { depth: trackEdit(541, 3000) },
-      mutateManifest: (manifest) => {
-        manifest.payload.container.timeScale = 1200;
-        manifest.payload.depthCoverage.trackTimeScale = 60000;
-        manifest.payload.depthCoverage.trackDurationSeconds = 541 / 1200;
+  it("selects the v1 algorithm by schema identity while binding descriptive version bytes", async () => {
+    for (const version of [undefined, 2, "future description", null]) {
+      const artifact = await makeArtifact({ mutateManifest: (m) => {
+        if (version === undefined) delete m.schema.version;
+        else m.schema.version = version;
+        m.schema.mediaType = "producer description";
+      } });
+      const report = await verifyTapVideoLocally(artifact.bytes);
+      expect(report.status).toBe("valid");
+      expect(report.serverRequest).not.toBeNull();
+      expect(report.expected?.contentDigest).toMatchObject({
+        metadataHash: { mediaType: "application/vnd.tapnap.video-manifest.payload+json;version=1" }
+      });
+      if (version === 2) {
+        const marker = encoder.encode('"version":2');
+        const offset = artifact.bytes.findIndex((_, index) => marker.every((byte, relative) => artifact.bytes[index + relative] === byte));
+        expect(offset).toBeGreaterThan(0);
+        const altered = artifact.bytes.slice();
+        altered[offset + marker.length - 1] = 0x33;
+        const changed = await verifyTapVideoLocally(altered);
+        expect(changed.status).toBe("invalid");
+        expect(changed.serverRequest).toBeNull();
+        expect(changed.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "fail" }));
       }
-    })).bytes);
-    expect(report.status).toBe("invalid");
-    expect(report.checks.at(-1)?.detail).toContain("outside the signed presentation duration");
-    expect(report.serverRequest).toBeNull();
+    }
   });
 
-  it("rejects unsupported or out-of-range edits while preserving signed timing checks", async () => {
-    const cases = [trackEdit(600, -1), trackEdit(600, 600), trackEdit(601, 0), trackEdit(600, 0, 0, 0),
-      trackEdit(600, 0, 2), trackEdit(600, 0).subarray(0, -1), concat(trackEdit(600, 0), trackEdit(600, 0)),
-      trackEdit(599, 0)]; // Last edit is valid but contradicts the signed 1-second duration.
-    for (const edit of cases) {
-      const report = await verifyTapVideoLocally((await makeArtifact({ depthFrames: [{}], trackEdits: { depth: edit } })).bytes);
-      expect(report.checks).toContainEqual(expect.objectContaining({ id: "video-content-binding", status: "pass" }));
-      expect(report.checks.at(-1)).toMatchObject({ id: "video-semantics", status: "fail" });
+  it("hashes raw payload bytes with whitespace, key order, numeric and string spellings intact", async () => {
+    for (const payloadTextTransform of [
+      (text: string) => JSON.stringify(JSON.parse(text), null, 2),
+      (text: string) => JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(text)).reverse())),
+      (text: string) => text.replace('"nominalFrameRate":1e+0', '"nominalFrameRate":1e400'),
+      (text: string) => text.replace('"audioTrack"', '"\\u0061udioTrack"')
+    ]) {
+      const artifact = await makeArtifact({ payloadTextTransform, exactNumberToken: true });
+      const report = await verifyTapVideoLocally(artifact.bytes);
+      expect(report.status).toBe("valid");
+      expect(report.recomputed?.metadataSHA256).toBe(await sha256Base64Url(encoder.encode(artifact.payloadText)));
+    }
+  });
+
+  it("rejects ambiguous JSON, wrong binding identity and malformed proof framing", async () => {
+    const duplicate = await makeArtifact({ payloadTextTransform: (text) => text.replace('"id":"synthetic-video"', '"id":"synthetic-video","id":"synthetic-video"') });
+    const family = await makeArtifact({ mutateManifest: (m) => { m.schema.id = "unknown-binding"; } });
+    const artifact = await makeArtifact();
+    const badProof = artifact.bytes.slice();
+    badProof[badProof.length - 1] = 1;
+    for (const bytes of [duplicate.bytes, family.bytes, badProof, artifact.bytes.subarray(0, -1)]) {
+      const report = await verifyTapVideoLocally(bytes);
+      expect(report.status).toBe("invalid");
       expect(report.serverRequest).toBeNull();
+      expect(classifyVideoReport(report)).not.toBe("noSignature");
     }
+    expect(classifyVideoReport(await verifyTapVideoLocally(box("ftyp", encoder.encode("mp42"))))).toBe("noSignature");
   });
 
-  it("rejects COMP policy, ULEN/format, CALI/table, coverage, and padding violations", async () => {
-    const cases: ArtifactOptions[] = [
-      { depthFrames: [{ compression: "zstd1", payload: ZSTD_PAYLOAD, ulen: 40 }] },
-      { depthFrames: [{ ulen: 8 }] },
-      { depthFrames: [{ cali: 7 }] },
-      { depthFrames: [{}], mutateManifest: (manifest) => { manifest.payload.spatialRegistration.calibrationCoverage.indexedSampleCount = 0; manifest.payload.spatialRegistration.calibrationCoverage.missingCalibrationSampleCount = 1; } },
-      { depthFrames: [{ nonZeroPadding: true }] },
-      { depthFrames: [{ duplicateTVER: true }] },
-      { depthFrames: [{ omitDPTH: true }] },
-      { depthFrames: [{ extraUnknownRecords: 27 }] }
-    ];
-    for (const options of cases) {
-      const report = await verifyTapVideoLocally((await makeArtifact(options)).bytes);
+  it("ignores proof descriptions but still rejects altered binding or key identity", async () => {
+    const description = await makeArtifact({ mutateProof: (proof) => { proof.createdAt = "another display time"; proof.extra = "description"; } });
+    expect((await verifyTapVideoLocally(description.bytes)).serverRequest).not.toBeNull();
+    for (const mutateProofValue of [
+      (value: AnyRecord) => { value.contentDigest.assetHash.value = "changed"; },
+      (value: AnyRecord) => { value.contentDigest.depthResource = { presence: "changed" }; },
+      (value: AnyRecord) => { value.signingBinding.bodySHA256 = "changed"; },
+      (value: AnyRecord) => { value.keyId = "another-key"; }
+    ]) {
+      const report = await verifyTapVideoLocally((await makeArtifact({ mutateProofValue })).bytes);
       expect(report.status).toBe("invalid");
       expect(report.serverRequest).toBeNull();
     }
   });
 
-  it("accepts only the exact v1 RGB transform forms", async () => {
+  it("does not require finalized MP4 facts, supported audio, or edit semantics to verify bytes", async () => {
+    const cases: ArtifactOptions[] = [
+      { actualRGBCodec: "hvc1", actualRGBTrackID: 9 },
+      { actualMovieTimeScale: 1000, actualMovieDuration: 599 },
+      { withAudio: true, actualAudioCodec: "alac" },
+      { withAudio: true, audioDescriptor: new Uint8Array([255]) },
+      { withAudio: true, audioDescriptor: audioDescriptor(new Uint8Array([0x29, 0x90])) },
+      { includeMetadataTrack: true },
+      { depthFrames: [{}], actualDepthCodec: "mett", actualDepthDuration: 599 },
+      { depthFrames: [{}, {}], trackEdits: { depth: trackEdit(200, 400) } }, // First sample is fully clipped.
+      { depthFrames: [{}], trackEdits: { depth: trackEditList([[60, -1], [60, -1], [480, 0]]) } },
+      { depthFrames: [{}], trackEdits: { depth: trackEdit(600, 0, 0, 0) } },
+      { depthFrames: [{}, {}], actualDepthDuration: 0 }
+    ];
+    for (const options of cases) {
+      const report = await verifyTapVideoLocally((await makeArtifact(options)).bytes);
+      expect(report.status).toBe("valid");
+      expect(report.serverRequest).not.toBeNull();
+      expect(report.checks.every((check) => check.status === "pass")).toBe(true);
+    }
+  });
+
+  it("retains duplicate and regressing PTS and FRAM as separate depth samples", async () => {
+    const artifact = await makeArtifact({ depthFrames: [
+      { fram: 7, ptsValue: 600n }, { fram: 7, ptsValue: 0n }, { fram: 1, ptsValue: 0n }, { fram: 9, ptsValue: -1n }
+    ] });
+    expect((await verifyTapVideoLocally(artifact.bytes)).serverRequest).not.toBeNull();
+    const frames = inspectTapVideoDepth(artifact.bytes).depthFrames;
+    expect(frames.map((frame) => frame.frameIndex)).toEqual([7, 7, 1, 9]);
+    expect(frames.map((frame) => frame.presentationTimeSeconds)).toEqual([1, 0, 0, -1 / 600]);
+  });
+
+  it("keeps KLV framing and calibration decoding failures local to depth inspection", async () => {
+    const cases: ArtifactOptions[] = [
+      { depthFrames: [{ duplicateTVER: true }] }, { depthFrames: [{ omitDPTH: true }] },
+      { depthFrames: [{ nonZeroPadding: true }] }, { depthFrames: [{ extraUnknownRecords: 27 }] },
+      { depthFrames: [{}], metadataKey: "com.example.other" },
+      { depthFrames: [{ cali: null, cald: new Uint8Array([255]) }] },
+      { depthFrames: [{ cali: null, cald: new Uint8Array(3073) }] },
+      { depthFrames: [{ cali: 0, cald: encoder.encode(canonical({ calibration: cameraCalibration(), schemaVersion: 1 })) }] }
+    ];
+    for (const options of cases) {
+      const artifact = await makeArtifact(options);
+      expect((await verifyTapVideoLocally(artifact.bytes)).serverRequest).not.toBeNull();
+      expect(() => inspectTapVideoDepth(artifact.bytes)).toThrow();
+    }
+  });
+
+  it("decodes bounded raw, zstd1 and LZFSE frames independently of verification", async () => {
+    const cases: ArtifactOptions[] = [
+      { depthFrames: [{}] },
+      { depthFrames: [{ compression: "zstd1", payload: ZSTD_PAYLOAD, ulen: 40 }] },
+      { depthFrames: [{ compression: "lzfse", payload: LZFSE_ZERO_4096, ulen: 4096 }] }
+    ];
+    for (const options of cases) {
+      const artifact = await makeArtifact(options);
+      expect((await verifyTapVideoLocally(artifact.bytes)).status).toBe("valid");
+      const frame = inspectTapVideoDepth(artifact.bytes).depthFrames[0];
+      expect((await decodeTapDepthFrame(frame)).byteLength).toBe(frame.uncompressedByteCount);
+    }
+    for (const frameOptions of [
+      { ulen: 8 }, { compression: "lzfse" as const, payload: new Uint8Array([1]) }, { ulen: 32 * 1024 * 1024 + 1 }
+    ]) {
+      const artifact = await makeArtifact({ depthFrames: [frameOptions] });
+      expect((await verifyTapVideoLocally(artifact.bytes)).serverRequest).not.toBeNull();
+      await expect(decodeTapDepthFrame(inspectTapVideoDepth(artifact.bytes).depthFrames[0])).rejects.toThrow();
+    }
+  });
+
+  it("retains inline calibration without requiring calibration coverage agreement", async () => {
+    const calibration = cameraCalibration();
+    const artifact = await makeArtifact({ depthFrames: [{ cali: 7 }, { cali: null, cald: encoder.encode(canonical({ calibration, schemaVersion: 1 })) }] });
+    expect((await verifyTapVideoLocally(artifact.bytes)).status).toBe("valid");
+    const frames = inspectTapVideoDepth(artifact.bytes).depthFrames;
+    expect(frames[0].calibrationIndex).toBe(7);
+    expect(frames[1].inlineCalibration).toEqual(calibration);
+  });
+
+  it("keeps unsupported display transforms a rendering concern", () => {
     expect(tapVideoDisplayOrientation("identity")).toBe("up");
-    expect(tapVideoDisplayOrientation("rotation:90;mirrored")).toBe("rightMirrored");
     expect(() => tapVideoDisplayOrientation("rotation:450;mirrored")).toThrow("Unsupported");
-    expect(() => tapVideoDisplayOrientation("mirrored;rotation:90")).toThrow("Unsupported");
-    const report = await verifyTapVideoLocally((await makeArtifact({
-      mutateManifest: (manifest) => { manifest.payload.rgbTrack.transform = "rotation:450;mirrored"; }
-    })).bytes);
-    expect(report.status).toBe("invalid");
-    expect(report.serverRequest).toBeNull();
   });
 
   it("rotates and mirrors depth pixels with the exact signed transform", () => {
@@ -733,6 +387,9 @@ interface FrameOptions {
 }
 
 interface ArtifactOptions {
+  mutateProof?: (proof: AnyRecord) => void;
+  mutateProofValue?: (value: AnyRecord) => void;
+  depthResource?: unknown;
   telemetryBoxes?: Uint8Array[];
   depthFrames?: FrameOptions[];
   format?: Partial<AnyRecord>;
@@ -822,10 +479,10 @@ async function makeArtifact(options: ArtifactOptions = {}): Promise<{ bytes: Uin
     },
     captureID: manifest.payload.id,
     capturedAt: manifest.payload.capturedAt,
-    depthResource: {
-      binding: manifest.payload.depthCoverage.sampleCount > 0 ? "covered-by-assetHash" : "coverage-recorded-in-manifest",
+    depthResource: "depthResource" in options ? options.depthResource : {
+      binding: manifest.payload.depthCoverage?.sampleCount > 0 ? "covered-by-assetHash" : "coverage-recorded-in-manifest",
       interpretation: "not-part-of-base-signature", platformPresenceCheck: "TAPVideoManifest.depthCoverage",
-      presence: manifest.payload.depthCoverage.sampleCount > 0 ? "captured" : "no-samples"
+      presence: manifest.payload.depthCoverage?.sampleCount > 0 ? "captured" : "no-samples"
     },
     manifestSchemaID: manifest.schema.id,
     metadataHash: {
@@ -843,10 +500,12 @@ async function makeArtifact(options: ArtifactOptions = {}): Promise<{ bytes: Uin
     operation: "tapcam.capture.sign", schemaID: "urn:tapnap:tapcam:app-attest-capture-signing:v1"
   };
   const proofValue = { assertionObject: "synthetic-assertion", contentDigest, keyId: "synthetic-key", signingBinding };
+  options.mutateProofValue?.(proofValue);
   const proofEnvelope = {
     algorithm: "TAPCam.AppAttestCaptureSignature.v1", createdAt: manifest.payload.capturedAt, keyID: "synthetic-key",
     type: "appAttestAssertion", value: toBase64Url(encoder.encode(canonical(proofValue)))
   };
+  options.mutateProof?.(proofEnvelope);
   const proofPayload = new Uint8Array(60 * 1024);
   proofPayload.set(encoder.encode("TAPCAM-PROOF-SLOT-V1"), 0);
   proofPayload.set(u32(1), 24);

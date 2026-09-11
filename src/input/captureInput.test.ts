@@ -99,23 +99,18 @@ describe("resolveCaptureInput", () => {
     }
   });
 
-  it("rejects video sidecars with mismatched fields, roles, and resource identities", () => {
+  it("rejects unsupported routing schemas and ambiguous or missing video resources", () => {
     const descriptor = { role: "primaryVideo", filename: "original-video.mp4", mediaType: "public.mpeg-4" };
     const valid = JSON.parse(new TextDecoder().decode(verificationSidecar("tapVideo", [descriptor])));
     for (const sidecar of [
       { ...valid, schemaID: "urn:tapnap:tapcam:verification-export:v2" },
       { ...valid, version: 2 },
-      { ...valid, packageKind: "stillPhoto" },
-      { ...valid, trustBoundary },
-      { ...valid, proof: {} },
       { ...valid, resources: [] },
       { ...valid, resources: [descriptor, descriptor] },
       { ...valid, resources: [descriptor, { role: "primaryPhoto", filename: "photo.jpg", mediaType: "public.jpeg" }] },
       { ...valid, resources: [{ ...descriptor, role: "pairedLivePhotoVideo" }] },
       { ...valid, resources: [{ ...descriptor, filename: "missing.mp4" }] },
       { ...valid, resources: [{ ...descriptor, filename: "../original-video.mp4" }] },
-      { ...valid, resources: [{ ...descriptor, filename: "video.mov" }] },
-      { ...valid, resources: [{ ...descriptor, mediaType: "video/mp4" }] }
     ]) {
       const bytes = zipSync({
         "original-video.mp4": new Uint8Array([1, 2, 3]),
@@ -316,12 +311,6 @@ describe("resolveCaptureInput", () => {
         )
       },
       {
-        "not-a-photo.mov": new Uint8Array([81]),
-        "tapcam-export.json": verificationSidecar("stillPhoto", [
-          { role: "primaryPhoto", filename: "not-a-photo.mov", mediaType: "public.heic" }
-        ])
-      },
-      {
         "paired-video.mov": new Uint8Array([82]),
         "tapcam-export.json": verificationSidecar("livePhotoPackage", [
           { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" },
@@ -368,92 +357,50 @@ describe("resolveCaptureInput", () => {
     }
   });
 
-  it("rejects missing, mistyped, unknown, or authenticity-bearing sidecar fields", () => {
-    const valid = {
-      schemaID: "urn:tapnap:tapcam:verification-export:v1",
-      version: 1,
-      packageKind: "stillPhoto",
+  it("ignores unsigned descriptions, order and purported signature fields when selecting bytes", () => {
+    const photo = new Uint8Array([1, 2]);
+    const movie = new Uint8Array([3, 4]);
+    const sidecar = {
+      schemaID: "urn:tapnap:tapcam:verification-export:v1", version: 1,
+      packageKind: "untrusted description", warningLabels: false, warnings: null,
+      trustBoundary: "untrusted text", signingBinding: { bodySHA256: "ignored" },
       resources: [
-        { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" }
-      ],
-      warningLabels: [],
-      warnings: [],
-      trustBoundary
+        { role: "pairedLivePhotoVideo", filename: "motion.blob", mediaType: "wrong", digest: "ignored" },
+        { role: "primaryPhoto", filename: "image.blob", mediaType: "wrong" }
+      ]
     };
-    const invalidSidecars = [
-      { ...valid, packageKind: undefined },
-      { ...valid, version: "1" },
-      { ...valid, warningLabels: "adjusted" },
-      { ...valid, trustBoundary: "signed routing metadata" },
-      { ...valid, signingBinding: {} },
-      {
-        ...valid,
-        resources: [{ ...valid.resources[0], digest: "unsigned" }]
-      }
-    ];
+    const input = resolveTapnap(zipSync({ "image.blob": photo, "motion.blob": movie,
+      "tapcam-export.json": textEncoder.encode(JSON.stringify(sidecar)) }));
+    if (input.kind !== "capture-package") throw new Error("expected photo package");
+    expect(input.photoBytes).toEqual(photo);
+    expect(input.pairedVideoBytes).toEqual(movie);
+    expect(input).not.toHaveProperty("signingBinding");
+  });
 
-    for (const sidecar of invalidSidecars) {
-      const zipBytes = zipSync({
-        "primary-photo.heic": new Uint8Array([1]),
-        "tapcam-export.json": textEncoder.encode(JSON.stringify(sidecar))
-      });
-      expect(() => resolveTapnap(zipBytes)).toThrow();
+  it("passes missing paired MOV through to primary-photo scope and preserves present bytes", () => {
+    const sidecar = verificationSidecar("livePhotoPackage", [
+      { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" },
+      { role: "pairedLivePhotoVideo", filename: "paired-video.mov", mediaType: "com.apple.quicktime-movie" }
+    ]);
+    for (const movie of [undefined, new Uint8Array(), new Uint8Array([9])]) {
+      const entries: Record<string, Uint8Array> = { "primary-photo.heic": new Uint8Array([1]), "tapcam-export.json": sidecar };
+      if (movie !== undefined) entries["paired-video.mov"] = movie;
+      const input = resolveTapnap(zipSync(entries));
+      if (input.kind !== "capture-package") throw new Error("expected photo package");
+      expect(input.pairedVideoBytes).toEqual(movie);
     }
   });
 
-  it("rejects package-kind, role, ordering, media-type, and path mismatches", () => {
-    const invalidPackages: Array<Record<string, Uint8Array>> = [
-      {
-        "primary-photo.heic": new Uint8Array([1]),
-        "tapcam-export.json": verificationSidecar("livePhotoPackage", [
-          { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" }
-        ])
-      },
-      {
-        "primary-photo.heic": new Uint8Array([1]),
-        "paired-video.mov": new Uint8Array([2]),
-        "tapcam-export.json": verificationSidecar("stillPhoto", [
-          { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" },
-          {
-            role: "pairedLivePhotoVideo",
-            filename: "paired-video.mov",
-            mediaType: "com.apple.quicktime-movie"
-          }
-        ])
-      },
-      {
-        "primary-photo.heic": new Uint8Array([1]),
-        "paired-video.mov": new Uint8Array([2]),
-        "tapcam-export.json": verificationSidecar("livePhotoPackage", [
-          {
-            role: "pairedLivePhotoVideo",
-            filename: "paired-video.mov",
-            mediaType: "com.apple.quicktime-movie"
-          },
-          { role: "primaryPhoto", filename: "primary-photo.heic", mediaType: "public.heic" }
-        ])
-      },
-      {
-        "primary-photo.heic": new Uint8Array([1]),
-        "tapcam-export.json": verificationSidecar("stillPhoto", [
-          { role: "tapDepthManifestPayload", filename: "primary-photo.heic", mediaType: "public.heic" }
-        ])
-      },
-      {
-        "primary-photo.jpg": new Uint8Array([1]),
-        "tapcam-export.json": verificationSidecar("stillPhoto", [
-          { role: "primaryPhoto", filename: "primary-photo.jpg", mediaType: "public.heic" }
-        ])
-      },
-      {
-        "nested/primary-photo.heic": new Uint8Array([1]),
-        "tapcam-export.json": verificationSidecar("stillPhoto", [
-          { role: "primaryPhoto", filename: "nested/primary-photo.heic", mediaType: "public.heic" }
-        ])
-      }
-    ];
-
-    for (const entries of invalidPackages) {
+  it("rejects ambiguous primary roles, duplicate identities and unsafe paths", () => {
+    const primary = { role: "primaryPhoto", filename: "photo.jpg", mediaType: "public.jpeg" };
+    for (const resources of [
+      [], [primary, primary],
+      [primary, { ...primary, role: "primaryVideo" }],
+      [primary, { ...primary, role: "pairedLivePhotoVideo" }],
+      [{ ...primary, filename: "nested/photo.jpg" }],
+      [{ ...primary, filename: "../photo.jpg" }]
+    ]) {
+      const entries = { "photo.jpg": new Uint8Array([1]), "tapcam-export.json": verificationSidecar("stillPhoto", resources) };
       expect(() => resolveTapnap(zipSync(entries))).toThrow();
     }
   });

@@ -71,20 +71,15 @@ describe("verifyCaptureSignature", () => {
     });
   });
 
-  it("normalizes non-2xx responses", async () => {
-    const fetcher = async () =>
-      new Response(
-        JSON.stringify({
-          reason: "not-found"
-        }),
-        { status: 404 }
-      );
-
-    const response = await verifyCaptureSignature(request, fetcher as typeof fetch);
-
-    expect(response).toEqual({
-      status: "invalid",
-      reason: "not-found"
-    });
+  it("keeps HTTP and response-format failures distinct from a rejected signature", async () => {
+    for (const response of [
+      new Response(JSON.stringify({ reason: "not-found" }), { status: 404 }),
+      new Response(JSON.stringify({ status: "valid" }), { status: 500 }),
+      new Response(JSON.stringify({ status: "unknown" }), { status: 200 }),
+      new Response(JSON.stringify({}), { status: 200 }),
+      new Response("unavailable", { status: 200 })
+    ]) {
+      await expect(verifyCaptureSignature(request, (async () => response) as typeof fetch)).rejects.toThrow();
+    }
   });
 });

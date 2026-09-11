@@ -5,9 +5,6 @@ import { decodeLzfseFrame } from "../wasm/tapcamVerifier";
 
 const MANIFEST_UUID = "TAPCAMVIDEOMANF1";
 const PROOF_UUID = "TAPCAMPROOFSLOT1";
-const TELEMETRY_UUID = "TAPCAMTELEMETRY1";
-const MAX_TELEMETRY_BYTES = 4 * 1024 * 1024;
-const MAX_MOTION_SAMPLES = 8192;
 const PROOF_MAGIC = "TAPCAM-PROOF-SLOT-V1";
 const PROOF_PAYLOAD_BYTES = 60 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
@@ -18,7 +15,7 @@ const MAX_KLV_FRAME_BYTES = MAX_DEPTH_FRAME_BYTES + 4096;
 const MAX_INLINE_CALIBRATION_BYTES = 3072;
 const TAP_DEPTH_METADATA_KEY = "com.tapnap.depth.klv";
 const VIDEO_MANIFEST_ID = "urn:tapnap:tapcam:video-manifest:v1";
-const VIDEO_MANIFEST_MEDIA_TYPE = "application/vnd.tapnap.video-manifest+json;version=1";
+const VIDEO_MANIFEST_PAYLOAD_MEDIA_TYPE = "application/vnd.tapnap.video-manifest.payload+json;version=1";
 
 export interface TapVideoDepthFormat {
   kind: "depth" | "disparity" | string;
@@ -34,8 +31,8 @@ export interface TapVideoDepthFormat {
 export interface TapVideoManifest {
   schema: {
     id: string;
-    version: number;
-    mediaType: string;
+    version?: unknown;
+    mediaType?: unknown;
   };
   payload: {
     id: string;
@@ -74,29 +71,6 @@ export interface TapVideoDepthFrame {
 export interface TapVideoInspection {
   manifest: TapVideoManifest;
   depthFrames: TapVideoDepthFrame[];
-  captureTelemetry: TapVideoCaptureTelemetry | null;
-}
-
-export interface TapVideoCaptureTelemetry {
-  schema: { id: string; version: number; mediaType: string };
-  filtering: { requestedEnabled: boolean; filteredSampleCount: number; unfilteredSampleCount: number };
-  motion: {
-    status: "available" | "unavailable" | "noSamples" | "partial";
-    referenceFrame: "xArbitraryZVertical";
-    deviceCoordinateSystem: "core-motion-device-right-handed";
-    timeBase: "capture-relative-seconds";
-    motionToCaptureOffsetSeconds: number | null;
-    sampleIntervalSeconds: number;
-    droppedSampleCount: number;
-    errorCount: number;
-    samples: Array<{
-      ptsSeconds: number;
-      quaternion: number[];
-      rotationRate: number[];
-      gravity: number[];
-      userAcceleration: number[];
-    }>;
-  };
 }
 
 export type TapVideoDisplayOrientation =
@@ -164,44 +138,23 @@ interface ManifestDocument {
   payloadBytes: Uint8Array;
 }
 
-interface CanonicalJSONDocument {
+interface JSONDocument {
   value: unknown;
   memberRanges: Map<string, { start: number; end: number }>;
-  numberTokens: Map<string, string>;
 }
 
 interface TrackSample {
   bytes: Uint8Array;
-  timestamp: bigint;
-  duration: number;
   sampleDescriptionIndex: number;
 }
 
-interface TrackInfo {
-  box: Box;
-  id: number;
-  handler: string;
-  timeScale: number;
-  duration: bigint;
-  presentation: { duration: bigint; timeScale: number; mediaStart: bigint; leadingEmptyDuration: bigint };
-  codecs: string[];
-  sampleCount: number;
-  width: number | null;
-  height: number | null;
-  sampleRate: number | null;
-  channelCount: number | null;
-}
-
 interface ParsedDepthFrame extends TapVideoDepthFrame {
-  ptsValue: bigint;
-  ptsTimescale: number;
   localKeyID: number;
 }
 
 export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVerificationReport> {
   const checks: VerificationCheck[] = [];
   let manifest: TapVideoManifest | undefined;
-  let captureTelemetry: TapVideoCaptureTelemetry | null = null;
   let failureStage = { id: "video-container", label: "TAP Video container" };
   try {
     if (bytes.byteLength > MAX_CAPTURE_INPUT_BYTES) {
@@ -213,9 +166,6 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
     }
     const manifestBox = requireUniqueUUIDBox(topLevel, MANIFEST_UUID, "TAP video manifest");
     const proofBox = requireUniqueUUIDBox(topLevel, PROOF_UUID, "TAP proof slot");
-    if (manifestBox.payloadEnd - manifestBox.payloadStart > MAX_MANIFEST_BYTES) {
-      throw new Error("TAP video manifest exceeds the bounded payload limit.");
-    }
     failureStage = { id: "video-manifest", label: "TAP Video manifest" };
     const manifestDocument = parseManifest(bytes.subarray(manifestBox.payloadStart, manifestBox.payloadEnd));
     manifest = manifestDocument.manifest;
@@ -227,15 +177,17 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
     checks.push(pass("video-proof", "TAP Video proof envelope", "The App Attest proof envelope and fixed-slot padding are structurally valid."));
 
     failureStage = { id: "video-content-binding", label: "TAP Video v1 content binding" };
-    const recomputedDigest = await buildContentDigest(bytes, proofBox, manifest, manifestDocument.payloadBytes);
-    const suppliedDigest = proofValue.contentDigest;
+    // Descriptors are signed metadata; only covered bytes and binding identity
+    // are reconstructed here. Media decoding belongs to the depth/player path.
+    const suppliedDigest = requireObject(proofValue.contentDigest, "TAP Video content digest");
+    const recomputedDigest = await buildContentDigest(bytes, proofBox, manifest, manifestDocument.payloadBytes, suppliedDigest.depthResource);
     const digestMatches = canonicalJSON(suppliedDigest) === canonicalJSON(recomputedDigest);
     checks.push(check(
       "video-content-binding",
       "TAP Video v1 content binding",
       digestMatches,
       digestMatches
-        ? "MP4 bytes outside the proof slot and canonical manifest payload match the signed v1 binding."
+        ? "MP4 bytes outside the proof slot and raw manifest payload bytes match the signed v1 binding."
         : "Signed TAP Video content binding does not match the supplied MP4 bytes."
     ));
 
@@ -260,7 +212,6 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
     const proofFieldsValid =
       proof.type === "appAttestAssertion" &&
       proof.algorithm === "TAPCam.AppAttestCaptureSignature.v1" &&
-      proof.createdAt === manifest.payload.capturedAt &&
       keyMatches &&
       typeof proofValue.assertionObject === "string" &&
       proofValue.assertionObject.length > 0;
@@ -268,34 +219,10 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
       "video-proof-fields",
       "TAP Video proof fields",
       proofFieldsValid,
-      proofFieldsValid ? "Proof identity, timestamp, and assertion fields are consistent." : "Proof identity, timestamp, or assertion fields are inconsistent."
+      proofFieldsValid ? "Proof identity and assertion fields are consistent." : "Proof identity or assertion fields are inconsistent."
     ));
 
     const localBindingMatches = proofFieldsValid && signingBindingMatches && digestMatches;
-    if (localBindingMatches) {
-      failureStage = { id: "video-semantics", label: "TAP Video v1 manifest and timed metadata" };
-      await validateVideoSemantics(bytes, topLevel, manifest);
-      checks.push(pass(
-        "video-semantics",
-        "TAP Video v1 manifest and timed metadata",
-        "Manifest groups, finalized MP4 track facts, and every timed-depth sample satisfy the v1 relationships."
-      ));
-      failureStage = { id: "video-capture-telemetry", label: "TAP Video capture telemetry" };
-      captureTelemetry = parseCaptureTelemetry(bytes, topLevel, manifest);
-      if (captureTelemetry) {
-        const { filtering, motion } = captureTelemetry;
-        checks.push(pass("video-capture-telemetry", "TAP Video capture telemetry",
-          `Signed capture telemetry: Apple filtering requested ${filtering.requestedEnabled ? "on" : "off"}; ${filtering.filteredSampleCount} filtered and ${filtering.unfilteredSampleCount} unfiltered delivered depth samples. Core Motion ${motion.status}: ${motion.samples.length} samples, ${motion.droppedSampleCount} dropped, ${motion.errorCount} errors. Device attitude is not camera position or scene truth.`));
-      }
-    } else {
-      checks.push({
-        id: "video-semantics",
-        label: "TAP Video v1 manifest and timed metadata",
-        status: "warning",
-        detail: "Bounded MP4/KLV semantic inspection was not run because the local artifact-binding gate failed."
-      });
-    }
-
     const serverRequest = localBindingMatches
       ? {
           keyId: proofValue.keyId as string,
@@ -307,7 +234,7 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
     return {
       status: valid ? "valid" : "invalid",
       summary: valid
-        ? "TAP Video hard binding passed locally; timed depth playback is available as downstream analysis."
+        ? "TAP Video bytes match the embedded binding; server signature verification is still required."
         : "TAP Video local hard-binding checks failed.",
       mediaKind: "video",
       verificationScope: "fullVideo",
@@ -315,7 +242,6 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
         manifestVerified: digestMatches
       },
       captureId: manifest.payload.id,
-      captureTelemetry,
       capturedAt: manifest.payload.capturedAt,
       manifest: {
         containerFormat: "mp4",
@@ -365,13 +291,13 @@ export async function verifyTapVideoLocally(bytes: Uint8Array): Promise<LocalVer
 }
 
 export function inspectTapVideoDepth(bytes: Uint8Array): TapVideoInspection {
+  if (bytes.byteLength > MAX_CAPTURE_INPUT_BYTES) throw new Error("TAP Video exceeds the 512 MiB browser input limit.");
   const topLevel = parseBoxes(bytes, 0, bytes.byteLength);
   const manifestBox = requireUniqueUUIDBox(topLevel, MANIFEST_UUID, "TAP video manifest");
   const manifest = parseManifest(bytes.subarray(manifestBox.payloadStart, manifestBox.payloadEnd)).manifest;
-  const captureTelemetry = parseCaptureTelemetry(bytes, topLevel, manifest);
   const coverage = manifest.payload.depthCoverage;
-  if (!coverage.format || coverage.sampleCount === 0 || coverage.trackID === null) {
-    return { manifest, depthFrames: [], captureTelemetry };
+  if (!coverage?.format || coverage.trackID == null) {
+    return { manifest, depthFrames: [] };
   }
   const moov = topLevel.find((box) => box.type === "moov");
   if (!moov) {
@@ -383,87 +309,21 @@ export function inspectTapVideoDepth(bytes: Uint8Array): TapVideoInspection {
     throw new Error("Manifest depth track is missing from the MP4 sample table.");
   }
   const samples = readTrackSamples(bytes, depthTrack);
-  if (samples.length !== coverage.sampleCount) {
-    throw new Error(`Depth sample count mismatch: manifest ${coverage.sampleCount}, MP4 ${samples.length}.`);
-  }
   const keyMappings = readMebxKeyMappings(bytes, depthTrack);
   const depthFrames = samples.map((sample) => {
     const frame = decodeMebxDepthSample(sample.bytes);
     requireTapDepthKeyMapping(keyMappings, sample.sampleDescriptionIndex, frame.localKeyID);
     return frame;
   });
-  return { manifest, depthFrames, captureTelemetry };
-}
-
-function parseCaptureTelemetry(bytes: Uint8Array, boxes: Box[], manifest: TapVideoManifest): TapVideoCaptureTelemetry | null {
-  const matches = boxes.filter((box) => box.type === "uuid" && box.userType === TELEMETRY_UUID);
-  if (matches.length === 0) return null;
-  if (matches.length !== 1) throw new Error("Duplicate TAP Video capture telemetry boxes.");
-  const box = matches[0];
-  if (box.payloadEnd - box.payloadStart > MAX_TELEMETRY_BYTES) throw new Error("Capture telemetry exceeds 4 MiB.");
-  const document = parseCanonicalJSON(decodeUTF8(bytes.subarray(box.payloadStart, box.payloadEnd), "capture telemetry"), "capture telemetry");
-  const value = requireObject(document.value, "capture telemetry");
-  requireExactKeys(value, ["schema", "filtering", "motion"], "capture telemetry");
-  const schema = requireObject(value.schema, "telemetry.schema");
-  requireExactKeys(schema, ["id", "version", "mediaType"], "telemetry.schema");
-  requireInteger(schema.version, document.numberTokens, ["schema", "version"], "telemetry.schema.version");
-  if (schema.id !== "urn:tapnap:tapcam:video-capture-telemetry:v1" || schema.version !== 1 ||
-    schema.mediaType !== "application/vnd.tapnap.video-capture-telemetry+json;version=1") {
-    throw new Error("Unsupported capture telemetry schema.");
-  }
-  const filtering = requireObject(value.filtering, "telemetry.filtering");
-  requireExactKeys(filtering, ["requestedEnabled", "filteredSampleCount", "unfilteredSampleCount"], "telemetry.filtering");
-  requireBoolean(filtering.requestedEnabled, "filtering.requestedEnabled");
-  for (const key of ["filteredSampleCount", "unfilteredSampleCount"]) {
-    requireNonNegativeInteger(filtering[key], document.numberTokens, ["filtering", key], `filtering.${key}`);
-  }
-  if ((filtering.filteredSampleCount as number) + (filtering.unfilteredSampleCount as number) !== manifest.payload.depthCoverage.deliveredSampleCount) {
-    throw new Error("Filtering observations do not match delivered depth samples.");
-  }
-  const motion = requireObject(value.motion, "telemetry.motion");
-  requireExactKeys(motion, ["status", "referenceFrame", "deviceCoordinateSystem", "timeBase", "motionToCaptureOffsetSeconds",
-    "sampleIntervalSeconds", "droppedSampleCount", "errorCount", "samples"], "telemetry.motion");
-  requireEnum(motion.status, ["available", "unavailable", "noSamples", "partial"], "motion.status");
-  if (motion.referenceFrame !== "xArbitraryZVertical" || motion.deviceCoordinateSystem !== "core-motion-device-right-handed" ||
-    motion.timeBase !== "capture-relative-seconds") throw new Error("Unsupported motion coordinates or clock.");
-  if (motion.motionToCaptureOffsetSeconds !== null) requireFiniteNumber(motion.motionToCaptureOffsetSeconds, "motion.motionToCaptureOffsetSeconds");
-  requireFiniteNumber(motion.sampleIntervalSeconds, "motion.sampleIntervalSeconds");
-  if ((motion.sampleIntervalSeconds as number) <= 0 || (motion.sampleIntervalSeconds as number) > 1) throw new Error("Invalid motion sample interval.");
-  for (const key of ["droppedSampleCount", "errorCount"]) {
-    requireNonNegativeInteger(motion[key], document.numberTokens, ["motion", key], `motion.${key}`);
-  }
-  if (!Array.isArray(motion.samples) || motion.samples.length > MAX_MOTION_SAMPLES) throw new Error("Invalid or excessive motion samples.");
-  const hasSamples = motion.samples.length > 0;
-  const degraded = (motion.droppedSampleCount as number) > 0 || (motion.errorCount as number) > 0;
-  if ((motion.status === "available" && (!hasSamples || degraded)) ||
-    (motion.status === "partial" && (!hasSamples || !degraded)) ||
-    ((motion.status === "noSamples" || motion.status === "unavailable") && hasSamples) ||
-    (motion.status === "noSamples" && motion.errorCount !== 0) || (hasSamples && motion.motionToCaptureOffsetSeconds === null)) {
-    throw new Error("Motion availability, counts, and clock mapping disagree.");
-  }
-  const duration = manifest.payload.container?.durationSeconds as number;
-  const timeScale = manifest.payload.container?.timeScale as number;
-  let previousPTS = -1;
-  for (const entry of motion.samples) {
-    const sample = requireObject(entry, "motion sample");
-    requireExactKeys(sample, ["ptsSeconds", "quaternion", "rotationRate", "gravity", "userAcceleration"], "motion sample");
-    requireNonNegativeNumber(sample.ptsSeconds, "motion sample.ptsSeconds");
-    const pts = sample.ptsSeconds as number;
-    if (pts <= previousPTS || pts > duration + 1 / timeScale) throw new Error("Motion timestamps regress or exceed the capture duration.");
-    previousPTS = pts;
-    requireNumberArray(sample.quaternion, 4, "motion sample.quaternion");
-    for (const key of ["rotationRate", "gravity", "userAcceleration"]) requireNumberArray(sample[key], 3, `motion sample.${key}`);
-    const normSquared = (sample.quaternion as number[]).reduce((sum, component) => sum + component * component, 0);
-    if (Math.abs(normSquared - 1) > 0.01) throw new Error("Motion quaternion is not normalized.");
-  }
-  return value as unknown as TapVideoCaptureTelemetry;
+  return { manifest, depthFrames };
 }
 
 let zstdDecoderPromise: Promise<ZSTDDecoder> | null = null;
 
 export async function decodeTapDepthFrame(frame: TapVideoDepthFrame): Promise<Uint8Array> {
-  if (frame.uncompressedByteCount > MAX_DEPTH_FRAME_BYTES) {
-    throw new Error("Depth frame exceeds the 32 MiB decoded limit.");
+  if (!Number.isSafeInteger(frame.uncompressedByteCount) || frame.uncompressedByteCount <= 0 ||
+      frame.uncompressedByteCount > MAX_DEPTH_FRAME_BYTES || frame.payload.byteLength > MAX_DEPTH_FRAME_BYTES) {
+    throw new Error("Depth frame exceeds the bounded encoded or decoded size.");
   }
   let decoded: Uint8Array;
   if (frame.compression === "raw") {
@@ -490,10 +350,13 @@ export function renderTapDepthFrame(
   registration?: TapVideoManifest["payload"]["spatialRegistration"]
 ): { min: number; max: number } {
   const { width, height, bytesPerSample, packedRowStride, pixelFormat } = format;
-  if (width <= 0 || height <= 0 || width * height > 16_777_216) {
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || width * height > 16_777_216) {
     throw new Error("Invalid TAP depth frame dimensions.");
   }
-  if ((bytesPerSample !== 2 && bytesPerSample !== 4) || packedRowStride < width * bytesPerSample) {
+  const expectedSampleBytes = { hdep: 2, hdis: 2, fdep: 4, fdis: 4 }[pixelFormat];
+  if (format.byteOrder !== "little-endian" || expectedSampleBytes !== bytesPerSample ||
+      !Number.isSafeInteger(packedRowStride) || packedRowStride < width * bytesPerSample ||
+      packedRowStride * height > MAX_DEPTH_FRAME_BYTES || packedRowStride * height !== bytes.byteLength) {
     throw new Error("Invalid TAP depth frame layout.");
   }
   const values = new Float32Array(width * height);
@@ -683,24 +546,18 @@ function getZstdDecoder(): Promise<ZSTDDecoder> {
 }
 
 function parseManifest(bytes: Uint8Array): ManifestDocument {
+  if (bytes.byteLength > MAX_MANIFEST_BYTES) throw new Error("TAP video manifest exceeds the bounded payload limit.");
   const text = decodeUTF8(bytes, "TAP Video manifest");
-  const document = parseCanonicalJSON(text, "TAP Video manifest");
+  const document = parseJSONDocument(text, "TAP Video manifest");
   const value = document.value;
   if (!isRecord(value) || !isRecord(value.schema) || !isRecord(value.payload)) {
     throw new Error("Invalid TAP Video manifest JSON.");
   }
-  requireExactKeys(value, ["payload", "proofs", "schema"], "TAP Video manifest");
-  requireExactKeys(value.schema, ["id", "mediaType", "version"], "TAP Video schema");
-  requireInteger(value.schema.version, document.numberTokens, ["schema", "version"], "schema.version");
-  if (
-    value.schema.id !== VIDEO_MANIFEST_ID ||
-    value.schema.version !== 1 ||
-    value.schema.mediaType !== VIDEO_MANIFEST_MEDIA_TYPE ||
-    !Array.isArray(value.proofs) || value.proofs.length !== 0
-  ) {
-    throw new Error("Unsupported TAP Video manifest schema or non-empty manifest proofs.");
+  if (value.schema.id !== VIDEO_MANIFEST_ID) {
+    throw new Error("Unsupported TAP Video manifest binding family.");
   }
-  validateManifestPayload(value.payload, document.numberTokens);
+  requireNonEmptyString(value.payload.id, "payload.id");
+  requireString(value.payload.capturedAt, "payload.capturedAt");
   const range = document.memberRanges.get("payload");
   if (!range) {
     throw new Error("TAP Video manifest payload raw bytes are unavailable.");
@@ -711,12 +568,15 @@ function parseManifest(bytes: Uint8Array): ManifestDocument {
   };
 }
 
-function parseCanonicalJSON(text: string, label: string): CanonicalJSONDocument {
+function parseJSONDocument(text: string, label: string): JSONDocument {
   let offset = 0;
   const memberRanges = new Map<string, { start: number; end: number }>();
-  const numberTokens = new Map<string, string>();
+
+  const skipWhitespace = (): void => { while (/^[ \t\r\n]$/.test(text[offset] ?? "")) offset += 1; };
 
   const parseValue = (path: string[]): unknown => {
+    if (path.length > 128) throw new Error(`${label} exceeds the JSON nesting limit.`);
+    skipWhitespace();
     const character = text[offset];
     if (character === "{") return parseObject(path);
     if (character === "[") return parseArray(path);
@@ -725,11 +585,9 @@ function parseCanonicalJSON(text: string, label: string): CanonicalJSONDocument 
     if (text.startsWith("false", offset)) { offset += 5; return false; }
     if (text.startsWith("null", offset)) { offset += 4; return null; }
     const match = text.slice(offset).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
-    if (!match) throw new Error(`${label} is not canonical JSON.`);
+    if (!match) throw new Error(`${label} is not valid JSON.`);
     const token = match[0];
     const number = Number(token);
-    if (!Number.isFinite(number)) throw new Error(`${label} contains a non-finite JSON number.`);
-    numberTokens.set(path.join("\u0000"), token);
     offset += token.length;
     return number;
   };
@@ -737,22 +595,25 @@ function parseCanonicalJSON(text: string, label: string): CanonicalJSONDocument 
   const parseObject = (path: string[]): Record<string, unknown> => {
     offset += 1;
     const result: Record<string, unknown> = Object.create(null);
-    let previousKey: string | null = null;
+    skipWhitespace();
     if (text[offset] === "}") { offset += 1; return result; }
     while (true) {
-      if (text[offset] !== '"') throw new Error(`${label} contains whitespace or an invalid object member.`);
+      skipWhitespace();
+      if (text[offset] !== '"') throw new Error(`${label} contains an invalid object member.`);
       const key = parseString();
-      if (previousKey !== null && compareUTF8(previousKey, key) >= 0) {
-        throw new Error(`${label} object member names are duplicated or not sorted by UTF-8 bytes.`);
+      if (Object.prototype.hasOwnProperty.call(result, key)) {
+        throw new Error(`${label} contains a duplicate object member.`);
       }
-      previousKey = key;
-      if (text[offset] !== ":") throw new Error(`${label} contains whitespace or a missing colon.`);
+      skipWhitespace();
+      if (text[offset] !== ":") throw new Error(`${label} contains a missing colon.`);
       offset += 1;
+      skipWhitespace();
       const valueStart = offset;
       result[key] = parseValue([...path, key]);
       if (path.length === 0) memberRanges.set(key, { start: valueStart, end: offset });
+      skipWhitespace();
       if (text[offset] === "}") { offset += 1; return result; }
-      if (text[offset] !== ",") throw new Error(`${label} contains whitespace or an invalid object separator.`);
+      if (text[offset] !== ",") throw new Error(`${label} contains an invalid object separator.`);
       offset += 1;
     }
   };
@@ -760,11 +621,13 @@ function parseCanonicalJSON(text: string, label: string): CanonicalJSONDocument 
   const parseArray = (path: string[]): unknown[] => {
     offset += 1;
     const result: unknown[] = [];
+    skipWhitespace();
     if (text[offset] === "]") { offset += 1; return result; }
     while (true) {
       result.push(parseValue([...path, String(result.length)]));
+      skipWhitespace();
       if (text[offset] === "]") { offset += 1; return result; }
-      if (text[offset] !== ",") throw new Error(`${label} contains whitespace or an invalid array separator.`);
+      if (text[offset] !== ",") throw new Error(`${label} contains an invalid array separator.`);
       offset += 1;
     }
   };
@@ -784,9 +647,7 @@ function parseCanonicalJSON(text: string, label: string): CanonicalJSONDocument 
         } catch {
           throw new Error(`${label} contains an invalid JSON string.`);
         }
-        if (!hasOnlyUnicodeScalars(value) || JSON.stringify(value) !== token) {
-          throw new Error(`${label} contains a non-canonical JSON string.`);
-        }
+        if (!hasOnlyUnicodeScalars(value)) throw new Error(`${label} contains an invalid Unicode string.`);
         return value;
       }
       if (!escaped && code < 0x20) throw new Error(`${label} contains an unescaped control character.`);
@@ -801,254 +662,9 @@ function parseCanonicalJSON(text: string, label: string): CanonicalJSONDocument 
   };
 
   const value = parseValue([]);
-  if (offset !== text.length) throw new Error(`${label} contains trailing or non-canonical bytes.`);
-  return { value, memberRanges, numberTokens };
-}
-
-function validateManifestPayload(payload: Record<string, unknown>, tokens: Map<string, string>): void {
-  requireExactKeys(payload, [
-    "audioTrack", "capturedAt", "container", "depthCoverage", "id", "packageID", "rgbTrack",
-    "selectedCameraPlan", "software", "spatialRegistration", "stop", "synchronization"
-  ], "TAP Video payload");
-  requireNonEmptyString(payload.id, "payload.id");
-  requireString(payload.packageID, "payload.packageID");
-  requireTimestamp(payload.capturedAt, "payload.capturedAt");
-
-  const camera = requireObject(payload.selectedCameraPlan, "payload.selectedCameraPlan");
-  requireAllowedKeys(camera, [
-    "depthCapable", "deviceType", "deviceUniqueID", "localizedName", "position",
-    "requestedFocalLengthLabel", "resolvedFocalLengthLabel", "resolvedZoomFactor"
-  ], ["depthCapable", "position"], "selectedCameraPlan");
-  requireEnum(camera.position, ["front", "back", "unspecified", "unknown"], "selectedCameraPlan.position");
-  requireBoolean(camera.depthCapable, "selectedCameraPlan.depthCapable");
-  for (const key of ["deviceType", "deviceUniqueID", "localizedName", "requestedFocalLengthLabel", "resolvedFocalLengthLabel"]) {
-    if (camera[key] !== undefined && camera[key] !== null) requireString(camera[key], `selectedCameraPlan.${key}`);
-  }
-  if (camera.resolvedZoomFactor !== undefined && camera.resolvedZoomFactor !== null) {
-    requireFiniteNumber(camera.resolvedZoomFactor, "selectedCameraPlan.resolvedZoomFactor");
-  }
-
-  const container = requireObject(payload.container, "payload.container");
-  requireExactKeys(container, ["durationSeconds", "fileType", "mediaType", "timeScale", "trackCount"], "container");
-  if (container.fileType !== "mp4" || container.mediaType !== "video/mp4") throw new Error("Invalid TAP Video container identity.");
-  requireNonNegativeNumber(container.durationSeconds, "container.durationSeconds");
-  requirePositiveInteger(container.timeScale, tokens, ["payload", "container", "timeScale"], "container.timeScale");
-  requireNonNegativeInteger(container.trackCount, tokens, ["payload", "container", "trackCount"], "container.trackCount");
-
-  const rgb = requireObject(payload.rgbTrack, "payload.rgbTrack");
-  requireAllowedKeys(rgb, ["codec", "durationSeconds", "frameCount", "height", "nominalFrameRate", "timeScale", "trackID", "transform", "width"],
-    ["codec", "durationSeconds", "height", "timeScale", "trackID", "width"], "rgbTrack");
-  requirePositiveInteger(rgb.trackID, tokens, ["payload", "rgbTrack", "trackID"], "rgbTrack.trackID");
-  requireNonEmptyString(rgb.codec, "rgbTrack.codec");
-  requirePositiveInteger(rgb.width, tokens, ["payload", "rgbTrack", "width"], "rgbTrack.width");
-  requirePositiveInteger(rgb.height, tokens, ["payload", "rgbTrack", "height"], "rgbTrack.height");
-  requireNonNegativeNumber(rgb.durationSeconds, "rgbTrack.durationSeconds");
-  requirePositiveInteger(rgb.timeScale, tokens, ["payload", "rgbTrack", "timeScale"], "rgbTrack.timeScale");
-  if (rgb.nominalFrameRate !== undefined && rgb.nominalFrameRate !== null) requireFiniteNumber(rgb.nominalFrameRate, "rgbTrack.nominalFrameRate");
-  if (rgb.frameCount !== undefined && rgb.frameCount !== null) {
-    requireNonNegativeInteger(rgb.frameCount, tokens, ["payload", "rgbTrack", "frameCount"], "rgbTrack.frameCount");
-  }
-  if (rgb.transform !== undefined && rgb.transform !== null) {
-    requireString(rgb.transform, "rgbTrack.transform");
-    tapVideoDisplayOrientation(rgb.transform as string);
-  }
-
-  validateAudioTrack(requireObject(payload.audioTrack, "payload.audioTrack"), tokens);
-  const coverage = requireObject(payload.depthCoverage, "payload.depthCoverage");
-  validateDepthCoverage(coverage, tokens);
-  if ((coverage.sampleCount as number) > 0 && camera.depthCapable !== true) throw new Error("Stored TAP Video depth requires a depth-capable camera plan.");
-  const registration = requireObject(payload.spatialRegistration, "payload.spatialRegistration");
-  validateSpatialRegistration(registration, coverage, tokens);
-  validateRegistrationGeometry(registration, rgb, coverage);
-  validateSynchronization(requireObject(payload.synchronization, "payload.synchronization"), coverage);
-
-  const stop = requireObject(payload.stop, "payload.stop");
-  requireExactKeys(stop, ["reason", "recordedDurationSeconds"], "stop");
-  requireEnum(stop.reason, ["userStop", "durationLimit", "thermalPressure", "systemPressure", "appLifecycle", "storageFailure", "captureFailure"], "stop.reason");
-  requireNonNegativeNumber(stop.recordedDurationSeconds, "stop.recordedDurationSeconds");
-  if (!numbersEqual(stop.recordedDurationSeconds as number, container.durationSeconds as number)) {
-    throw new Error("Recorded duration does not match the finalized container duration.");
-  }
-
-  const software = requireObject(payload.software, "payload.software");
-  requireExactKeys(software, ["appIdentifier", "appVersion", "buildNumber", "schemaWriter"], "software");
-  requireString(software.appIdentifier, "software.appIdentifier");
-  requireString(software.appVersion, "software.appVersion");
-  requireString(software.buildNumber, "software.buildNumber");
-  requireNonEmptyString(software.schemaWriter, "software.schemaWriter");
-}
-
-function validateAudioTrack(audio: Record<string, unknown>, tokens: Map<string, string>): void {
-  requireExactKeys(audio, ["channelCount", "codec", "durationSeconds", "sampleRate", "status", "timeScale", "trackID"], "audioTrack");
-  requireEnum(audio.status, ["captured", "notCaptured", "unavailable"], "audioTrack.status");
-  const factKeys = ["trackID", "codec", "durationSeconds", "timeScale", "sampleRate", "channelCount"];
-  if (audio.status !== "captured") {
-    if (factKeys.some((key) => audio[key] !== null)) throw new Error("A non-captured audio track must serialize null track facts.");
-    return;
-  }
-  requirePositiveInteger(audio.trackID, tokens, ["payload", "audioTrack", "trackID"], "audioTrack.trackID");
-  requireNonEmptyString(audio.codec, "audioTrack.codec");
-  requireNonNegativeNumber(audio.durationSeconds, "audioTrack.durationSeconds");
-  requirePositiveInteger(audio.timeScale, tokens, ["payload", "audioTrack", "timeScale"], "audioTrack.timeScale");
-  if (audio.sampleRate !== null) requireFiniteNumber(audio.sampleRate, "audioTrack.sampleRate");
-  if (audio.channelCount !== null) {
-    requirePositiveInteger(audio.channelCount, tokens, ["payload", "audioTrack", "channelCount"], "audioTrack.channelCount");
-  }
-}
-
-function validateDepthCoverage(coverage: Record<string, unknown>, tokens: Map<string, string>): void {
-  requireExactKeys(coverage, [
-    "deliveredSampleCount", "encodingDropCount", "format", "gapCount", "gaps", "metadataDropCount",
-    "outputDropCount", "sampleCount", "trackCodec", "trackDurationSeconds", "trackID", "trackTimeScale"
-  ], "depthCoverage");
-  for (const key of ["sampleCount", "deliveredSampleCount", "outputDropCount", "encodingDropCount", "metadataDropCount", "gapCount"]) {
-    requireNonNegativeInteger(coverage[key], tokens, ["payload", "depthCoverage", key], `depthCoverage.${key}`);
-  }
-  if ((coverage.deliveredSampleCount as number) < (coverage.sampleCount as number)) {
-    throw new Error("Delivered depth sample count is below the stored sample count.");
-  }
-  if (!Array.isArray(coverage.gaps) || coverage.gaps.length > 1024 || coverage.gapCount !== coverage.gaps.length) {
-    throw new Error("Invalid TAP Video depth gap table or gap count.");
-  }
-  coverage.gaps.forEach((gap, index) => validateDepthGap(gap, index, tokens));
-  if (coverage.sampleCount === 0) {
-    if (coverage.trackID !== null || coverage.trackCodec !== null || coverage.trackDurationSeconds !== null ||
-        coverage.trackTimeScale !== null || coverage.format !== null) {
-      throw new Error("Zero-depth TAP Video must use canonical null depth-track facts.");
-    }
-    return;
-  }
-  requirePositiveInteger(coverage.trackID, tokens, ["payload", "depthCoverage", "trackID"], "depthCoverage.trackID");
-  if (coverage.trackCodec !== "mebx") throw new Error("Stored TAP Video depth requires the mebx track codec.");
-  requireNonNegativeNumber(coverage.trackDurationSeconds, "depthCoverage.trackDurationSeconds");
-  requirePositiveInteger(coverage.trackTimeScale, tokens, ["payload", "depthCoverage", "trackTimeScale"], "depthCoverage.trackTimeScale");
-  validateDepthFormat(requireObject(coverage.format, "depthCoverage.format"), tokens);
-}
-
-function validateDepthFormat(format: Record<string, unknown>, tokens: Map<string, string>): void {
-  requireAllowedKeys(format, [
-    "byteOrder", "bytesPerSample", "compressionPolicy", "height", "kind", "packedRowStride",
-    "pixelFormat", "sourceRowStride", "uncompressedFrameByteCount", "width"
-  ], ["byteOrder", "bytesPerSample", "compressionPolicy", "height", "kind", "packedRowStride", "pixelFormat", "uncompressedFrameByteCount", "width"], "depthCoverage.format");
-  requireEnum(format.kind, ["depth", "disparity"], "depthCoverage.format.kind");
-  requireEnum(format.pixelFormat, ["hdep", "fdep", "hdis", "fdis"], "depthCoverage.format.pixelFormat");
-  requirePositiveInteger(format.width, tokens, ["payload", "depthCoverage", "format", "width"], "depthCoverage.format.width");
-  requirePositiveInteger(format.height, tokens, ["payload", "depthCoverage", "format", "height"], "depthCoverage.format.height");
-  requirePositiveInteger(format.packedRowStride, tokens, ["payload", "depthCoverage", "format", "packedRowStride"], "depthCoverage.format.packedRowStride");
-  requirePositiveInteger(format.bytesPerSample, tokens, ["payload", "depthCoverage", "format", "bytesPerSample"], "depthCoverage.format.bytesPerSample");
-  requirePositiveInteger(format.uncompressedFrameByteCount, tokens, ["payload", "depthCoverage", "format", "uncompressedFrameByteCount"], "depthCoverage.format.uncompressedFrameByteCount");
-  if (format.sourceRowStride !== undefined && format.sourceRowStride !== null) {
-    requirePositiveInteger(format.sourceRowStride, tokens, ["payload", "depthCoverage", "format", "sourceRowStride"], "depthCoverage.format.sourceRowStride");
-  }
-  if (format.byteOrder !== "little-endian") throw new Error("Unsupported TAP Video depth byte order.");
-  requireEnum(format.compressionPolicy, ["per-frame:zstd1|raw", "per-frame:lzfse|raw", "per-frame:raw"], "depthCoverage.format.compressionPolicy");
-  const expected = format.pixelFormat === "hdep" ? ["depth", 2] :
-    format.pixelFormat === "fdep" ? ["depth", 4] :
-    format.pixelFormat === "hdis" ? ["disparity", 2] : ["disparity", 4];
-  if (format.kind !== expected[0] || format.bytesPerSample !== expected[1]) throw new Error("Invalid TAP Video depth kind, pixel format, and sample-size combination.");
-  const rowBytes = (format.width as number) * (format.bytesPerSample as number);
-  if (!Number.isSafeInteger(rowBytes) || format.packedRowStride !== rowBytes ||
-      (format.sourceRowStride !== undefined && format.sourceRowStride !== null && (format.sourceRowStride as number) < rowBytes)) {
-    throw new Error("Invalid TAP Video packed/source row stride.");
-  }
-  const frameBytes = rowBytes * (format.height as number);
-  if (!Number.isSafeInteger(frameBytes) || format.uncompressedFrameByteCount !== frameBytes || frameBytes > MAX_DEPTH_FRAME_BYTES) {
-    throw new Error("Invalid TAP Video uncompressed frame byte count.");
-  }
-}
-
-function validateDepthGap(value: unknown, index: number, tokens: Map<string, string>): void {
-  const gap = requireObject(value, `depthCoverage.gaps[${index}]`);
-  requireAllowedKeys(gap, ["endPTS", "nearestEndRGBFrame", "nearestStartRGBFrame", "reason", "startPTS"], ["endPTS", "reason", "startPTS"], `depthCoverage.gaps[${index}]`);
-  requireEnum(gap.reason, ["outputDrop", "encodingFailure", "metadataBackpressure", "silentCadence", "boundedAggregation"], `depthCoverage.gaps[${index}].reason`);
-  const start = validateMediaTime(gap.startPTS, ["payload", "depthCoverage", "gaps", String(index), "startPTS"], tokens);
-  const end = validateMediaTime(gap.endPTS, ["payload", "depthCoverage", "gaps", String(index), "endPTS"], tokens);
-  if (end.value * BigInt(start.timescale) < start.value * BigInt(end.timescale)) throw new Error("Depth gap ends before it starts.");
-  for (const key of ["nearestStartRGBFrame", "nearestEndRGBFrame"]) {
-    if (gap[key] !== undefined && gap[key] !== null) {
-      requireNonNegativeInteger(gap[key], tokens, ["payload", "depthCoverage", "gaps", String(index), key], `depthCoverage.gaps[${index}].${key}`);
-    }
-  }
-}
-
-function validateMediaTime(value: unknown, path: string[], tokens: Map<string, string>): { value: bigint; timescale: number } {
-  const time = requireObject(value, path.join("."));
-  requireExactKeys(time, ["timescale", "value"], path.join("."));
-  const valueToken = requireIntegerToken(tokens, [...path, "value"], `${path.join(".")}.value`);
-  requirePositiveInteger(time.timescale, tokens, [...path, "timescale"], `${path.join(".")}.timescale`);
-  return { value: BigInt(valueToken), timescale: time.timescale as number };
-}
-
-function validateSpatialRegistration(registration: Record<string, unknown>, coverage: Record<string, unknown>, tokens: Map<string, string>): void {
-  requireAllowedKeys(registration, [
-    "calibrationCoverage", "calibrationTable", "depthReferenceDimensions", "descriptor", "mapping",
-    "recordedTransform", "rgbCleanAperture", "rgbReferenceDimensions", "status"
-  ], ["calibrationCoverage", "calibrationTable", "mapping", "status"], "spatialRegistration");
-  requireEnum(registration.status, ["registered", "unavailable"], "spatialRegistration.status");
-  requireString(registration.mapping, "spatialRegistration.mapping");
-  for (const key of ["rgbReferenceDimensions", "depthReferenceDimensions"]) {
-    if (registration[key] !== undefined && registration[key] !== null) validateDimensions(registration[key], `spatialRegistration.${key}`);
-  }
-  if (registration.rgbCleanAperture !== undefined && registration.rgbCleanAperture !== null) validateRect(registration.rgbCleanAperture, "spatialRegistration.rgbCleanAperture");
-  if (registration.recordedTransform !== undefined && registration.recordedTransform !== null) {
-    requireEnum(registration.recordedTransform, registrationTransforms(), "spatialRegistration.recordedTransform");
-  }
-  if (!Array.isArray(registration.calibrationTable) || registration.calibrationTable.length > 16) throw new Error("Invalid TAP Video calibration table.");
-  registration.calibrationTable.forEach((item, index) => validateCalibration(item, `calibrationTable[${index}]`));
-  const calibrationCoverage = requireObject(registration.calibrationCoverage, "spatialRegistration.calibrationCoverage");
-  requireExactKeys(calibrationCoverage, ["indexedSampleCount", "missingCalibrationSampleCount", "overflowUnindexedSampleCount", "tableOverflowed"], "spatialRegistration.calibrationCoverage");
-  for (const key of ["indexedSampleCount", "missingCalibrationSampleCount", "overflowUnindexedSampleCount"]) {
-    requireNonNegativeInteger(calibrationCoverage[key], tokens, ["payload", "spatialRegistration", "calibrationCoverage", key], `calibrationCoverage.${key}`);
-  }
-  requireBoolean(calibrationCoverage.tableOverflowed, "calibrationCoverage.tableOverflowed");
-  const countSum = (calibrationCoverage.indexedSampleCount as number) + (calibrationCoverage.missingCalibrationSampleCount as number) + (calibrationCoverage.overflowUnindexedSampleCount as number);
-  if (countSum !== coverage.sampleCount || ((calibrationCoverage.indexedSampleCount as number) > 0 && registration.calibrationTable.length === 0) ||
-      ((calibrationCoverage.overflowUnindexedSampleCount as number) > 0 && calibrationCoverage.tableOverflowed !== true) ||
-      (calibrationCoverage.tableOverflowed === true && registration.calibrationTable.length !== 16)) {
-    throw new Error("Invalid TAP Video calibration coverage relationship.");
-  }
-  if (registration.status === "registered") {
-    if (registration.mapping !== "urn:tapnap:tapcam:video-depth-registration:avdepthdata-yuv-warp:v1") throw new Error("Invalid registered TAP Video mapping.");
-    validateRegistrationDescriptor(requireObject(registration.descriptor, "spatialRegistration.descriptor"), tokens);
-  } else {
-    if (registration.descriptor !== undefined && registration.descriptor !== null) throw new Error("Unavailable TAP Video registration must not include a descriptor.");
-    if (registration.mapping !== "unavailable" && !(registration.mapping as string).startsWith("avdepthdata-registration-prerequisites-unavailable:")) {
-      throw new Error("Invalid unavailable TAP Video registration reason.");
-    }
-  }
-}
-
-function validateRegistrationGeometry(registration: Record<string, unknown>, rgb: Record<string, unknown>, coverage: Record<string, unknown>): void {
-  if (registration.status !== "registered") return;
-  const descriptor = registration.descriptor as Record<string, unknown>;
-  const format = coverage.format as Record<string, unknown>;
-  const encoded = descriptor.encodedRGBCodedDimensions as Record<string, unknown>;
-  const aligned = descriptor.alignedRGBCodedDimensions as Record<string, unknown>;
-  const depth = descriptor.depthDimensions as Record<string, unknown>;
-  const transform = rgb.transform === undefined || rgb.transform === null || rgb.transform === "identity" ? "rotation:0" : rgb.transform as string;
-  const swapsAxes = transform === "rotation:90" || transform === "rotation:90;mirrored" ||
-    transform === "rotation:270" || transform === "rotation:270;mirrored";
-  const expectedConnection = transform.includes(";mirrored") ? transform : `${transform};not-mirrored`;
-  if (encoded.width !== rgb.width || encoded.height !== rgb.height ||
-      aligned.width !== (swapsAxes ? rgb.height : rgb.width) || aligned.height !== (swapsAxes ? rgb.width : rgb.height) ||
-      depth.width !== format.width || depth.height !== format.height || descriptor.connectionTransform !== expectedConnection) {
-    throw new Error("TAP Video registration dimensions or connection transform do not match the signed track formats.");
-  }
-  if (registration.rgbReferenceDimensions !== undefined && registration.rgbReferenceDimensions !== null &&
-      canonicalJSON(registration.rgbReferenceDimensions) !== canonicalJSON(aligned)) {
-    throw new Error("TAP Video RGB registration reference dimensions do not match the descriptor.");
-  }
-  if (registration.depthReferenceDimensions !== undefined && registration.depthReferenceDimensions !== null &&
-      canonicalJSON(registration.depthReferenceDimensions) !== canonicalJSON(depth)) {
-    throw new Error("TAP Video depth registration reference dimensions do not match the descriptor.");
-  }
-  if (registration.recordedTransform !== undefined && registration.recordedTransform !== null && registration.recordedTransform !== expectedConnection) {
-    throw new Error("TAP Video recorded registration transform does not match the RGB track transform.");
-  }
-  if (registration.rgbCleanAperture !== undefined && registration.rgbCleanAperture !== null &&
-      canonicalJSON(registration.rgbCleanAperture) !== canonicalJSON(descriptor.rgbCleanAperture)) {
-    throw new Error("TAP Video registration clean aperture does not match the descriptor.");
-  }
+  skipWhitespace();
+  if (offset !== text.length) throw new Error(`${label} contains trailing bytes.`);
+  return { value, memberRanges };
 }
 
 function validateCalibration(value: unknown, label: string): void {
@@ -1069,44 +685,12 @@ function validateCalibration(value: unknown, label: string): void {
 
 function decodeInlineCalibration(bytes: Uint8Array): Record<string, unknown> {
   if (bytes.byteLength > MAX_INLINE_CALIBRATION_BYTES) throw new Error("TAP depth CALD exceeds 3072 bytes.");
-  const document = parseCanonicalJSON(decodeUTF8(bytes, "TAP depth CALD"), "TAP depth CALD");
+  const document = parseJSONDocument(decodeUTF8(bytes, "TAP depth CALD"), "TAP depth CALD");
   const value = requireObject(document.value, "TAP depth CALD");
   requireExactKeys(value, ["calibration", "schemaVersion"], "TAP depth CALD");
-  requireInteger(value.schemaVersion, document.numberTokens, ["schemaVersion"], "CALD.schemaVersion");
   if (value.schemaVersion !== 1) throw new Error("Unsupported TAP depth CALD schema.");
   validateCalibration(value.calibration, "CALD.calibration");
   return value.calibration as Record<string, unknown>;
-}
-
-function validateRegistrationDescriptor(value: Record<string, unknown>, tokens: Map<string, string>): void {
-  requireExactKeys(value, [
-    "alignedRGBCodedDimensions", "connectionTransform", "depthDimensions", "depthToAlignedRGBPixelCenterAffine",
-    "encodedRGBCodedDimensions", "isEncodedHorizontallyMirrored", "model", "rgbCleanAperture", "schema",
-    "version", "videoStabilizationMode"
-  ], "spatialRegistration.descriptor");
-  if (value.schema !== "urn:tapnap:tapcam:video-depth-registration:avdepthdata-yuv-warp:v1" || value.version !== 1 ||
-      value.model !== "avdepthdata-warped-to-synchronized-rgb-pixel-centers" || value.videoStabilizationMode !== "off") {
-    throw new Error("Invalid TAP Video registration descriptor identity.");
-  }
-  requireInteger(value.version, tokens, ["payload", "spatialRegistration", "descriptor", "version"], "descriptor.version");
-  validateDimensions(value.alignedRGBCodedDimensions, "descriptor.alignedRGBCodedDimensions");
-  validateDimensions(value.encodedRGBCodedDimensions, "descriptor.encodedRGBCodedDimensions");
-  validateDimensions(value.depthDimensions, "descriptor.depthDimensions");
-  requireNumberArray(value.depthToAlignedRGBPixelCenterAffine, 6, "descriptor.depthToAlignedRGBPixelCenterAffine");
-  requireEnum(value.connectionTransform, registrationTransforms(), "descriptor.connectionTransform");
-  requireBoolean(value.isEncodedHorizontallyMirrored, "descriptor.isEncodedHorizontallyMirrored");
-  validateRect(value.rgbCleanAperture, "descriptor.rgbCleanAperture");
-}
-
-function validateSynchronization(sync: Record<string, unknown>, coverage: Record<string, unknown>): void {
-  requireAllowedKeys(sync, ["maxObservedDeltaSeconds", "maxObservedDepthIntervalSeconds", "nominalDepthIntervalSeconds", "rgbToDepthMapping", "timing"],
-    ["rgbToDepthMapping", "timing"], "synchronization");
-  if (sync.timing !== "capture-output-presentation-timestamps") throw new Error("Invalid TAP Video synchronization timing.");
-  const expectedMapping = coverage.sampleCount === 0 ? "no-depth-samples" : "independent-timed-metadata";
-  if (sync.rgbToDepthMapping !== expectedMapping) throw new Error("TAP Video depth mapping does not match sample coverage.");
-  for (const key of ["maxObservedDeltaSeconds", "maxObservedDepthIntervalSeconds", "nominalDepthIntervalSeconds"]) {
-    if (sync[key] !== undefined && sync[key] !== null) requireFiniteNumber(sync[key], `synchronization.${key}`);
-  }
 }
 
 function validateDimensions(value: unknown, label: string): void {
@@ -1116,24 +700,11 @@ function validateDimensions(value: unknown, label: string): void {
   requireFiniteNumber(dimensions.height, `${label}.height`);
 }
 
-function validateRect(value: unknown, label: string): void {
-  const rect = requireObject(value, label);
-  requireExactKeys(rect, ["height", "width", "x", "y"], label);
-  for (const key of ["x", "y", "width", "height"]) requireFiniteNumber(rect[key], `${label}.${key}`);
-}
-
 function validatePoint(value: unknown, label: string): void {
   const point = requireObject(value, label);
   requireExactKeys(point, ["x", "y"], label);
   requireFiniteNumber(point.x, `${label}.x`);
   requireFiniteNumber(point.y, `${label}.y`);
-}
-
-function registrationTransforms(): string[] {
-  return [
-    "rotation:0;mirrored", "rotation:0;not-mirrored", "rotation:90;mirrored", "rotation:90;not-mirrored",
-    "rotation:180;mirrored", "rotation:180;not-mirrored", "rotation:270;mirrored", "rotation:270;not-mirrored"
-  ];
 }
 
 function requireNumberArray(value: unknown, length: number, label: string): void {
@@ -1148,226 +719,6 @@ function requireBase64(value: unknown, label: string): void {
   }
 }
 
-async function validateVideoSemantics(bytes: Uint8Array, topLevel: Box[], manifest: TapVideoManifest): Promise<void> {
-  const moovBoxes = topLevel.filter((box) => box.type === "moov");
-  if (moovBoxes.length !== 1) throw new Error("TAP Video must contain exactly one moov box.");
-  const moov = moovBoxes[0];
-  const movieHeader = requireUniqueChild(bytes, moov, "mvhd");
-  const movieTiming = readHeaderTiming(bytes, movieHeader, "movie");
-  const trackBoxes = children(bytes, moov).filter((box) => box.type === "trak");
-  const tracks = trackBoxes.map((track) => readTrackInfo(bytes, track, movieTiming.timeScale));
-  const payload = manifest.payload as unknown as Record<string, unknown>;
-  const container = payload.container as Record<string, unknown>;
-  const rgb = payload.rgbTrack as Record<string, unknown>;
-  const audio = payload.audioTrack as Record<string, unknown>;
-  const coverage = payload.depthCoverage as Record<string, unknown>;
-  const registration = payload.spatialRegistration as Record<string, unknown>;
-
-  if (container.trackCount !== tracks.length || container.timeScale !== movieTiming.timeScale ||
-      !durationMatches(container.durationSeconds as number, movieTiming.duration, movieTiming.timeScale)) {
-    throw new Error("Finalized MP4 movie facts do not match the TAP Video manifest.");
-  }
-  const trackIDs = tracks.map((track) => track.id);
-  if (trackIDs.some((id) => id <= 0) || new Set(trackIDs).size !== trackIDs.length) throw new Error("MP4 track IDs must be positive and distinct.");
-  const rgbTracks = tracks.filter((track) => track.handler === "vide");
-  const audioTracks = tracks.filter((track) => track.handler === "soun");
-  const metadataTracks = tracks.filter((track) => track.handler === "meta");
-  if (tracks.some((track) => !["vide", "soun", "meta"].includes(track.handler)) || rgbTracks.length !== 1 || audioTracks.length > 1 || metadataTracks.length > 1) {
-    throw new Error("Invalid TAP Video v1 track composition.");
-  }
-  const rgbTrack = rgbTracks[0];
-  requireSingleCodec(rgbTrack, rgb.codec as string, "RGB");
-  if (rgb.trackID !== rgbTrack.id || rgb.timeScale !== rgbTrack.timeScale ||
-      !durationMatches(rgb.durationSeconds as number, rgbTrack.presentation.duration, rgbTrack.presentation.timeScale) ||
-      rgb.width !== rgbTrack.width || rgb.height !== rgbTrack.height ||
-      (rgb.frameCount !== undefined && rgb.frameCount !== null && rgb.frameCount !== rgbTrack.sampleCount)) {
-    throw new Error("RGB track facts do not match the finalized MP4.");
-  }
-  if (audio.status === "captured") {
-    if (audioTracks.length !== 1) throw new Error("Captured audio manifest state requires exactly one MP4 audio track.");
-    const audioTrack = audioTracks[0];
-    // Retain the v1 sample-entry spelling and the native CoreMedia AAC spelling.
-    const audioCodec = audio.codec === "mp4a" && audioTrack.codecs[0] === "aac " ? "aac " : audio.codec as string;
-    requireSingleCodec(audioTrack, audioCodec, "audio");
-    if (audio.trackID !== audioTrack.id || audio.timeScale !== audioTrack.timeScale ||
-        !durationMatches(audio.durationSeconds as number, audioTrack.presentation.duration, audioTrack.presentation.timeScale) ||
-        (audio.sampleRate !== null && audio.sampleRate !== audioTrack.sampleRate) ||
-        (audio.channelCount !== null && audio.channelCount !== audioTrack.channelCount)) {
-      throw new Error("Audio track facts do not match the finalized MP4.");
-    }
-  } else if (audioTracks.length !== 0) {
-    throw new Error("Non-captured audio manifest state cannot have an MP4 audio track.");
-  }
-
-  if (coverage.sampleCount === 0) {
-    if (metadataTracks.length !== 0) throw new Error("Zero-depth TAP Video must not contain a timed metadata track.");
-    return;
-  }
-  if ((coverage.sampleCount as number) > MAX_DEPTH_SAMPLES || metadataTracks.length !== 1) {
-    throw new Error("Stored TAP Video depth requires one bounded timed metadata track.");
-  }
-  const depthTrack = metadataTracks[0];
-  requireSingleCodec(depthTrack, "mebx", "depth metadata");
-  if (coverage.trackID !== depthTrack.id || coverage.trackTimeScale !== depthTrack.timeScale ||
-      !durationMatches(coverage.trackDurationSeconds as number, depthTrack.presentation.duration, depthTrack.presentation.timeScale) ||
-      depthTrack.sampleCount !== coverage.sampleCount ||
-      depthTrack.id === rgbTrack.id || (audioTracks[0] && depthTrack.id === audioTracks[0].id)) {
-    throw new Error("Depth metadata track facts do not match the finalized MP4.");
-  }
-  const samples = readTrackSamples(bytes, depthTrack.box);
-  if (samples.reduce((sum, sample) => sum + BigInt(sample.duration), 0n) !== depthTrack.duration) {
-    throw new Error("Timed-depth sample durations do not match the MP4 media duration.");
-  }
-  const keyMappings = readMebxKeyMappings(bytes, depthTrack.box);
-  const format = coverage.format as Record<string, unknown>;
-  const policy = format.compressionPolicy as string;
-  const calibrationTable = registration.calibrationTable as unknown[];
-  let previousPTS: { value: bigint; timescale: number } | null = null;
-  let previousSampleTimestamp: bigint | null = null;
-  let indexedSamples = 0;
-  for (let index = 0; index < samples.length; index += 1) {
-    const sample = samples[index];
-    const frame = decodeMebxDepthSample(sample.bytes);
-    requireTapDepthKeyMapping(keyMappings, sample.sampleDescriptionIndex, frame.localKeyID);
-    if (frame.frameIndex !== index) throw new Error("TAP depth FRAM values must be contiguous zero-based sample ordinals.");
-    if (frame.uncompressedByteCount !== format.uncompressedFrameByteCount) throw new Error("TAP depth ULEN does not match the signed format.");
-    if (frame.payload.byteLength > MAX_DEPTH_FRAME_BYTES || !compressionAllowed(policy, frame.compression)) {
-      throw new Error("TAP depth COMP or encoded DPTH payload violates the signed policy.");
-    }
-    if (frame.calibrationIndex !== null) {
-      indexedSamples += 1;
-      if (frame.calibrationIndex >= calibrationTable.length) throw new Error("TAP depth CALI index is outside the signed calibration table.");
-    }
-    if (previousPTS && compareMediaTimes(frame.ptsValue, frame.ptsTimescale, previousPTS.value, previousPTS.timescale) <= 0) {
-      throw new Error("TAP depth KLV presentation timestamps must be strictly increasing.");
-    }
-    if (previousSampleTimestamp !== null && sample.timestamp <= previousSampleTimestamp) {
-      throw new Error("MP4 timed-depth sample timestamps must be strictly increasing.");
-    }
-    if (sample.duration <= 0 || sample.timestamp < 0n || sample.timestamp + BigInt(sample.duration) > depthTrack.duration) {
-      throw new Error("TAP depth sample timestamp or duration is outside the MP4 media duration.");
-    }
-    const presentation = depthSamplePresentation(sample, depthTrack);
-    // The producer rounds capture-relative KLV timestamps to 600 Hz. The edit
-    // origin is independently quantized, so compare in the encoded KLV timebase
-    // with one KLV tick, rather than one tick of the nanosecond media timebase.
-    if (frame.ptsValue < 0n || compareMediaTimes(frame.ptsValue, frame.ptsTimescale,
-        depthTrack.presentation.duration, depthTrack.presentation.timeScale) > 0) {
-      throw new Error("TAP depth timestamp is outside the signed presentation duration.");
-    }
-    if (absBigInt(frame.ptsValue * presentation.timeScale - presentation.start * BigInt(frame.ptsTimescale)) > presentation.timeScale) {
-      throw new Error("KLV PTS does not agree with its edited MP4 sample timestamp within one encoded KLV tick.");
-    }
-    await decodeTapDepthFrame(frame);
-    previousPTS = { value: frame.ptsValue, timescale: frame.ptsTimescale };
-    previousSampleTimestamp = sample.timestamp;
-  }
-  const calibrationCoverage = registration.calibrationCoverage as Record<string, unknown>;
-  if (indexedSamples !== calibrationCoverage.indexedSampleCount ||
-      samples.length - indexedSamples !== (calibrationCoverage.missingCalibrationSampleCount as number) + (calibrationCoverage.overflowUnindexedSampleCount as number)) {
-    throw new Error("KLV CALI records do not match signed calibration coverage counts.");
-  }
-}
-
-function readTrackInfo(bytes: Uint8Array, track: Box, movieTimeScale: number): TrackInfo {
-  const id = readTrackID(bytes, track);
-  const mdia = requireUniqueChild(bytes, track, "mdia");
-  const mdhd = requireUniqueChild(bytes, mdia, "mdhd");
-  const timing = readHeaderTiming(bytes, mdhd, "track");
-  const presentation = readTrackPresentation(bytes, track, timing, movieTimeScale);
-  const hdlr = requireUniqueChild(bytes, mdia, "hdlr");
-  if (hdlr.payloadStart + 12 > hdlr.payloadEnd) throw new Error("Truncated MP4 media handler.");
-  const handler = asciiFourCC(bytes, hdlr.payloadStart + 8);
-  const minf = requireUniqueChild(bytes, mdia, "minf");
-  const stbl = requireUniqueChild(bytes, minf, "stbl");
-  const descriptions = readSampleDescriptions(bytes, stbl);
-  const stsz = requireUniqueChild(bytes, stbl, "stsz");
-  const sampleCount = readU32(bytes, stsz.payloadStart + 8);
-  const first = descriptions[0];
-  const codecs = descriptions.map((entry) => entry.type);
-  let width: number | null = null;
-  let height: number | null = null;
-  let sampleRate: number | null = null;
-  let channelCount: number | null = null;
-  if (handler === "vide") {
-    if (!first || first.payloadStart + 28 > first.payloadEnd) throw new Error("Truncated MP4 video sample entry.");
-    width = readU16(bytes, first.payloadStart + 24);
-    height = readU16(bytes, first.payloadStart + 26);
-  } else if (handler === "soun") {
-    if (!first || first.payloadStart + 28 > first.payloadEnd) throw new Error("Truncated MP4 audio sample entry.");
-    channelCount = readU16(bytes, first.payloadStart + 16);
-    sampleRate = readU32(bytes, first.payloadStart + 24) / 65536;
-    if (first.type === "mp4a") {
-      // CoreMedia reports the decoded audio format, not the MP4 sample-entry
-      // name or its placeholder channel count. Read the same AAC configuration.
-      const audio = readAACConfiguration(bytes, first);
-      codecs[0] = "aac ";
-      sampleRate = audio.sampleRate;
-      channelCount = audio.channelCount;
-    }
-  }
-  return { box: track, id, handler, timeScale: timing.timeScale, duration: timing.duration, presentation, codecs, sampleCount, width, height, sampleRate, channelCount };
-}
-
-function readAACConfiguration(bytes: Uint8Array, entry: Box): { sampleRate: number; channelCount: number } {
-  if (readU16(bytes, entry.payloadStart + 8) !== 0) throw new Error("Unsupported MP4 audio sample-entry version.");
-  const children = parseBoxes(bytes, entry.payloadStart + 28, entry.payloadEnd);
-  const descriptors = children.filter((box) => box.type === "esds");
-  if (descriptors.length !== 1) throw new Error("AAC sample entry requires one elementary stream descriptor.");
-  const esds = descriptors[0];
-  if (esds.payloadStart + 4 > esds.payloadEnd || readU32(bytes, esds.payloadStart) !== 0) throw new Error("Invalid elementary stream descriptor header.");
-  const es = readMPEG4Descriptor(bytes, esds.payloadStart + 4, esds.payloadEnd, 3);
-  if (es.end !== esds.payloadEnd || es.start + 3 > es.end) throw new Error("Truncated elementary stream descriptor.");
-  const flags = bytes[es.start + 2];
-  let offset = es.start + 3;
-  if (flags & 0x80) offset += 2;
-  if (flags & 0x40) {
-    if (offset >= es.end) throw new Error("Truncated elementary stream URL.");
-    offset += 1 + bytes[offset];
-  }
-  if (flags & 0x20) offset += 2;
-  const decoder = readMPEG4Descriptor(bytes, offset, es.end, 4);
-  if (decoder.start + 13 > decoder.end || bytes[decoder.start] !== 0x40 || (bytes[decoder.start + 1] >> 2) !== 5) {
-    throw new Error("MP4 audio descriptor does not declare MPEG-4 audio.");
-  }
-  const sync = readMPEG4Descriptor(bytes, decoder.end, es.end, 6);
-  if (sync.end !== es.end || sync.end - sync.start !== 1 || bytes[sync.start] !== 2) throw new Error("Unsupported MPEG-4 synchronization descriptor.");
-  const config = readMPEG4Descriptor(bytes, decoder.start + 13, decoder.end, 5);
-  if (config.end !== decoder.end) throw new Error("Ambiguous AAC decoder configuration.");
-  let bit = config.start * 8;
-  const readBits = (count: number): number => {
-    if (bit + count > config.end * 8) throw new Error("Truncated AAC audio configuration.");
-    let value = 0;
-    for (let index = 0; index < count; index++, bit++) value = value * 2 + ((bytes[Math.floor(bit / 8)] >> (7 - (bit & 7))) & 1);
-    return value;
-  };
-  if (readBits(5) !== 2) throw new Error("Unsupported AAC audio object type.");
-  const frequencyIndex = readBits(4);
-  const sampleRates = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
-  const sampleRate = frequencyIndex === 15 ? readBits(24) : sampleRates[frequencyIndex];
-  const channels = [0, 1, 2, 3, 4, 5, 6, 8];
-  const channelCount = channels[readBits(4)];
-  if (!sampleRate || !channelCount || readBits(3) !== 0 || bit !== config.end * 8) {
-    throw new Error("Unsupported AAC-LC audio configuration.");
-  }
-  return { sampleRate, channelCount };
-}
-
-function readMPEG4Descriptor(bytes: Uint8Array, offset: number, end: number, tag: number): { start: number; end: number } {
-  if (offset >= end || bytes[offset++] !== tag) throw new Error("Invalid MPEG-4 descriptor tag.");
-  let length = 0;
-  for (let index = 0; index < 4; index++) {
-    if (offset >= end) throw new Error("Truncated MPEG-4 descriptor length.");
-    const value = bytes[offset++];
-    length = length * 128 + (value & 0x7f);
-    if ((value & 0x80) === 0) {
-      if (length > end - offset) throw new Error("MPEG-4 descriptor exceeds its parent.");
-      return { start: offset, end: offset + length };
-    }
-  }
-  throw new Error("Invalid MPEG-4 descriptor length.");
-}
-
 function readSampleDescriptions(bytes: Uint8Array, stbl: Box): Box[] {
   const stsd = requireUniqueChild(bytes, stbl, "stsd");
   if (stsd.payloadStart + 8 > stsd.payloadEnd) throw new Error("Truncated MP4 sample-description table.");
@@ -1376,116 +727,6 @@ function readSampleDescriptions(bytes: Uint8Array, stbl: Box): Box[] {
   const entries = parseBoxes(bytes, stsd.payloadStart + 8, stsd.payloadEnd);
   if (entries.length !== entryCount) throw new Error("MP4 sample-description count does not match its table.");
   return entries;
-}
-
-function readHeaderTiming(bytes: Uint8Array, box: Box, label: string): { timeScale: number; duration: bigint } {
-  const version = bytes[box.payloadStart];
-  if (version !== 0 && version !== 1) throw new Error(`Unsupported MP4 ${label} header version.`);
-  const timeScaleOffset = box.payloadStart + (version === 1 ? 20 : 12);
-  const durationOffset = box.payloadStart + (version === 1 ? 24 : 16);
-  const timeScale = readU32(bytes, timeScaleOffset);
-  const duration = version === 1 ? readU64(bytes, durationOffset) : BigInt(readU32(bytes, durationOffset));
-  if (timeScale === 0) throw new Error(`Invalid MP4 ${label} timescale.`);
-  return { timeScale, duration };
-}
-
-function readTrackPresentation(
-  bytes: Uint8Array,
-  track: Box,
-  media: { duration: bigint; timeScale: number },
-  movieTimeScale: number
-): TrackInfo["presentation"] {
-  const edits = children(bytes, track).filter((box) => box.type === "edts");
-  if (edits.length === 0) return { ...media, mediaStart: 0n, leadingEmptyDuration: 0n };
-  if (edits.length !== 1) throw new Error("Ambiguous MP4 track edit list.");
-  const elst = requireUniqueChild(bytes, edits[0], "elst");
-  if (elst.payloadStart + 8 > elst.payloadEnd) throw new Error("Truncated MP4 track edit list.");
-  const version = bytes[elst.payloadStart];
-  const entrySize = version === 1 ? 20 : 12;
-  const entryCount = readU32(bytes, elst.payloadStart + 4);
-  if ((version !== 0 && version !== 1) || (readU32(bytes, elst.payloadStart) & 0xffffff) !== 0 ||
-      (entryCount !== 1 && entryCount !== 2) || elst.payloadStart + 8 + entryCount * entrySize !== elst.payloadEnd) {
-    throw new Error("Unsupported MP4 track edit list; one rate-one media segment with an optional leading empty edit is required.");
-  }
-  let start = elst.payloadStart + 8;
-  let leadingEmptyDuration = 0n;
-  if (entryCount === 2) {
-    leadingEmptyDuration = version === 1 ? readU64(bytes, start) : BigInt(readU32(bytes, start));
-    const emptyMediaStart = version === 1 ? readI64(bytes, start + 8) : BigInt(readI32(bytes, start + 4));
-    if (leadingEmptyDuration <= 0n || emptyMediaStart !== -1n ||
-        readU32(bytes, start + (version === 1 ? 16 : 8)) !== 0x00010000) {
-      throw new Error("Invalid MP4 leading empty edit.");
-    }
-    start += entrySize;
-  }
-  const duration = version === 1 ? readU64(bytes, start) : BigInt(readU32(bytes, start));
-  const mediaStart = version === 1 ? readI64(bytes, start + 8) : BigInt(readI32(bytes, start + 4));
-  const rateOffset = start + (version === 1 ? 16 : 8);
-  if (readU32(bytes, rateOffset) !== 0x00010000 || mediaStart < 0n || mediaStart >= media.duration || duration <= 0n) {
-    throw new Error("Unsupported MP4 track edit rate or media range.");
-  }
-  // elst duration is quantized in movie ticks, while mdhd is in media ticks.
-  const mediaScale = BigInt(media.timeScale);
-  const availableMovieTicks = (media.duration - mediaStart) * BigInt(movieTimeScale);
-  if (duration > (availableMovieTicks + mediaScale - 1n) / mediaScale) {
-    throw new Error("MP4 track edit extends beyond its media duration.");
-  }
-  // Native track facts include the initial empty interval in presentation
-  // duration, while only the media segment consumes the available media ticks.
-  return { duration: leadingEmptyDuration + duration, timeScale: movieTimeScale, mediaStart, leadingEmptyDuration };
-}
-
-function depthSamplePresentation(sample: TrackSample, track: TrackInfo): { start: bigint; timeScale: bigint } {
-  // Keep an exact common timebase so both ends can be clipped without rounding.
-  // Media stts/ctts timestamps and totals remain independently checked above.
-  const movieScale = BigInt(track.presentation.timeScale);
-  const mediaScale = BigInt(track.timeScale);
-  const rawStart = (sample.timestamp - track.presentation.mediaStart) * movieScale;
-  const rawEnd = (sample.timestamp + BigInt(sample.duration) - track.presentation.mediaStart) * movieScale;
-  const trackEnd = (track.presentation.duration - track.presentation.leadingEmptyDuration) * mediaScale;
-  const start = rawStart < 0n ? 0n : rawStart;
-  const end = rawEnd > trackEnd ? trackEnd : rawEnd;
-  if (start >= end) throw new Error("TAP depth sample is outside the presented track edit.");
-  return { start: track.presentation.leadingEmptyDuration * mediaScale + start, timeScale: mediaScale * movieScale };
-}
-
-function readTrackTiming(bytes: Uint8Array, stbl: Box, sampleCount: number): { timestamps: bigint[]; durations: number[] } {
-  const stts = requireUniqueChild(bytes, stbl, "stts");
-  const entryCount = readU32(bytes, stts.payloadStart + 4);
-  if (entryCount === 0 || stts.payloadStart + 8 + entryCount * 8 > stts.payloadEnd) throw new Error("Invalid MP4 time-to-sample table.");
-  const timestamps: bigint[] = [];
-  const durations: number[] = [];
-  let timestamp = 0n;
-  for (let index = 0; index < entryCount; index += 1) {
-    const entryOffset = stts.payloadStart + 8 + index * 8;
-    const count = readU32(bytes, entryOffset);
-    const delta = readU32(bytes, entryOffset + 4);
-    if (count === 0 || delta === 0 || count > sampleCount - timestamps.length) throw new Error("Invalid MP4 time-to-sample entry.");
-    for (let item = 0; item < count; item += 1) {
-      timestamps.push(timestamp);
-      durations.push(delta);
-      timestamp += BigInt(delta);
-    }
-  }
-  if (timestamps.length !== sampleCount) throw new Error("MP4 timing table does not cover every sample.");
-  const cttsBoxes = children(bytes, stbl).filter((box) => box.type === "ctts");
-  if (cttsBoxes.length > 1) throw new Error("Ambiguous MP4 composition-time table.");
-  if (cttsBoxes.length === 1) {
-    const ctts = cttsBoxes[0];
-    const version = bytes[ctts.payloadStart];
-    const count = readU32(bytes, ctts.payloadStart + 4);
-    if ((version !== 0 && version !== 1) || ctts.payloadStart + 8 + count * 8 > ctts.payloadEnd) throw new Error("Invalid MP4 composition-time table.");
-    let sampleIndex = 0;
-    for (let index = 0; index < count; index += 1) {
-      const entryOffset = ctts.payloadStart + 8 + index * 8;
-      const entrySamples = readU32(bytes, entryOffset);
-      const compositionOffset = version === 0 ? BigInt(readU32(bytes, entryOffset + 4)) : BigInt(readI32(bytes, entryOffset + 4));
-      if (entrySamples === 0 || entrySamples > sampleCount - sampleIndex) throw new Error("Invalid MP4 composition-time entry.");
-      for (let item = 0; item < entrySamples; item += 1) timestamps[sampleIndex++] += compositionOffset;
-    }
-    if (sampleIndex !== sampleCount) throw new Error("MP4 composition-time table does not cover every sample.");
-  }
-  return { timestamps, durations };
 }
 
 function readMebxKeyMappings(bytes: Uint8Array, track: Box): Map<number, Map<number, string>> {
@@ -1525,36 +766,6 @@ function requireTapDepthKeyMapping(mappings: Map<number, Map<number, string>>, d
   }
 }
 
-function requireSingleCodec(track: TrackInfo, expected: string, label: string): void {
-  if (track.codecs.length !== 1 || track.codecs[0] !== expected) throw new Error(`${label} track codec does not match the finalized MP4.`);
-}
-
-function compressionAllowed(policy: string, compression: TapVideoDepthFrame["compression"]): boolean {
-  if (policy === "per-frame:raw") return compression === "raw";
-  if (policy === "per-frame:zstd1|raw") return compression === "zstd1" || compression === "raw";
-  if (policy === "per-frame:lzfse|raw") return compression === "lzfse" || compression === "raw";
-  return false;
-}
-
-function compareMediaTimes(leftValue: bigint, leftScale: number, rightValue: bigint, rightScale: number): number {
-  const left = leftValue * BigInt(rightScale);
-  const right = rightValue * BigInt(leftScale);
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function durationMatches(declared: number, ticks: bigint, timeScale: number): boolean {
-  if (ticks > BigInt(Number.MAX_SAFE_INTEGER)) return false;
-  return numbersEqual(declared, Number(ticks) / timeScale);
-}
-
-function numbersEqual(left: number, right: number): boolean {
-  return Math.abs(left - right) <= Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right));
-}
-
-function absBigInt(value: bigint): bigint {
-  return value < 0n ? -value : value;
-}
-
 function parseProofEnvelope(bytes: Uint8Array, box: Box): ProofEnvelope {
   if (box.payloadEnd - box.payloadStart !== PROOF_PAYLOAD_BYTES) {
     throw new Error("Unexpected TAP proof-slot payload length.");
@@ -1571,11 +782,10 @@ function parseProofEnvelope(bytes: Uint8Array, box: Box): ProofEnvelope {
     throw new Error("TAP proof-slot padding is not zero-filled.");
   }
   const envelopeText = decodeUTF8(payload.subarray(32, 32 + envelopeLength), "TAP proof envelope");
-  const value = parseCanonicalJSON(envelopeText, "TAP proof envelope").value;
+  const value = parseJSONDocument(envelopeText, "TAP proof envelope").value;
   if (!isRecord(value)) {
     throw new Error("Invalid TAP proof envelope.");
   }
-  requireExactKeys(value, ["algorithm", "createdAt", "keyID", "type", "value"], "TAP proof envelope");
   return value;
 }
 
@@ -1584,11 +794,10 @@ function parseProofValue(proof: ProofEnvelope): ProofValue {
     throw new Error("TAP proof value is missing.");
   }
   const proofValueText = decodeUTF8(base64UrlDecode(proof.value), "TAP proof value");
-  const value = parseCanonicalJSON(proofValueText, "TAP proof value").value;
+  const value = parseJSONDocument(proofValueText, "TAP proof value").value;
   if (!isRecord(value)) {
     throw new Error("Invalid TAP proof value.");
   }
-  requireExactKeys(value, ["assertionObject", "contentDigest", "keyId", "signingBinding"], "TAP proof value");
   return value;
 }
 
@@ -1596,14 +805,14 @@ async function buildContentDigest(
   bytes: Uint8Array,
   proofBox: Box,
   manifest: TapVideoManifest,
-  payloadBytes: Uint8Array
+  payloadBytes: Uint8Array,
+  depthResource: unknown
 ): Promise<VideoContentDigest> {
   const signedBytes = new Uint8Array(bytes.byteLength - proofBox.size);
   signedBytes.set(bytes.subarray(0, proofBox.start), 0);
   signedBytes.set(bytes.subarray(proofBox.start + proofBox.size), proofBox.start);
   const assetHash = await sha256Base64Url(signedBytes);
   const metadataHash = await sha256Base64Url(payloadBytes);
-  const coverage = manifest.payload.depthCoverage;
   return {
     assetHash: {
       algorithm: "SHA-256",
@@ -1615,17 +824,12 @@ async function buildContentDigest(
     },
     captureID: manifest.payload.id,
     capturedAt: manifest.payload.capturedAt,
-    depthResource: {
-      binding: coverage.sampleCount > 0 ? "covered-by-assetHash" : "coverage-recorded-in-manifest",
-      interpretation: "not-part-of-base-signature",
-      platformPresenceCheck: "TAPVideoManifest.depthCoverage",
-      presence: coverage.sampleCount > 0 ? "captured" : "no-samples"
-    },
+    depthResource,
     manifestSchemaID: manifest.schema.id,
     metadataHash: {
       algorithm: "SHA-256",
       kind: "canonical-json",
-      mediaType: `application/vnd.tapnap.video-manifest.payload+json;version=${manifest.schema.version}`,
+      mediaType: VIDEO_MANIFEST_PAYLOAD_MEDIA_TYPE,
       value: metadataHash
     },
     proofSlot: {
@@ -1696,8 +900,6 @@ function decodeMebxDepthSample(sample: Uint8Array): ParsedDepthFrame {
     calibrationIndex: calibration ? readU32(requireRecord(records, "CALI", 4), 0) : null,
     inlineCalibration: inlineCalibration ? decodeInlineCalibration(inlineCalibration) : null,
     payload,
-    ptsValue: readI64(pts, 0),
-    ptsTimescale: timescale,
     localKeyID
   };
 }
@@ -1754,7 +956,6 @@ function readTrackSamples(bytes: Uint8Array, track: Box): TrackSample[] {
     chunks.push(value);
   }
   if (mappings[mappings.length - 1].firstChunk > chunkCount) throw new Error("Depth sample-to-chunk mapping references a missing chunk.");
-  const timing = readTrackTiming(bytes, stbl, sampleCount);
   const samples: TrackSample[] = [];
   const mediaDataRanges = parseBoxes(bytes, 0, bytes.byteLength).filter((box) => box.type === "mdat");
   let sampleIndex = 0;
@@ -1779,8 +980,6 @@ function readTrackSamples(bytes: Uint8Array, track: Box): TrackSample[] {
       }
       samples.push({
         bytes: bytes.subarray(offset, offset + size),
-        timestamp: timing.timestamps[sampleIndex],
-        duration: timing.durations[sampleIndex],
         sampleDescriptionIndex: mapping.sampleDescriptionIndex
       });
       offset += size;
@@ -1917,11 +1116,6 @@ function asciiFourCC(bytes: Uint8Array, offset: number): string {
   return String.fromCharCode(...values);
 }
 
-function readU16(bytes: Uint8Array, offset: number): number {
-  if (offset < 0 || offset + 2 > bytes.byteLength) throw new Error("Truncated UInt16.");
-  return new DataView(bytes.buffer, bytes.byteOffset + offset, 2).getUint16(0, false);
-}
-
 function readU32(bytes: Uint8Array, offset: number): number {
   if (offset < 0 || offset + 4 > bytes.byteLength) throw new Error("Truncated UInt32.");
   return new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getUint32(0, false);
@@ -1973,56 +1167,8 @@ function requireNonEmptyString(value: unknown, label: string): asserts value is 
   if (typeof value !== "string" || value.length === 0) throw new Error(`${label} must be a non-empty string.`);
 }
 
-function requireBoolean(value: unknown, label: string): asserts value is boolean {
-  if (typeof value !== "boolean") throw new Error(`${label} must be a boolean.`);
-}
-
-function requireEnum(value: unknown, allowed: string[], label: string): asserts value is string {
-  if (typeof value !== "string" || !allowed.includes(value)) throw new Error(`${label} has an unsupported value.`);
-}
-
 function requireFiniteNumber(value: unknown, label: string): asserts value is number {
   if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${label} must be a finite number.`);
-}
-
-function requireNonNegativeNumber(value: unknown, label: string): asserts value is number {
-  requireFiniteNumber(value, label);
-  if (value < 0) throw new Error(`${label} must be non-negative.`);
-}
-
-function requireInteger(value: unknown, tokens: Map<string, string>, path: string[], label: string): asserts value is number {
-  requireIntegerToken(tokens, path, label);
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${label} must be a safely representable integer.`);
-}
-
-function requireIntegerToken(tokens: Map<string, string>, path: string[], label: string): string {
-  const token = tokens.get(path.join("\u0000"));
-  if (!token || !/^(?:0|-?[1-9]\d*)$/.test(token)) throw new Error(`${label} must use the canonical integer form.`);
-  return token;
-}
-
-function requirePositiveInteger(value: unknown, tokens: Map<string, string>, path: string[], label: string): asserts value is number {
-  requireInteger(value, tokens, path, label);
-  if (value <= 0) throw new Error(`${label} must be positive.`);
-}
-
-function requireNonNegativeInteger(value: unknown, tokens: Map<string, string>, path: string[], label: string): asserts value is number {
-  requireInteger(value, tokens, path, label);
-  if (value < 0) throw new Error(`${label} must be non-negative.`);
-}
-
-function requireTimestamp(value: unknown, label: string): asserts value is string {
-  requireString(value, label);
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d+)Z$/);
-  if (!match || !Number.isFinite(Date.parse(value))) {
-    throw new Error(`${label} must be a UTC ISO 8601 timestamp with fractional seconds.`);
-  }
-  const [, year, month, day, hour, minute, second] = match.map(Number);
-  const calendar = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day ||
-      calendar.getUTCHours() !== hour || calendar.getUTCMinutes() !== minute || calendar.getUTCSeconds() !== second) {
-    throw new Error(`${label} must be a valid UTC calendar timestamp.`);
-  }
 }
 
 function decodeUTF8(bytes: Uint8Array, label: string): string {

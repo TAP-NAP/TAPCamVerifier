@@ -75,15 +75,10 @@ export function classifyResult(result: CombinedVerificationResult): ResultModalT
   if (result.serverError && result.local.status === "valid") {
     return "networkError";
   }
-  if (result.local.mediaKind === "video") {
-    return result.local.checks.some((check) => check.id === "video-signature-missing" && check.status === "fail")
-      ? "noSignature"
-      : "invalid";
-  }
-  const parseCheck = result.local.checks.find((c) => c.id === "parse");
-  if (parseCheck && parseCheck.status === "fail") {
-    return "noSignature";
-  }
+  if (result.local.checks.some((check) => check.status === "fail" &&
+      ["signature-missing", "video-signature-missing"].includes(check.id))) return "noSignature";
+  if (result.local.checks.some((check) => check.status === "fail" &&
+      ["parse", "video-container", "video-manifest", "video-proof"].includes(check.id))) return "parseError";
   return "invalid";
 }
 

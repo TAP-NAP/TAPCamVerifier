@@ -8,13 +8,12 @@ interface TapcamVerifierExports extends WebAssembly.Exports {
   tapcam_verify_alloc(len: number): number;
   tapcam_verify_dealloc(ptr: number, len: number): void;
   tapcam_decode_lzfse(encodedPtr: number, encodedLen: number, decodedPtr: number, decodedLen: number): number;
-  tapcam_verify_file(ptr: number, len: number, actualDepthPresent: number): number;
+  tapcam_verify_file(ptr: number, len: number): number;
   tapcam_verify_file_with_paired_video(
     filePtr: number,
     fileLen: number,
     videoPtr: number,
-    videoLen: number,
-    actualDepthPresent: number
+    videoLen: number
   ): number;
   tapcam_visualize_depth_u8(
     filePtr: number,
@@ -87,7 +86,6 @@ export async function decodeLzfseFrame(encoded: Uint8Array, decodedLength: numbe
 
 export async function verifyCapturePackageLocally(
   fileBytes: Uint8Array,
-  actualDepthPresent: boolean,
   pairedVideoBytes?: Uint8Array
 ): Promise<LocalVerificationReport> {
   const wasm = await loadVerifierWasm();
@@ -104,10 +102,9 @@ export async function verifyCapturePackageLocally(
           inputPtr,
           fileBytes.length,
           videoPtr,
-          pairedVideoBytes.length,
-          actualDepthPresent ? 1 : 0
+          pairedVideoBytes.length
         )
-      : wasm.tapcam_verify_file(inputPtr, fileBytes.length, actualDepthPresent ? 1 : 0);
+      : wasm.tapcam_verify_file(inputPtr, fileBytes.length);
 
     const resultLen = wasm.tapcam_verify_result_len();
     const resultBytes = new Uint8Array(wasm.memory.buffer, resultPtr, resultLen);

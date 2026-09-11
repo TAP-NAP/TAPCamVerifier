@@ -10,8 +10,7 @@ import type { DecodedRgbImage, PixelProjectionState } from "./geometry/types";
 import {
   readCaptureInput,
   TAPNAP_CAPTURE_PACKAGE_MIME_TYPE,
-  type CaptureInput,
-  type PhotoCaptureInput
+  type CaptureInput
 } from "./input/captureInput";
 import { decodeHeifPrimaryRgba } from "./original/heifPrimaryDecoder";
 import { visualizeOriginalHeicFallback } from "./original/originalVisualization";
@@ -443,10 +442,10 @@ async function verifyFile(file: File): Promise<void> {
     return;
   }
 
-  const depthPlaneProbe = startAnalysis(runId, captureInput);
+  startAnalysis(runId, captureInput);
 
   try {
-    const result = await verifyFileBytes(runId, captureInput, depthPlaneProbe);
+    const result = await verifyFileBytes(runId, captureInput);
     if (runId !== activeRunId) {
       return;
     }
@@ -625,16 +624,16 @@ function beginSelectedFile(file: File): number {
 function startAnalysis(
   runId: number,
   captureInput: CaptureInput
-): Promise<DecodedDepthPlane | null> | null {
+): void {
   if (runId !== activeRunId) {
-    return null;
+    return;
   }
 
   setVerificationProgress(1, "running");
   activeInputKind = captureInput.kind;
   if (captureInput.kind === "tap-video") {
     renderVideoVisualizationScaffold(captureInput.videoFile);
-    return null;
+    return;
   }
 
   activeFileBytes = captureInput.photoBytes;
@@ -645,7 +644,6 @@ function startAnalysis(
   requestOriginalFallback(runId, captureInput.photoFile.name);
   requestDepthVisualization(runId);
   requestRgbAnalysis(runId, captureInput.photoFile);
-  return activeDepthPlaneProbe;
 }
 
 function revealVisualization(runId: number): void {
@@ -1109,17 +1107,13 @@ function cleanupVideoPlayback(): void {
 
 async function verifyFileBytes(
   runId: number,
-  captureInput: CaptureInput,
-  depthPlaneProbe: Promise<DecodedDepthPlane | null> | null
+  captureInput: CaptureInput
 ): Promise<CombinedVerificationResult> {
   let local: LocalVerificationReport;
   if (captureInput.kind === "tap-video") {
     local = await verifyTapVideoLocally(captureInput.videoBytes);
   } else {
-    if (!depthPlaneProbe) {
-      throw new Error("Missing auxiliary depth readback probe.");
-    }
-    local = await verifyPhotoInputLocally(captureInput, depthPlaneProbe);
+    local = await verifyCapturePackageLocally(captureInput.photoBytes, captureInput.pairedVideoBytes);
   }
   const localFailure = hasLocalFailure(local);
 
@@ -1173,18 +1167,6 @@ async function verifyFileBytes(
     serverBoundary: buildServerBoundaryDiagnostic(local, server, serverError),
     finalStatus: finalStatus(local, server)
   };
-}
-
-async function verifyPhotoInputLocally(
-  captureInput: PhotoCaptureInput,
-  depthPlaneProbe: Promise<DecodedDepthPlane | null>
-): Promise<LocalVerificationReport> {
-  const depthPlane = await depthPlaneProbe;
-  return verifyCapturePackageLocally(
-    captureInput.photoBytes,
-    depthPlane !== null,
-    captureInput.pairedVideoBytes
-  );
 }
 
 function finalStatus(
