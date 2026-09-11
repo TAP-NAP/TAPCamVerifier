@@ -46,12 +46,12 @@ their tests skip when the files are absent. A skip provides no current device,
 schema, backend, or acceptance evidence.
 
 `src/video/tapVideo.test.ts` mirrors the reviewed contract's
-[exact vectors](https://github.com/TAP-NAP/TAPArtifactContracts/tree/2f92eabe494ab097268cc9fecf938c760f5ada5b/examples/vectors).
+[exact vectors](https://github.com/TAP-NAP/TAPArtifactContracts/tree/16242f01674d5c8b771b93e2cb46bc42a039d174/examples/vectors).
 It also checks the bytes in `src/video/fixtures/tap-video-extensions-v1.json`
 through the artifact verifier. Extension content acceptance is a consumer concern,
 separate from whether those bytes match the signature binding. When updating the contract pin, compare the literals and
 compare that JSON byte-for-byte with the
-[shared extension vector](https://github.com/TAP-NAP/TAPArtifactContracts/blob/2f92eabe494ab097268cc9fecf938c760f5ada5b/examples/vectors/tap-video-extensions-v1.json).
+[shared extension vector](https://github.com/TAP-NAP/TAPArtifactContracts/blob/16242f01674d5c8b771b93e2cb46bc42a039d174/examples/vectors/tap-video-extensions-v1.json).
 These executable mirrors take their expected bytes from the contract.
 
 ### Deployment
@@ -107,9 +107,9 @@ bounded input/package resolution
   -> local scope + server result -> valid / invalid
 ```
 
-The [binding and verification contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/2f92eabe494ab097268cc9fecf938c760f5ada5b/bindings/capture-binding-and-proof-v1.md#local-reconstruction-and-cryptographic-verification)
+The [binding and verification contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/16242f01674d5c8b771b93e2cb46bc42a039d174/bindings/capture-binding-and-proof-v1.md#local-reconstruction-and-cryptographic-verification)
 defines the two required gates and Live Photo scopes. The
-[backend API contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/2f92eabe494ab097268cc9fecf938c760f5ada5b/BackendContract.md#tapcam-capture-signature-verification)
+[backend API contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/16242f01674d5c8b771b93e2cb46bc42a039d174/BackendContract.md#tapcam-capture-signature-verification)
 defines the request and response: only `keyId`, `assertionObject`, and
 `signingBinding` leave the browser. The final result is valid only when both
 the required local scope and the server verification pass. A local failure
@@ -122,7 +122,7 @@ Public authenticity claims follow the
 ### Local consumer policy
 
 Package resolution follows the
-[transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/2f92eabe494ab097268cc9fecf938c760f5ada5b/transport/tapnap-v1.md).
+[transport contract](https://github.com/TAP-NAP/TAPArtifactContracts/blob/16242f01674d5c8b771b93e2cb46bc42a039d174/transport/tapnap-v1.md).
 Raw MP4 and the MP4 resolved from `.tapnap` use the same verifier. The local
 implementation adds these compatibility allowances and resource budgets:
 
@@ -175,7 +175,7 @@ view. Telemetry is not consumed by playback; video 3D is disabled.
 
 | Repository | Relationship |
 | --- | --- |
-| [TAPArtifactContracts](https://github.com/TAP-NAP/TAPArtifactContracts) | Normative center for artifact formats, binding and verification rules, backend API behavior, and product claims. This implementation was reviewed against [`2f92eabe494ab097268cc9fecf938c760f5ada5b`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/2f92eabe494ab097268cc9fecf938c760f5ada5b); local compatibility allowances are listed above. |
+| [TAPArtifactContracts](https://github.com/TAP-NAP/TAPArtifactContracts) | Normative center for artifact formats, binding and verification rules, backend API behavior, and product claims. This implementation was reviewed against [`16242f01674d5c8b771b93e2cb46bc42a039d174`](https://github.com/TAP-NAP/TAPArtifactContracts/commit/16242f01674d5c8b771b93e2cb46bc42a039d174); local compatibility allowances are listed above. |
 | [TAPCamDemo](https://github.com/TAP-NAP/TAPCamDemo) | Native producer of signed artifacts consumed here; interoperability follows the shared contract. |
 | [server](https://github.com/TAP-NAP/server) | Runtime implementation of the App Attest HTTP endpoint and ECS/Nginx installation and update tooling. Protocol requirements remain in TAPArtifactContracts. |
 

@@ -2033,7 +2033,6 @@ fn build_verification_report(
             "containerFormat": container.as_report_str(),
             "schemaId": schema.get("id").and_then(Value::as_str),
             "proofCount": proof_count,
-            "capture": payload.get("capture"),
             "livePhoto": payload.get("livePhoto")
         },
         "livePhoto": if is_live_photo {
@@ -2640,8 +2639,8 @@ fn legacy_display_orientation_transform(
 
 fn is_front_camera_capture(payload: &Value) -> bool {
     payload
-        .get("photoLens")
-        .and_then(|photo_lens| photo_lens.get("position"))
+        .get("camera")
+        .and_then(|camera| camera.get("position"))
         .and_then(Value::as_str)
         == Some("front")
 }
@@ -3612,17 +3611,31 @@ mod tests {
     }
 
     #[test]
-    fn front_camera_detection_requires_signed_photo_lens_position() {
-        assert!(is_front_camera_capture(&json!({
-            "photoLens": { "position": "front" }
-        })));
-        assert!(!is_front_camera_capture(&json!({
-            "photoLens": { "position": "back" },
-            "depth": { "source": { "captureDeviceName": "Front TrueDepth Camera" } }
-        })));
-        assert!(!is_front_camera_capture(&json!({
-            "depth": { "source": { "captureDeviceName": "Front TrueDepth Camera" } }
-        })));
+    fn actual_camera_position_controls_depth_mirroring() {
+        let depth = [0, 85, 170, 255];
+        for (position, rotation, expected_order) in [
+            ("front", "upMirrored", [1, 0, 3, 2]),
+            ("back", "none", [0, 1, 2, 3]),
+        ] {
+            let manifest = depth_manifest_fixture(
+                2,
+                2,
+                "cgImagePropertyOrientation:2",
+                &format!(r#""camera":{{"position":"{position}","localizedName":"Front TrueDepth Camera"}}"#),
+            );
+            let mut bytes = vec![0xff, 0xd8];
+            bytes.extend_from_slice(manifest.as_bytes());
+            let report = visualize_depth_u8(&bytes, &depth, 2, 2);
+            assert_eq!(report["status"], "available");
+            assert_eq!(report["rotation"], rotation);
+            let pixels = STANDARD
+                .decode(report["previewRgbaBase64"].as_str().unwrap())
+                .unwrap();
+            for (pixel, source_index) in pixels.chunks_exact(4).zip(expected_order) {
+                let (r, g, b) = depth_color(normalize_u8(depth[source_index], 0, 255));
+                assert_eq!(pixel, [r, g, b, 255]);
+            }
+        }
     }
 
     #[test]
@@ -3631,7 +3644,7 @@ mod tests {
             2,
             3,
             "cgImagePropertyOrientation:6",
-            r#""photoLens":{"position":"front"}"#,
+            r#""camera":{"position":"front"}"#,
         )
         .replace(
             r#""photo":{"orientation":"cgImagePropertyOrientation:6"}"#,
@@ -3665,7 +3678,7 @@ mod tests {
                 3,
                 2,
                 &format!("cgImagePropertyOrientation:{orientation}"),
-                r#""photoLens":{"position":"front"}"#,
+                r#""camera":{"position":"front"}"#,
             );
             let mut bytes = vec![0, 0, 0, 12];
             bytes.extend_from_slice(b"ftypheic");
@@ -4160,7 +4173,7 @@ mod tests {
             3,
             2,
             "cgImagePropertyOrientation:5",
-            r#""photoLens":{"position":"front"}"#,
+            r#""camera":{"position":"front"}"#,
         );
         let rgba = [
             11, 1, 1, 255, 22, 2, 2, 255, 33, 3, 3, 255, 44, 4, 4, 255, 55, 5, 5, 255, 66, 6, 6,
@@ -4204,7 +4217,7 @@ mod tests {
             2,
             2,
             "cgImagePropertyOrientation:4",
-            r#""photoLens":{"position":"front"}"#,
+            r#""camera":{"position":"front"}"#,
         );
         let mut bytes = vec![0, 0, 0, 12];
         bytes.extend_from_slice(b"ftyp");
@@ -4265,7 +4278,7 @@ mod tests {
                 4,
                 3,
                 &format!("cgImagePropertyOrientation:{orientation}"),
-                r#""photoLens":{"position":"front"}"#,
+                r#""camera":{"position":"front"}"#,
             )
             .replace(r#""width":4}"#, &format!(r#""width":4,{calibration}}}"#));
             let mut bytes = vec![0, 0, 0, 12];
@@ -4293,7 +4306,7 @@ mod tests {
             2,
             2,
             "cgImagePropertyOrientation:4",
-            r#""photoLens":{"position":"front"}"#,
+            r#""camera":{"position":"front"}"#,
         );
         let mut bytes = vec![0xff, 0xd8];
         bytes.extend_from_slice(manifest.as_bytes());
